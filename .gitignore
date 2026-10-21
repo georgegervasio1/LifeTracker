@@ -1,0 +1,27 @@
+# --- Secrets: never commit these ---
+.env
+.env.*
+!.env.example
+*.pem
+*-key.json
+service-account*.json
+
+# --- Financial data: never commit statements or exports ---
+*.csv
+*.ofx
+*.qfx
+data/
+exports/
+
+# --- Python ---
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# --- Node / misc ---
+node_modules/
+.DS_Store
+.vscode/
+.idea/

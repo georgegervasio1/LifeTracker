@@ -1,0 +1,79 @@
+/* LifeTracker — swap these tokens for the ones from your last site to match its look. */
+:root {
+  --bg: #0b0f17;
+  --surface: #121826;
+  --surface-2: #182033;
+  --border: #243049;
+  --text: #e7ecf5;
+  --muted: #8b96ad;
+  --accent: #5b8cff;
+  --accent-2: #3ddc97;
+  --danger: #ff6b6b;
+  --radius: 14px;
+  --font: "Inter", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; }
+.hidden { display: none !important; }
+.muted { color: var(--muted); line-height: 1.5; }
+
+/* Login */
+.login { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
+.login-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 40px; text-align: center; width: min(380px, 100%); }
+.brand { font-weight: 700; font-size: 18px; letter-spacing: -0.01em; display: flex; gap: 8px; align-items: center; justify-content: center; }
+.logo { color: var(--accent); }
+
+/* Top bar */
+.topbar { display: flex; gap: 16px; align-items: center; justify-content: space-between; flex-wrap: wrap;
+  padding: 14px 24px; border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 5; }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.tab { background: none; border: none; color: var(--muted); padding: 8px 12px; border-radius: 8px; cursor: pointer; font: inherit; }
+.tab.active, .tab:hover { color: var(--text); background: var(--surface-2); }
+.actions { display: flex; gap: 8px; align-items: center; }
+
+/* Controls */
+.btn { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 10px;
+  padding: 8px 14px; cursor: pointer; font: inherit; font-weight: 500; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.ghost { background: none; }
+select, input { background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 10px; padding: 8px 10px; font: inherit; }
+.stack { display: flex; flex-direction: column; gap: 10px; }
+
+/* Layout */
+main { padding: 24px; max-width: 1280px; margin: 0 auto; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 16px; }
+.kpi { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; display: flex; flex-direction: column; gap: 6px; }
+.kpi .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+.kpi .value { font-family: var(--mono); font-size: 24px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; overflow-x: auto; }
+.card.wide { grid-column: 1 / -1; }
+.card h3 { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
+.card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+.card-head h3 { margin: 0; }
+
+/* Tables & lists */
+.table { width: 100%; border-collapse: collapse; }
+.table th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 8px; border-bottom: 1px solid var(--border); }
+.table td { padding: 10px 8px; border-bottom: 1px solid var(--border); }
+.num { text-align: right; font-family: var(--mono); }
+.pos { color: var(--accent-2); }
+.neg { color: var(--danger); }
+.list { list-style: none; margin: 0; padding: 0; }
+.list li { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.list li span:last-child { font-family: var(--mono); }
+.pill { font-size: 11px; padding: 2px 8px; border-radius: 99px; background: var(--surface-2); color: var(--muted); }
+
+.toast { position: fixed; bottom: 20px; right: 20px; background: var(--surface-2); border: 1px solid var(--border);
+  padding: 12px 16px; border-radius: 10px; }
+
+@media (max-width: 640px) {
+  main { padding: 16px; }
+  .topbar { padding: 12px 16px; }
+  .grid { grid-template-columns: 1fr; }
+}

@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>LifeTracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+</head>
+<body>
+  <!-- Sign-in gate -->
+  <section id="login" class="login">
+    <div class="login-card">
+      <div class="brand"><span class="logo">◆</span> LifeTracker</div>
+      <p class="muted">Your money, all in one place.</p>
+      <button id="signin" class="btn primary">Sign in with Google</button>
+    </div>
+  </section>
+
+  <!-- App -->
+  <div id="app" class="hidden">
+    <header class="topbar">
+      <div class="brand"><span class="logo">◆</span> LifeTracker</div>
+      <nav class="tabs">
+        <button class="tab active" data-view="overview">Overview</button>
+        <button class="tab" data-view="transactions">Transactions</button>
+        <button class="tab" data-view="investments">Investments</button>
+        <button class="tab" data-view="accounts">Accounts</button>
+      </nav>
+      <div class="actions">
+        <select id="range">
+          <option value="30">30 days</option>
+          <option value="90" selected>90 days</option>
+          <option value="365">12 months</option>
+        </select>
+        <button id="sync" class="btn">↻ Sync</button>
+        <button id="signout" class="btn ghost">Sign out</button>
+      </div>
+    </header>
+
+    <main>
+      <!-- Overview -->
+      <section id="view-overview" class="view">
+        <div class="kpis">
+          <div class="kpi"><span class="label">Spent</span><span id="kpi-spent" class="value">—</span></div>
+          <div class="kpi"><span class="label">Money in</span><span id="kpi-in" class="value">—</span></div>
+          <div class="kpi"><span class="label">Net</span><span id="kpi-net" class="value">—</span></div>
+          <div class="kpi"><span class="label">Portfolio</span><span id="kpi-portfolio" class="value">—</span></div>
+        </div>
+        <div class="grid">
+          <div class="card"><h3>Spending by category</h3><canvas id="chart-category"></canvas></div>
+          <div class="card"><h3>Monthly spending</h3><canvas id="chart-month"></canvas></div>
+          <div class="card"><h3>By source</h3><canvas id="chart-source"></canvas></div>
+          <div class="card"><h3>Top merchants</h3><ul id="top-merchants" class="list"></ul></div>
+        </div>
+      </section>
+
+      <!-- Transactions -->
+      <section id="view-transactions" class="view hidden">
+        <div class="card">
+          <div class="card-head">
+            <h3>Transactions</h3>
+            <input id="tx-search" placeholder="Search merchant, category…" />
+          </div>
+          <table class="table">
+            <thead><tr><th>Date</th><th>Merchant</th><th>Category</th><th>Source</th><th class="num">Amount</th></tr></thead>
+            <tbody id="tx-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Investments -->
+      <section id="view-investments" class="view hidden">
+        <div class="grid">
+          <div class="card wide"><h3>Portfolio value</h3><canvas id="chart-portfolio"></canvas></div>
+          <div class="card wide">
+            <h3>Holdings</h3>
+            <table class="table">
+              <thead><tr><th>Ticker</th><th>Name</th><th class="num">Qty</th><th class="num">Value</th><th class="num">Gain</th></tr></thead>
+              <tbody id="holdings-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Accounts -->
+      <section id="view-accounts" class="view hidden">
+        <div class="grid">
+          <div class="card">
+            <h3>Connect accounts</h3>
+            <p class="muted">Bank &amp; credit cards (Chase) use Plaid Transactions. Brokerage (UBS) uses Plaid Investments.</p>
+            <div class="stack">
+              <button class="btn primary" data-link="bank">+ Connect bank / credit card</button>
+              <button class="btn primary" data-link="investments">+ Connect brokerage</button>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Import Venmo</h3>
+            <p class="muted">venmo.com → Statements → pick a month → Download CSV. Re-uploading the same month won't duplicate.</p>
+            <input type="file" id="venmo-file" accept=".csv" />
+            <button id="venmo-upload" class="btn">Upload</button>
+          </div>
+        </div>
+      </section>
+    </main>
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

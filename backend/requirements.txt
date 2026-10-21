@@ -1,0 +1,7 @@
+flask==3.0.3
+flask-cors==4.0.1
+gunicorn==22.0.0
+plaid-python==24.0.0
+firebase-admin==6.5.0
+google-cloud-firestore==2.16.0
+python-dotenv==1.0.1
