@@ -5,6 +5,7 @@ Endpoints (all require a Firebase ID token for ALLOWED_EMAIL):
   POST /api/plaid/exchange          -> exchange public_token, store the Item
   POST /api/sync                    -> pull new transactions + investment holdings
   POST /api/venmo/upload            -> import a monthly Venmo CSV statement
+  POST /api/import/csv              -> import bank/card CSV (Chase or LifeTracker format)
   GET  /api/transactions            -> normalized transactions (?start=&end=)
   GET  /api/summary                 -> spending by category + monthly totals
   GET  /api/holdings                -> latest investment holdings
@@ -24,9 +25,12 @@ from dotenv import load_dotenv
 from flask import Flask, g, jsonify, request
 from flask_cors import CORS
 
+from categorize import TRANSFER_CATEGORIES, categorize
+
 load_dotenv()
 
 app = Flask(__name__)
+app.json.sort_keys = False  # keep categories ordered largest-first
 CORS(app, origins=[os.environ.get("FRONTEND_ORIGIN", "http://localhost:5500"),
                    "http://localhost:5500", "http://127.0.0.1:5500"])
 
@@ -243,6 +247,96 @@ def venmo_upload():
     return jsonify(imported=count)
 
 
+# ---------------------------------------------------------------- Bank CSV import
+def _parse_amount(raw):
+    raw = (raw or "").strip().replace("$", "").replace(",", "")
+    neg = raw.startswith("(") and raw.endswith(")")
+    val = float(raw.strip("()") or 0)
+    return -val if neg else val
+
+
+def _parse_date(raw):
+    raw = (raw or "").strip()
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"):
+        try:
+            return datetime.strptime(raw, fmt).date().isoformat()
+        except ValueError:
+            pass
+    raise ValueError(f"unrecognized date: {raw!r}")
+
+
+def parse_bank_csv(raw_text, account_label=None):
+    """Accepts three layouts and returns normalized rows (amount: + = money out):
+    - LifeTracker:   date, description, amount[, category, account]
+    - Chase card:    Transaction Date, Post Date, Description, Category, Type, Amount, Memo
+    - Chase checking: Details, Posting Date, Description, Amount, Type, Balance, Check or Slip #"""
+    reader = csv.DictReader(io.StringIO(raw_text))
+    cols = {c.strip().lower(): c for c in (reader.fieldnames or [])}
+    if {"date", "description", "amount"} <= cols.keys():
+        layout = "lifetracker"
+    elif {"transaction date", "description", "amount"} <= cols.keys():
+        layout = "chase_card"
+    elif {"posting date", "description", "amount"} <= cols.keys():
+        layout = "chase_checking"
+    else:
+        raise ValueError("Unrecognized CSV columns: " + ", ".join(reader.fieldnames or []))
+    get = lambda row, name: (row.get(cols.get(name, ""), "") or "").strip()
+
+    rows = []
+    for row in reader:
+        desc = re.sub(r"\s+", " ", get(row, "description"))
+        if not desc or not get(row, "amount"):
+            continue
+        if layout == "lifetracker":
+            date_, amt = _parse_date(get(row, "date")), _parse_amount(get(row, "amount"))
+            cat = get(row, "category") or categorize(desc, amt)
+            acct = get(row, "account") or account_label or "Imported"
+        else:
+            date_ = _parse_date(get(row, "transaction date") or get(row, "posting date"))
+            amt = -_parse_amount(get(row, "amount"))      # Chase: purchases/debits are negative
+            is_card = layout == "chase_card"
+            cat = categorize(desc, amt, is_card)
+            if cat == "Other" and get(row, "category"):
+                cat = get(row, "category").replace("&", "And")
+            acct = account_label or ("Chase Credit Card" if is_card else "Chase Checking")
+        rows.append({"date": date_, "description": desc, "amount": round(amt, 2),
+                     "category": cat, "account": acct})
+    return layout, rows
+
+
+@app.post("/api/import/csv")
+@require_owner
+def import_csv():
+    f = request.files.get("file")
+    if not f:
+        return jsonify(error="attach a CSV as 'file'"), 400
+    try:
+        layout, rows = parse_bank_csv(f.read().decode("utf-8-sig"), request.form.get("account") or None)
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+
+    # Deterministic ids: re-importing the same rows never duplicates them. The occurrence
+    # counter keeps genuinely repeated same-day charges (e.g. two identical coffees) distinct.
+    seen = defaultdict(int)
+    tx_col, batch, n = user_ref().collection("transactions"), db.batch(), 0
+    for r in rows:
+        key = f"{r['account']}|{r['date']}|{r['description']}|{r['amount']:.2f}"
+        seen[key] += 1
+        tid = "imp_" + hashlib.sha1(f"{key}|{seen[key]}".encode()).hexdigest()[:20]
+        batch.set(tx_col.document(tid), {
+            "source": r["account"], "account_id": "import:" + r["account"], "date": r["date"],
+            "amount": r["amount"], "merchant": r["description"], "category": r["category"],
+            "pending": False, "imported": True,
+        })
+        n += 1
+        if n % 400 == 0:                       # Firestore batches max out at 500 writes
+            batch.commit(); batch = db.batch()
+    batch.commit()
+    dates = sorted(r["date"] for r in rows)
+    return jsonify(imported=n, layout=layout,
+                   first_date=dates[0] if dates else None, last_date=dates[-1] if dates else None)
+
+
 # ---------------------------------------------------------------- Read endpoints
 def _load_transactions(start, end):
     q = (user_ref().collection("transactions")
@@ -254,10 +348,6 @@ def _date_range():
     end = request.args.get("end") or date.today().isoformat()
     start = request.args.get("start") or (date.today() - timedelta(days=90)).isoformat()
     return start, end
-
-
-# Transfers between your own accounts shouldn't count as "spending".
-EXCLUDE_FROM_SPENDING = {"Transfer In", "Transfer Out", "Loan Payments", "Venmo Transfer", "Income"}
 
 
 @app.get("/api/transactions")
@@ -278,12 +368,20 @@ def compute_summary(start, end):
     by_cat, by_month, by_source = defaultdict(float), defaultdict(float), defaultdict(float)
     income = spend = 0.0
     for t in _load_transactions(start, end):
-        if t["category"] == "Income" or t["amount"] < 0:
-            income += -t["amount"] if t["amount"] < 0 else 0
+        cat, amt = t.get("category"), t["amount"]
+        if cat in TRANSFER_CATEGORIES:          # moving money between your own accounts
             continue
-        if t["category"] in EXCLUDE_FROM_SPENDING:
+        if cat == "Refund":                     # refunds reduce spending, not income
+            spend += amt
+            by_month[t["date"][:7]] += amt
+            by_source[t["source"]] += amt
             continue
-        spend += t["amount"]
+        if amt < 0:                             # money in
+            income += -amt
+            continue
+        if cat == "Income":
+            continue
+        spend += amt
         by_cat[t["category"]] += t["amount"]
         by_month[t["date"][:7]] += t["amount"]
         by_source[t["source"]] += t["amount"]

@@ -150,7 +150,7 @@ function drawChart(id, type, labels, data) {
 }
 
 function barRows(elId, entries, max = 7) {
-  const rows = entries.slice(0, max);
+  const rows = [...entries].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, max);
   if (!rows.length) { $(elId).innerHTML = `<div class="empty">No data yet. Connect an account or import a CSV.</div>`; return; }
   const top = rows[0][1] || 1;
   $(elId).innerHTML = rows.map(([label, v]) => `
@@ -309,7 +309,28 @@ $("sync").onclick = doSync;
 $("range").onchange = () => render();
 $("tx-search").oninput = renderTx;
 $$("[data-link]").forEach((b) => (b.onclick = () => connect(b.dataset.link).catch((e) => toast(e.message))));
-$("venmo-file").onchange = () => ($("venmoLabel").textContent = $("venmo-file").files[0]?.name || "Choose a CSV file");
+$("bank-files").onchange = () => {
+  const fs = $("bank-files").files;
+  $("bankLabel").textContent = fs.length ? (fs.length === 1 ? fs[0].name : `${fs.length} files selected`) : "Choose CSV files";
+};
+$("bank-upload").onclick = async () => {
+  const files = [...$("bank-files").files];
+  if (!files.length) return toast("Choose at least one CSV file");
+  if (!backendReady) return toast("Backend not connected yet");
+  $("bank-upload").disabled = true;
+  let total = 0;
+  try {
+    for (const f of files) {
+      const fd = new FormData(); fd.append("file", f);
+      if ($("bank-account").value.trim()) fd.append("account", $("bank-account").value.trim());
+      const r = await api("/api/import/csv", { method: "POST", body: fd });
+      total += r.imported;
+    }
+    toast(`Imported ${total.toLocaleString()} transactions from ${files.length} file${files.length > 1 ? "s" : ""}`);
+  } catch (e) { toast(e.message); }
+  finally { $("bank-upload").disabled = false; }
+};
+$("venmo-file").onchange =() => ($("venmoLabel").textContent = $("venmo-file").files[0]?.name || "Choose a CSV file");
 $("venmo-upload").onclick = async () => {
   const f = $("venmo-file").files[0];
   if (!f) return toast("Choose a CSV file first");

@@ -182,6 +182,16 @@
             </button>
           </div>
           <div class="card upload">
+            <h3>Import bank or card activity</h3>
+            <p>Chase CSV exports (checking or credit card) or LifeTracker import files. Choose several files at once. Re-importing the same dates never creates duplicates.</p>
+            <label class="dropzone">
+              <input type="file" id="bank-files" accept=".csv" multiple />
+              <span id="bankLabel">Choose CSV files</span>
+            </label>
+            <input id="bank-account" class="input input-block" placeholder="Account name (optional), e.g. Chase Sapphire" />
+            <button id="bank-upload" class="btn btn-primary">Import</button>
+          </div>
+          <div class="card upload">
             <h3>Import Venmo</h3>
             <p>On venmo.com, open Statements, choose a month and download the CSV. Re-uploading a month never creates duplicates.</p>
             <label class="dropzone">

@@ -268,3 +268,5 @@ main { padding-bottom: 96px; }
   .chat-composer { bottom: 84px; }
   .toast { bottom: 90px; }
 }
+.input-block { display: block; width: 100%; margin-bottom: 16px; }
+.upload + .upload { margin-top: 20px; }
