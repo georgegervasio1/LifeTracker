@@ -2,155 +2,242 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="robots" content="noindex, nofollow" />
-  <title>LifeTracker | Personal Finance</title>
+  <meta name="color-scheme" content="light dark" />
+  <title>LifeTracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
+  <script>
+    // Apply saved theme before paint to avoid a flash
+    try { const t = localStorage.getItem("lt-theme"); if (t) document.documentElement.dataset.theme = t; } catch {}
+  </script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
   <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
 </head>
 <body>
-  <div class="toast" id="toast"></div>
+  <div class="toast" id="toast" role="status"></div>
 
-  <!-- ── Login ─────────────────────────────────────────────────────────── -->
-  <div class="login-overlay" id="login">
-    <div class="login-box">
-      <h2>LifeTracker</h2>
-      <p>Your money, all in one place.</p>
-      <button id="signin">Sign in with Google</button>
+  <!-- ───────────────────────── Sign in ───────────────────────── -->
+  <div class="login" id="login">
+    <div class="login-inner">
+      <p class="eyebrow">LifeTracker</p>
+      <h1 class="display">Your life,<br />in one place.</h1>
+      <p class="lede">Finances, health, education and goals — together.</p>
+      <button id="signin" class="btn btn-primary btn-lg">Sign in with Google</button>
     </div>
   </div>
 
   <div id="app" class="hidden">
-    <!-- ── Nav ──────────────────────────────────────────────────────────── -->
-    <nav>
-      <div class="nav-brand">LifeTracker</div>
-      <div class="nav-right">
-        <select id="range" class="nav-select" title="Date range">
-          <option value="30">Last 30 days</option>
-          <option value="90" selected>Last 90 days</option>
-          <option value="365">Last 12 months</option>
-        </select>
-        <button id="sync" class="ghost-btn" title="Pull new transactions">↻ Sync</button>
-        <button class="theme-toggle" id="themeBtn" title="Toggle light/dark mode">🌙</button>
-        <button id="signout" class="ghost-btn">Sign out</button>
-      </div>
-    </nav>
-
-    <div class="container">
-      <div class="tab-nav">
-        <button class="tab-button active" data-view="overview">🏠 Overview</button>
-        <button class="tab-button" data-view="transactions">💳 Transactions</button>
-        <button class="tab-button" data-view="investments">📈 Investments</button>
-        <button class="tab-button" data-view="assistant">🤖 AI Assistant</button>
-        <button class="tab-button" data-view="accounts">🔗 Accounts</button>
-      </div>
-
-      <!-- ── OVERVIEW ──────────────────────────────────────────────────── -->
-      <section id="view-overview" class="tab-content active">
-        <div class="hero-section">
-          <div class="hero-content">
-            <div class="firm-logo">LifeTracker</div>
-            <div class="firm-tagline" id="heroTagline">Spending, cash flow and investments — one dashboard</div>
-          </div>
+    <!-- ───────────────────────── Top nav ───────────────────────── -->
+    <header class="topnav">
+      <div class="topnav-inner">
+        <a href="#/" class="brand">LifeTracker</a>
+        <nav class="section-links" aria-label="Sections">
+          <a href="#/finances" data-section="finances">Finances</a>
+          <a href="#/health" data-section="health">Health</a>
+          <a href="#/education" data-section="education">Education</a>
+          <a href="#/goals" data-section="goals">Goals</a>
+        </nav>
+        <div class="topnav-actions">
+          <button class="icon-btn" id="themeBtn" aria-label="Toggle light or dark mode">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+          </button>
+          <button class="text-btn" id="signout">Sign out</button>
         </div>
+      </div>
+    </header>
 
-        <div class="stats-grid">
-          <div class="stat-card"><div class="stat-icon">💸</div><div class="stat-value" id="kpi-spent">—</div><div class="stat-label">Spent</div><div class="stat-sub" id="kpi-spent-sub"></div></div>
-          <div class="stat-card"><div class="stat-icon">💵</div><div class="stat-value" id="kpi-in">—</div><div class="stat-label">Money In</div></div>
-          <div class="stat-card"><div class="stat-icon">⚖️</div><div class="stat-value" id="kpi-net">—</div><div class="stat-label">Net Cash Flow</div></div>
-          <div class="stat-card clickable" data-goto="investments"><div class="stat-icon">📈</div><div class="stat-value" id="kpi-portfolio">—</div><div class="stat-label">Portfolio</div><div class="click-hint">VIEW HOLDINGS ↗</div></div>
+    <!-- ───────────────────────── Section sub-nav ───────────────────────── -->
+    <div class="subnav hidden" id="subnav">
+      <div class="subnav-inner">
+        <span class="subnav-title" id="subnavTitle">Finances</span>
+        <nav class="tabs" id="subnavTabs" aria-label="Section tabs"></nav>
+        <div class="subnav-actions" id="financeControls">
+          <select id="range" class="select" aria-label="Date range">
+            <option value="30">30 days</option>
+            <option value="90" selected>90 days</option>
+            <option value="365">12 months</option>
+          </select>
+          <button id="sync" class="btn btn-secondary btn-sm">Sync</button>
         </div>
+      </div>
+    </div>
 
-        <div class="charts-row">
-          <div class="chart-card"><h3>📊 Spending by Category <span id="catSubtitle"></span></h3><div id="categoryBars"></div></div>
-          <div class="chart-card"><h3>📅 Monthly Spending</h3><canvas id="chart-month"></canvas></div>
-          <div class="chart-card"><h3>🏦 By Source</h3><div id="sourceBars"></div></div>
-          <div class="chart-card"><h3>🛍 Top Merchants</h3><div id="merchantBars"></div></div>
+    <main>
+      <!-- ───────────────────────── HOME ───────────────────────── -->
+      <section class="route" data-route="home">
+        <div class="home-hero wrap">
+          <p class="eyebrow" id="homeDate"></p>
+          <h1 class="display" id="homeGreeting">Welcome back.</h1>
+        </div>
+        <div class="home-grid wrap">
+          <a class="home-card" href="#/finances">
+            <span class="home-card-label">Finances</span>
+            <span class="home-card-stat" id="homeFinance">—</span>
+            <span class="home-card-desc">Spending, cash flow and investments</span>
+            <span class="home-card-cta">Open <span aria-hidden="true">→</span></span>
+          </a>
+          <a class="home-card" href="#/health">
+            <span class="home-card-label">Health</span>
+            <span class="home-card-stat muted-stat">In development</span>
+            <span class="home-card-desc">Workouts, recovery, strain and sleep</span>
+            <span class="home-card-cta">Open <span aria-hidden="true">→</span></span>
+          </a>
+          <a class="home-card" href="#/education">
+            <span class="home-card-label">Education</span>
+            <span class="home-card-stat muted-stat">In development</span>
+            <span class="home-card-desc">Courses, deadlines, finals and grades</span>
+            <span class="home-card-cta">Open <span aria-hidden="true">→</span></span>
+          </a>
+          <a class="home-card" href="#/goals">
+            <span class="home-card-label">Goals</span>
+            <span class="home-card-stat muted-stat">In development</span>
+            <span class="home-card-desc">Targets that track themselves</span>
+            <span class="home-card-cta">Open <span aria-hidden="true">→</span></span>
+          </a>
         </div>
       </section>
 
-      <!-- ── TRANSACTIONS ──────────────────────────────────────────────── -->
-      <section id="view-transactions" class="tab-content">
-        <div class="search-section">
-          <input id="tx-search" class="search-input" placeholder="Search merchant, category, source…" />
-          <div class="stats-bar">
-            <div class="stat-item"><div class="stat-label">Shown</div><div class="stat-value" id="tx-count">0</div></div>
-            <div class="stat-item"><div class="stat-label">Total</div><div class="stat-value" id="tx-total">$0</div></div>
+      <!-- ───────────────────────── FINANCES ───────────────────────── -->
+      <section class="route" data-route="finances">
+        <!-- Overview -->
+        <div class="panel wrap" data-panel="overview">
+          <div class="kpis">
+            <div class="kpi"><span class="kpi-label">Spent</span><span class="kpi-value" id="kpi-spent">—</span><span class="kpi-sub" id="kpi-spent-sub"></span></div>
+            <div class="kpi"><span class="kpi-label">Money in</span><span class="kpi-value" id="kpi-in">—</span></div>
+            <div class="kpi"><span class="kpi-label">Net cash flow</span><span class="kpi-value" id="kpi-net">—</span></div>
+            <a class="kpi kpi-link" href="#/finances/investments"><span class="kpi-label">Portfolio</span><span class="kpi-value" id="kpi-portfolio">—</span><span class="kpi-sub">View holdings →</span></a>
+          </div>
+          <div class="grid-2">
+            <div class="card"><div class="card-head"><h3>Spending by category</h3><span class="card-meta" id="catSubtitle"></span></div><div id="categoryBars"></div></div>
+            <div class="card"><div class="card-head"><h3>Monthly spending</h3></div><canvas id="chart-month"></canvas></div>
+            <div class="card"><div class="card-head"><h3>By source</h3></div><div id="sourceBars"></div></div>
+            <div class="card"><div class="card-head"><h3>Top merchants</h3></div><div id="merchantBars"></div></div>
           </div>
         </div>
-        <div class="chart-card table-card">
-          <table class="data-table">
-            <thead><tr><th>Date</th><th>Merchant</th><th>Category</th><th>Source</th><th class="num">Amount</th></tr></thead>
-            <tbody id="tx-body"></tbody>
-          </table>
-        </div>
-      </section>
 
-      <!-- ── INVESTMENTS ───────────────────────────────────────────────── -->
-      <section id="view-investments" class="tab-content">
-        <div class="charts-row">
-          <div class="chart-card wide"><h3>📈 Portfolio Value</h3><canvas id="chart-portfolio"></canvas></div>
-          <div class="chart-card wide table-card">
-            <h3>📋 Holdings</h3>
-            <table class="data-table">
-              <thead><tr><th>Ticker</th><th>Name</th><th class="num">Qty</th><th class="num">Value</th><th class="num">Gain</th></tr></thead>
+        <!-- Transactions -->
+        <div class="panel wrap" data-panel="transactions">
+          <div class="toolbar">
+            <input id="tx-search" class="input" placeholder="Search merchant, category or source" />
+            <div class="toolbar-stats"><span><strong id="tx-count">0</strong> transactions</span><span>Net <strong id="tx-total">$0</strong></span></div>
+          </div>
+          <div class="card card-flush">
+            <table class="table">
+              <thead><tr><th>Date</th><th>Merchant</th><th>Category</th><th>Source</th><th class="num">Amount</th></tr></thead>
+              <tbody id="tx-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Investments -->
+        <div class="panel wrap" data-panel="investments">
+          <div class="card"><div class="card-head"><h3>Portfolio value</h3><span class="card-meta" id="portfolioTotal"></span></div><canvas id="chart-portfolio"></canvas></div>
+          <div class="card card-flush">
+            <div class="card-head padded"><h3>Holdings</h3></div>
+            <table class="table">
+              <thead><tr><th>Ticker</th><th>Name</th><th class="num">Quantity</th><th class="num">Value</th><th class="num">Gain</th></tr></thead>
               <tbody id="holdings-body"></tbody>
             </table>
           </div>
         </div>
+
+        <!-- Assistant -->
+        <div class="panel wrap" data-panel="assistant">
+          <div class="chat">
+            <div class="chat-intro">
+              <h2 class="title">Ask about your money.</h2>
+              <p class="lede-sm">The assistant looks up your actual transactions and holdings before it answers.</p>
+            </div>
+            <div class="chat-log" id="chatMessages"></div>
+            <div class="chat-suggestions" id="chatSuggestions">
+              <button class="chip">How much did I spend last month, by category?</button>
+              <button class="chip">What are my biggest recurring charges?</button>
+              <button class="chip">Compare this month to last month</button>
+              <button class="chip">How is my portfolio allocated?</button>
+            </div>
+            <div class="chat-composer">
+              <textarea id="chatInput" rows="1" placeholder="Message the finance assistant"></textarea>
+              <button id="chatSend" class="btn btn-primary">Send</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Accounts -->
+        <div class="panel wrap" data-panel="accounts">
+          <div class="grid-2">
+            <button class="card card-action" data-link="bank">
+              <h3>Bank and credit cards</h3>
+              <p>Chase checking, savings and credit cards through Plaid. Log in once and select every account you want tracked.</p>
+              <span class="link">Connect →</span>
+            </button>
+            <button class="card card-action" data-link="investments">
+              <h3>Brokerage</h3>
+              <p>UBS or other investment accounts through Plaid Investments: holdings and portfolio value.</p>
+              <span class="link">Connect →</span>
+            </button>
+          </div>
+          <div class="card upload">
+            <h3>Import Venmo</h3>
+            <p>On venmo.com, open Statements, choose a month and download the CSV. Re-uploading a month never creates duplicates.</p>
+            <label class="dropzone">
+              <input type="file" id="venmo-file" accept=".csv" />
+              <span id="venmoLabel">Choose a CSV file</span>
+            </label>
+            <button id="venmo-upload" class="btn btn-primary">Upload</button>
+          </div>
+        </div>
       </section>
 
-      <!-- ── AI ASSISTANT ──────────────────────────────────────────────── -->
-      <section id="view-assistant" class="tab-content">
-        <div class="chat-container">
-          <div class="chat-header">
-            <h2>🤖 AI Financial Assistant</h2>
-            <p>Ask anything about your spending, cash flow or investments. Powered by Claude — it looks up your real numbers before answering.</p>
-          </div>
-          <div class="chat-messages" id="chatMessages">
-            <div class="message assistant">
-              <div class="message-avatar">AI</div>
-              <div class="message-body"><div class="message-content">Hi! I can see your linked accounts and imports. Try one of the suggestions below, or ask your own question.</div></div>
-            </div>
-          </div>
-          <div class="chat-input-area">
-            <div class="chat-input-wrapper">
-              <textarea id="chatInput" class="chat-input" rows="2" placeholder="e.g. How much did I spend on food last month?"></textarea>
-              <button id="chatSend" class="send-btn">Send</button>
-            </div>
-            <div class="suggestion-bubbles" id="chatSuggestions">
-              <button class="suggestion-chip">How much did I spend last month, by category?</button>
-              <button class="suggestion-chip">What are my biggest recurring charges?</button>
-              <button class="suggestion-chip">Compare this month's spending to last month</button>
-              <button class="suggestion-chip">How is my portfolio allocated?</button>
-            </div>
-          </div>
+      <!-- ───────────────────────── PLACEHOLDER SECTIONS ───────────────────────── -->
+      <section class="route" data-route="health">
+        <div class="placeholder wrap">
+          <p class="eyebrow">Health · In development</p>
+          <h1 class="display">Train with intent.</h1>
+          <p class="lede">Log every workout, see it on a calendar, and read it against your recovery, strain and sleep.</p>
+          <ul class="feature-list">
+            <li><strong>Workout log</strong><span>Type, duration, sets, reps and notes</span></li>
+            <li><strong>Calendar</strong><span>Month view of every session</span></li>
+            <li><strong>WHOOP</strong><span>Recovery, strain, sleep and HRV trends</span></li>
+            <li><strong>Assistant</strong><span>Ask about your training, or log a workout by chat</span></li>
+          </ul>
         </div>
       </section>
 
-      <!-- ── ACCOUNTS ──────────────────────────────────────────────────── -->
-      <section id="view-accounts" class="tab-content">
-        <div class="quick-actions">
-          <div class="action-card" data-link="bank"><h3>🏦 Connect Bank / Credit Card</h3><p>Chase checking, savings and credit cards via Plaid. Log in once and select every account you want tracked.</p></div>
-          <div class="action-card" data-link="investments"><h3>📈 Connect Brokerage</h3><p>UBS or other investment accounts via Plaid Investments — holdings and portfolio value.</p></div>
-        </div>
-        <div class="upload-section">
-          <h2>Import Venmo</h2>
-          <p>venmo.com → Statements → pick a month → Download CSV. Re-uploading the same month won't create duplicates.</p>
-          <label class="file-drop" id="venmoDrop">
-            <input type="file" id="venmo-file" accept=".csv" />
-            <span id="venmoLabel">📁 Click to choose a Venmo CSV</span>
-          </label>
-          <button id="venmo-upload" class="upload-btn">Upload</button>
+      <section class="route" data-route="education">
+        <div class="placeholder wrap">
+          <p class="eyebrow">Education · In development</p>
+          <h1 class="display">Every deadline, in view.</h1>
+          <p class="lede">Courses, assignments, finals and grades in one calm timeline.</p>
+          <ul class="feature-list">
+            <li><strong>Canvas</strong><span>Assignments and due dates from your course calendar</span></li>
+            <li><strong>Finals</strong><span>Exam calendar with a countdown to the next one</span></li>
+            <li><strong>Grades</strong><span>A clear overview per course</span></li>
+            <li><strong>Assistant</strong><span>Plan your week around what's due</span></li>
+          </ul>
         </div>
       </section>
-    </div>
+
+      <section class="route" data-route="goals">
+        <div class="placeholder wrap">
+          <p class="eyebrow">Goals · In development</p>
+          <h1 class="display">Set it. Track it.</h1>
+          <p class="lede">Goals that update themselves from your finances, training and coursework.</p>
+          <ul class="feature-list">
+            <li><strong>Any goal</strong><span>Finance, health, education or personal</span></li>
+            <li><strong>Auto-tracking</strong><span>"Save $5,000" reads straight from Finances</span></li>
+            <li><strong>Status</strong><span>On track or behind, at a glance</span></li>
+            <li><strong>Assistant</strong><span>Create and adjust goals by chat</span></li>
+          </ul>
+        </div>
+      </section>
+    </main>
   </div>
 
-  <div class="watermark">LIFETRACKER</div>
   <script type="module" src="app.js"></script>
 </body>
 </html>
