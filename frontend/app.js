@@ -20,13 +20,17 @@ const SECTIONS = {
   finances: { title: "Finances", tabs: [
     ["overview", "Overview"], ["transactions", "Transactions"], ["investments", "Investments"],
     ["assistant", "Assistant"], ["accounts", "Accounts"]] },
-  health: { title: "Health", tabs: [] },
+  health: { title: "Health", tabs: [
+    ["overview", "Overview"], ["workouts", "Workouts"], ["calendar", "Calendar"], ["connect", "Connect"]] },
   education: { title: "Education", tabs: [] },
   goals: { title: "Goals", tabs: [] },
 };
 
+let routeQuery = new URLSearchParams();
 function parseRoute() {
-  const [section, tab] = location.hash.replace(/^#\/?/, "").split("/");
+  const [path, query] = location.hash.replace(/^#\/?/, "").split("?");
+  const [section, tab] = path.split("/");
+  routeQuery = new URLSearchParams(query || "");
   if (!SECTIONS[section]) return { section: "home" };
   const tabs = SECTIONS[section].tabs;
   return { section, tab: tabs.some(([k]) => k === tab) ? tab : tabs[0]?.[0] };
@@ -45,7 +49,9 @@ function render() {
     $("subnavTitle").textContent = cfg.title;
     $("subnavTabs").innerHTML = cfg.tabs.map(([k, label]) =>
       `<a href="#/${section}/${k}" class="${k === tab ? "active" : ""}">${label}</a>`).join("");
-    $("financeControls").classList.toggle("hidden", section !== "finances" || ["assistant", "accounts"].includes(tab));
+    const showControls = (section === "finances" && ["overview", "transactions", "investments"].includes(tab))
+      || (section === "health" && tab === "overview");
+    $("sectionControls").classList.toggle("hidden", !showControls);
     $$(`[data-route="${section}"] .panel`).forEach((p) => p.classList.toggle("active", p.dataset.panel === tab));
   }
   window.scrollTo({ top: 0 });
@@ -55,8 +61,9 @@ function render() {
 
 async function load(section, tab) {
   if (section === "home") return loadHome();
-  if (section !== "finances") return;
   if (!backendReady) return toast("Backend not connected yet");
+  if (section === "health") return loadHealth(tab);
+  if (section !== "finances") return;
   if (tab === "overview" || tab === "transactions") return loadOverview();
   if (tab === "investments") return loadInvestments();
   if (tab === "assistant") setTimeout(() => $("chatInput").focus(), 50);
@@ -121,7 +128,7 @@ function restyleChart(c) {
   c.update("none");
 }
 
-function drawChart(id, type, labels, data) {
+function drawChart(id, type, labels, data, fmt = { tip: (v) => usd.format(v), tick: (v) => usd0.format(v) }, opts = {}) {
   charts[id]?.destroy();
   const k = chartColors();
   Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
@@ -135,14 +142,14 @@ function drawChart(id, type, labels, data) {
                      const a = chartColors().accent; g.addColorStop(0, a + "33"); g.addColorStop(1, a + "00"); return g; }
         : k.accent,
       borderColor: k.accent, borderWidth: type === "line" ? 2 : 0, fill: type === "line",
-      tension: 0.35, borderRadius: 6, maxBarThickness: 48, pointRadius: 0, pointHoverRadius: 4,
+      tension: 0.35, borderRadius: 6, maxBarThickness: 48, pointRadius: 0, pointHoverRadius: 4, spanGaps: true,
     }] },
     options: {
       aspectRatio: type === "line" ? 2.8 : 1.8,
       plugins: { legend: { display: false },
-                 tooltip: { displayColors: false, callbacks: { label: (c) => usd.format(c.parsed.y) } } },
+                 tooltip: { displayColors: false, callbacks: { label: (c) => fmt.tip(c.parsed.y) } } },
       scales: {
-        y: { border: { display: false }, ticks: { color: k.text, maxTicksLimit: 5, callback: (v) => usd0.format(v) }, grid: { color: k.line } },
+        y: { border: { display: false }, ticks: { color: k.text, maxTicksLimit: 5, callback: (v) => fmt.tick(v) }, grid: { color: k.line }, ...(opts.y || {}) },
         x: { border: { display: false }, ticks: { color: k.text, maxTicksLimit: 7, maxRotation: 0 }, grid: { display: false } },
       },
     },
@@ -177,6 +184,14 @@ async function loadHome() {
     const s = await api(`/api/summary?start=${iso(new Date(now.getFullYear(), now.getMonth(), 1))}&end=${iso(now)}`);
     $("homeFinance").innerHTML = `${usd0.format(s.total_spent)}<small>spent this month</small>`;
   } catch { $("homeFinance").textContent = "Open to connect accounts"; }
+  try {
+    const h = await api(`/api/health/summary?start=${iso(new Date(Date.now() - 7 * 864e5))}&end=${iso(now)}`);
+    const rec = h.latest?.recovery;
+    $("homeHealth").classList.toggle("muted-stat", false);
+    $("homeHealth").innerHTML = rec != null
+      ? `${Math.round(rec)}%<small>recovery · ${h.workouts_this_week} workout${h.workouts_this_week === 1 ? "" : "s"} this week</small>`
+      : `${h.workouts_this_week}<small>workout${h.workouts_this_week === 1 ? "" : "s"} this week</small>`;
+  } catch { $("homeHealth").textContent = "Log your first workout"; }
 }
 
 // ---------- Finances ----------
@@ -296,11 +311,214 @@ async function connect(kind) {
 
 async function doSync() {
   if (!backendReady) return toast("Backend not connected yet");
+  if (parseRoute().section === "health") return syncWhoop();
   $("sync").disabled = true; $("sync").textContent = "Syncing…";
   try { await api("/api/sync", { method: "POST" }); toast("Up to date"); render(); }
   catch (e) { toast("Sync failed: " + e.message); }
   finally { $("sync").disabled = false; $("sync").textContent = "Sync"; }
 }
+
+// ---------- Health ----------
+const recZone = (r) => (r == null ? "" : r >= 67 ? "rec-green" : r >= 34 ? "rec-yellow" : "rec-red");
+const shortDate = (d) => new Date(d + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
+const fmtHours = (h) => (h == null ? "—" : `${Math.floor(h)}h ${String(Math.round((h % 1) * 60)).padStart(2, "0")}m`);
+let calMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+let whoopState = null;
+
+async function loadHealth(tab) {
+  if (tab === "overview") return loadHealthOverview();
+  if (tab === "workouts") return loadWorkoutsTab();
+  if (tab === "calendar") return renderCalendar();
+  if (tab === "connect") return loadConnect();
+}
+
+async function loadHealthOverview() {
+  const h = await api("/api/health/summary" + rangeParams());
+  whoopState = h.whoop;
+  const L = h.latest;
+  $("h-recovery").textContent = L?.recovery != null ? `${Math.round(L.recovery)}%` : "—";
+  $("h-recovery").className = "kpi-value " + (L ? recZone(L.recovery) + "-text" : "");
+  $("h-recovery-sub").textContent = L ? `${shortDate(L.date)} · RHR ${L.rhr ?? "—"} bpm` : "";
+  $("h-hrv").textContent = L?.hrv != null ? `${Math.round(L.hrv)} ms` : "—";
+  $("h-hrv-sub").textContent = h.averages.hrv != null ? `Avg ${Math.round(h.averages.hrv)} ms` : "";
+  const lastSleep = [...h.days].reverse().find((d) => d.sleep_hours != null);
+  $("h-sleep").textContent = lastSleep ? fmtHours(lastSleep.sleep_hours) : "—";
+  $("h-sleep-sub").textContent = lastSleep?.sleep_performance != null ? `${Math.round(lastSleep.sleep_performance)}% of need` : "";
+  $("h-workouts").textContent = h.workouts_this_week;
+
+  const hasWhoop = h.whoop.connected && h.days.length;
+  $("whoopEmpty").classList.toggle("hidden", h.whoop.connected);
+  $("healthCharts").classList.toggle("hidden", !hasWhoop);
+  if (!hasWhoop) return;
+  const labels = h.days.map((d) => shortDate(d.date));
+  const series = (k) => h.days.map((d) => d[k] ?? null);
+  const pct = { tip: (v) => `${Math.round(v)}%`, tick: (v) => `${v}%` };
+  drawChart("chart-recovery", "line", labels, series("recovery"), pct, { y: { min: 0, max: 100 } });
+  drawChart("chart-hrv", "line", labels, series("hrv"), { tip: (v) => `${Math.round(v)} ms`, tick: (v) => `${v}` });
+  drawChart("chart-sleep", "bar", labels, series("sleep_hours"), { tip: fmtHours, tick: (v) => `${v}h` }, { y: { min: 0 } });
+  drawChart("chart-strain", "bar", labels, series("strain"), { tip: (v) => v.toFixed(1), tick: (v) => `${v}` }, { y: { min: 0, max: 21 } });
+  const A = h.averages;
+  $("avg-recovery").textContent = A.recovery != null ? `Avg ${Math.round(A.recovery)}%` : "";
+  $("avg-hrv").textContent = A.hrv != null ? `Avg ${Math.round(A.hrv)} ms` : "";
+  $("avg-sleep").textContent = A.sleep_hours != null ? `Avg ${fmtHours(A.sleep_hours)}` : "";
+  $("avg-strain").textContent = A.strain != null ? `Avg ${A.strain.toFixed(1)}` : "";
+}
+
+// Workout log
+function exerciseRow(e = {}) {
+  const row = document.createElement("div");
+  row.className = "exercise-row";
+  row.innerHTML = `
+    <input class="input" placeholder="Exercise" value="${esc(e.name || "")}" data-k="name" />
+    <input class="input" type="number" min="0" placeholder="Sets" value="${e.sets ?? ""}" data-k="sets" />
+    <input class="input" type="number" min="0" placeholder="Reps" value="${e.reps ?? ""}" data-k="reps" />
+    <input class="input" type="number" min="0" step="0.5" placeholder="lb" value="${e.weight ?? ""}" data-k="weight" />
+    <button type="button" class="icon-btn" aria-label="Remove exercise">×</button>`;
+  row.querySelector("button").onclick = () => row.remove();
+  $("exerciseRows").appendChild(row);
+}
+
+function describeWorkout(w) {
+  const bits = [];
+  if (w.duration_min) bits.push(`${w.duration_min} min`);
+  if (w.strain != null) bits.push(`Strain ${w.strain}`);
+  if (w.avg_hr) bits.push(`Avg HR ${w.avg_hr}`);
+  if (w.calories) bits.push(`${w.calories} cal`);
+  return bits.join(" · ");
+}
+
+function exerciseText(w) {
+  return (w.exercises || []).map((e) => {
+    const sr = e.sets && e.reps ? ` ${e.sets}×${e.reps}` : e.sets ? ` ${e.sets} sets` : "";
+    return `${esc(e.name)}${sr}${e.weight ? ` @ ${e.weight} lb` : ""}`;
+  }).join(", ");
+}
+
+async function loadWorkoutsTab() {
+  if (!$("w-date").value) $("w-date").value = iso(new Date(Date.now() - new Date().getTimezoneOffset() * 6e4));
+  if (!$("exerciseRows").children.length) exerciseRow();
+  const { workouts } = await api("/api/workouts");
+  $("workoutList").innerHTML = workouts.map((w) => `
+    <div class="workout-item">
+      <div class="workout-date">${shortDate(w.date)}</div>
+      <div class="workout-main">
+        <div class="workout-title">${esc(w.type)}${w.source === "whoop" ? '<span class="source-tag">WHOOP</span>' : ""}</div>
+        <div class="workout-meta">${describeWorkout(w)}</div>
+        ${w.exercises?.length ? `<div class="workout-ex">${exerciseText(w)}</div>` : ""}
+        ${w.notes ? `<div class="workout-ex">${esc(w.notes)}</div>` : ""}
+      </div>
+      ${w.source === "manual" ? `<button class="text-btn" data-del="${esc(w.id)}">Delete</button>` : ""}
+    </div>`).join("") || `<div class="empty">No workouts yet. Log your first one.</div>`;
+  $$("[data-del]").forEach((b) => (b.onclick = async () => {
+    if (!confirm("Delete this workout?")) return;
+    await api(`/api/workouts/${encodeURIComponent(b.dataset.del)}`, { method: "DELETE" });
+    toast("Workout deleted"); loadWorkoutsTab();
+  }));
+}
+
+$("addExercise").onclick = () => exerciseRow();
+$("workoutForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const exercises = [...$("exerciseRows").children].map((row) => {
+    const o = {}; row.querySelectorAll("[data-k]").forEach((i) => (o[i.dataset.k] = i.value.trim())); return o;
+  }).filter((x) => x.name);
+  $("w-save").disabled = true;
+  try {
+    await api("/api/workouts", { method: "POST", body: JSON.stringify({
+      date: $("w-date").value, type: $("w-type").value.trim(), duration_min: $("w-duration").value,
+      notes: $("w-notes").value.trim(), exercises }) });
+    toast("Workout saved");
+    $("w-type").value = ""; $("w-duration").value = ""; $("w-notes").value = ""; $("exerciseRows").innerHTML = ""; exerciseRow();
+    loadWorkoutsTab();
+  } catch (err) { toast(err.message); }
+  finally { $("w-save").disabled = false; }
+};
+
+// Calendar
+async function renderCalendar() {
+  const y = calMonth.getFullYear(), m = calMonth.getMonth();
+  const first = new Date(y, m, 1), last = new Date(y, m + 1, 0);
+  $("calTitle").textContent = first.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const ds = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const [h, wk] = await Promise.all([
+    api(`/api/health/summary?start=${ds(first)}&end=${ds(last)}`),
+    api(`/api/workouts?start=${ds(first)}&end=${ds(last)}`)]);
+  const byDay = Object.fromEntries(h.days.map((d) => [d.date, d]));
+  const workoutsByDay = {};
+  wk.workouts.forEach((w) => (workoutsByDay[w.date] ||= []).push(w));
+  const lead = (first.getDay() + 6) % 7;          // weeks start Monday
+  const todayStr = ds(new Date());
+  let html = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => `<div class="cal-dow">${d}</div>`).join("");
+  for (let i = 0; i < lead; i++) html += `<div class="cal-cell cal-pad"></div>`;
+  for (let day = 1; day <= last.getDate(); day++) {
+    const key = ds(new Date(y, m, day));
+    const hd = byDay[key], ws = workoutsByDay[key] || [];
+    html += `<button class="cal-cell${key === todayStr ? " today" : ""}${ws.length ? " has-workout" : ""}" data-day="${key}">
+      <span class="cal-num">${day}</span>
+      ${hd?.recovery != null ? `<span class="cal-rec"><i class="dot ${recZone(hd.recovery)}"></i>${Math.round(hd.recovery)}%</span>` : ""}
+      <span class="cal-workouts">${ws.slice(0, 3).map((w) => `<span class="cal-chip">${esc(w.type)}</span>`).join("")}${ws.length > 3 ? `<span class="cal-more">+${ws.length - 3}</span>` : ""}</span>
+    </button>`;
+  }
+  $("calendar").innerHTML = html;
+  $("calDetail").classList.add("hidden");
+  $$("[data-day]").forEach((c) => (c.onclick = () => {
+    const key = c.dataset.day, hd = byDay[key], ws = workoutsByDay[key] || [];
+    const stats = hd ? [hd.recovery != null && `Recovery ${Math.round(hd.recovery)}%`, hd.hrv != null && `HRV ${Math.round(hd.hrv)} ms`,
+      hd.sleep_hours != null && `Sleep ${fmtHours(hd.sleep_hours)}`, hd.strain != null && `Strain ${hd.strain}`].filter(Boolean).join(" · ") : "";
+    $("calDetail").innerHTML = `<h3>${new Date(key + "T00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</h3>
+      ${stats ? `<p>${stats}</p>` : ""}
+      ${ws.map((w) => `<div class="workout-item"><div class="workout-main"><div class="workout-title">${esc(w.type)}</div>
+        <div class="workout-meta">${describeWorkout(w)}</div>${w.exercises?.length ? `<div class="workout-ex">${exerciseText(w)}</div>` : ""}</div></div>`).join("")
+        || `<p>No workouts logged. <a class="link" href="#/health/workouts">Log one →</a></p>`}`;
+    $("calDetail").classList.remove("hidden");
+  }));
+}
+$("calPrev").onclick = () => { calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() - 1, 1); renderCalendar().catch((e) => toast(e.message)); };
+$("calNext").onclick = () => { calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 1); renderCalendar().catch((e) => toast(e.message)); };
+$("calToday").onclick = () => { calMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1); renderCalendar().catch((e) => toast(e.message)); };
+
+// WHOOP connection
+async function loadConnect() {
+  const result = routeQuery.get("whoop");
+  if (result) {
+    history.replaceState(null, "", "#/health/connect");
+    const msg = { connected: "WHOOP connected. Pulling your history…", cancelled: "WHOOP connection cancelled",
+                  expired: "That link expired. Try connecting again.", failed: "WHOOP couldn't finish connecting. Try again." }[result];
+    if (msg) toast(msg);
+  }
+  const h = await api(`/api/health/summary?start=${iso(new Date())}&end=${iso(new Date())}`);
+  whoopState = h.whoop;
+  const on = h.whoop.connected;
+  $("whoopStatus").textContent = on
+    ? `Connected${h.whoop.last_sync ? ` · last synced ${new Date(h.whoop.last_sync).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : " · not synced yet"}`
+    : "Recovery, HRV, resting heart rate, strain, sleep and workouts.";
+  $("whoopConnect").classList.toggle("hidden", on);
+  $("whoopSync").classList.toggle("hidden", !on);
+  $("whoopDisconnect").classList.toggle("hidden", !on);
+  if (result === "connected") await syncWhoop();
+}
+
+async function syncWhoop() {
+  const btns = [$("sync"), $("whoopSync")];
+  btns.forEach((b) => { b.disabled = true; });
+  $("sync").textContent = "Syncing…";
+  try {
+    const r = await api("/api/whoop/sync", { method: "POST" });
+    toast(`WHOOP synced · ${r.days} days, ${r.workouts} workouts`);
+    render();
+  } catch (e) { toast(e.message); }
+  finally { btns.forEach((b) => { b.disabled = false; }); $("sync").textContent = "Sync"; }
+}
+
+$("whoopConnect").onclick = async () => {
+  try { const { url } = await api("/api/whoop/connect", { method: "POST" }); location.href = url; }
+  catch (e) { toast(e.message); }
+};
+$("whoopSync").onclick = syncWhoop;
+$("whoopDisconnect").onclick = async () => {
+  if (!confirm("Disconnect WHOOP? Your synced history stays in LifeTracker.")) return;
+  await api("/api/whoop", { method: "DELETE" }); toast("WHOOP disconnected"); loadConnect();
+};
 
 // ---------- Wiring ----------
 $("signin").onclick = () => signInWithPopup(auth, new GoogleAuthProvider()).catch((e) => toast(e.message));

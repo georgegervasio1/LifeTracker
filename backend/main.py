@@ -10,6 +10,7 @@ Endpoints (all require a Firebase ID token for ALLOWED_EMAIL):
   GET  /api/summary                 -> spending by category + monthly totals
   GET  /api/holdings                -> latest investment holdings
   POST /api/chat                    -> ask the AI assistant (Claude) about your finances
+  Health: /api/health/summary, /api/workouts, /api/whoop/{connect,callback,sync}  (see health.py)
 """
 import csv
 import json
@@ -403,6 +404,11 @@ def load_holdings():
 @require_owner
 def holdings():
     return jsonify(load_holdings())
+
+
+# ---------------------------------------------------------------- Health (workouts + WHOOP)
+import health
+health.init(app, db, firestore, require_owner, user_ref)
 
 
 # ---------------------------------------------------------------- AI assistant

@@ -34,8 +34,12 @@ jobs:
           env_vars: |
             PLAID_ENV=sandbox
             FRONTEND_ORIGIN=https://georgegervasio1.github.io
+            FRONTEND_URL=https://georgegervasio1.github.io/LifeTracker/
+            WHOOP_REDIRECT_URI=https://lifetracker-api-102116119622.us-east4.run.app/api/whoop/callback
           secrets: |
             PLAID_CLIENT_ID=plaid-client-id:latest
             PLAID_SECRET=plaid-secret:latest
             ALLOWED_EMAIL=allowed-email:latest
             ANTHROPIC_API_KEY=anthropic-api-key:latest
+            WHOOP_CLIENT_ID=whoop-client-id:latest
+            WHOOP_CLIENT_SECRET=whoop-client-secret:latest

@@ -6,6 +6,9 @@
   <meta name="robots" content="noindex, nofollow" />
   <meta name="color-scheme" content="light dark" />
   <title>LifeTracker</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="assets/favicon-32.png" sizes="32x32" type="image/png" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
@@ -24,10 +27,11 @@
   <!-- ───────────────────────── Sign in ───────────────────────── -->
   <div class="login" id="login">
     <div class="login-inner">
-      <p class="eyebrow">LifeTracker</p>
+      <p class="eyebrow login-brand"><svg class="brand-mark" viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="116" fill="currentColor"/><path d="M140 136V340a36 36 0 0 0 36 36h44" fill="none" stroke="var(--bg)" stroke-width="40" stroke-linecap="round"/><path d="M220 376l48-56 40 28 64-96" fill="none" stroke="var(--accent)" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/></svg>LifeTracker</p>
       <h1 class="display">Your life,<br />in one place.</h1>
       <p class="lede">Finances, health, education and goals — together.</p>
       <button id="signin" class="btn btn-primary btn-lg">Sign in with Google</button>
+      <p class="login-legal">By signing in you agree to how we handle your data, described in our <a href="privacy.html">Privacy Policy</a>.</p>
     </div>
   </div>
 
@@ -35,7 +39,7 @@
     <!-- ───────────────────────── Top nav ───────────────────────── -->
     <header class="topnav">
       <div class="topnav-inner">
-        <a href="#/" class="brand">LifeTracker</a>
+        <a href="#/" class="brand"><svg class="brand-mark" viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="116" fill="currentColor"/><path d="M140 136V340a36 36 0 0 0 36 36h44" fill="none" stroke="var(--bg)" stroke-width="40" stroke-linecap="round"/><path d="M220 376l48-56 40 28 64-96" fill="none" stroke="var(--accent)" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/></svg>LifeTracker</a>
         <nav class="section-links" aria-label="Sections">
           <a href="#/finances" data-section="finances">Finances</a>
           <a href="#/health" data-section="health">Health</a>
@@ -56,7 +60,7 @@
       <div class="subnav-inner">
         <span class="subnav-title" id="subnavTitle">Finances</span>
         <nav class="tabs" id="subnavTabs" aria-label="Section tabs"></nav>
-        <div class="subnav-actions" id="financeControls">
+        <div class="subnav-actions" id="sectionControls">
           <select id="range" class="select" aria-label="Date range">
             <option value="30">30 days</option>
             <option value="90" selected>90 days</option>
@@ -83,7 +87,7 @@
           </a>
           <a class="home-card" href="#/health">
             <span class="home-card-label">Health</span>
-            <span class="home-card-stat muted-stat">In development</span>
+            <span class="home-card-stat muted-stat" id="homeHealth">—</span>
             <span class="home-card-desc">Workouts, recovery, strain and sleep</span>
             <span class="home-card-cta">Open <span aria-hidden="true">→</span></span>
           </a>
@@ -205,16 +209,87 @@
 
       <!-- ───────────────────────── PLACEHOLDER SECTIONS ───────────────────────── -->
       <section class="route" data-route="health">
-        <div class="placeholder wrap">
-          <p class="eyebrow">Health · In development</p>
-          <h1 class="display">Train with intent.</h1>
-          <p class="lede">Log every workout, see it on a calendar, and read it against your recovery, strain and sleep.</p>
-          <ul class="feature-list">
-            <li><strong>Workout log</strong><span>Type, duration, sets, reps and notes</span></li>
-            <li><strong>Calendar</strong><span>Month view of every session</span></li>
-            <li><strong>WHOOP</strong><span>Recovery, strain, sleep and HRV trends</span></li>
-            <li><strong>Assistant</strong><span>Ask about your training, or log a workout by chat</span></li>
-          </ul>
+        <!-- Overview -->
+        <div class="panel wrap" data-panel="overview">
+          <div class="kpis">
+            <div class="kpi"><span class="kpi-label">Recovery</span><span class="kpi-value" id="h-recovery">—</span><span class="kpi-sub" id="h-recovery-sub"></span></div>
+            <div class="kpi"><span class="kpi-label">HRV</span><span class="kpi-value" id="h-hrv">—</span><span class="kpi-sub" id="h-hrv-sub"></span></div>
+            <div class="kpi"><span class="kpi-label">Sleep</span><span class="kpi-value" id="h-sleep">—</span><span class="kpi-sub" id="h-sleep-sub"></span></div>
+            <a class="kpi kpi-link" href="#/health/workouts"><span class="kpi-label">Workouts this week</span><span class="kpi-value" id="h-workouts">—</span><span class="kpi-sub">Log a workout →</span></a>
+          </div>
+          <div class="card empty-state hidden" id="whoopEmpty">
+            <h3>Connect WHOOP to see recovery, strain and sleep</h3>
+            <p>Your workout log works on its own. WHOOP adds daily recovery, HRV, resting heart rate, strain and sleep.</p>
+            <a class="btn btn-primary" href="#/health/connect">Connect WHOOP</a>
+          </div>
+          <div class="grid-2" id="healthCharts">
+            <div class="card"><div class="card-head"><h3>Recovery</h3><span class="card-meta" id="avg-recovery"></span></div><canvas id="chart-recovery"></canvas></div>
+            <div class="card"><div class="card-head"><h3>Heart rate variability</h3><span class="card-meta" id="avg-hrv"></span></div><canvas id="chart-hrv"></canvas></div>
+            <div class="card"><div class="card-head"><h3>Sleep</h3><span class="card-meta" id="avg-sleep"></span></div><canvas id="chart-sleep"></canvas></div>
+            <div class="card"><div class="card-head"><h3>Day strain</h3><span class="card-meta" id="avg-strain"></span></div><canvas id="chart-strain"></canvas></div>
+          </div>
+        </div>
+
+        <!-- Workouts -->
+        <div class="panel wrap" data-panel="workouts">
+          <div class="grid-workouts">
+            <form class="card workout-form" id="workoutForm" autocomplete="off">
+              <h3>Log a workout</h3>
+              <div class="form-row">
+                <label>Date<input type="date" id="w-date" class="input" required /></label>
+                <label>Duration (min)<input type="number" id="w-duration" class="input" min="1" max="600" placeholder="60" /></label>
+              </div>
+              <label>Type<input id="w-type" class="input" list="workoutTypes" placeholder="Strength, Run, Cycling…" required /></label>
+              <datalist id="workoutTypes">
+                <option>Strength</option><option>Run</option><option>Cycling</option><option>Swim</option><option>Walk</option>
+                <option>HIIT</option><option>Yoga</option><option>Pilates</option><option>Golf</option><option>Basketball</option><option>Tennis</option><option>Rowing</option>
+              </datalist>
+              <div class="exercise-head"><span>Exercises</span><button type="button" class="text-btn" id="addExercise">+ Add exercise</button></div>
+              <div id="exerciseRows"></div>
+              <label>Notes<textarea id="w-notes" class="input" rows="2" placeholder="How did it feel?"></textarea></label>
+              <button type="submit" class="btn btn-primary" id="w-save">Save workout</button>
+            </form>
+            <div class="card card-flush">
+              <div class="card-head padded"><h3>Recent workouts</h3><span class="card-meta">Last 60 days</span></div>
+              <div id="workoutList" class="workout-list"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Calendar -->
+        <div class="panel wrap" data-panel="calendar">
+          <div class="cal-head">
+            <h2 class="title" id="calTitle"></h2>
+            <div class="cal-nav">
+              <button class="btn btn-secondary btn-sm" id="calPrev" aria-label="Previous month">‹</button>
+              <button class="btn btn-secondary btn-sm" id="calToday">Today</button>
+              <button class="btn btn-secondary btn-sm" id="calNext" aria-label="Next month">›</button>
+            </div>
+          </div>
+          <div class="cal-legend"><span><i class="dot rec-green"></i>Recovery 67–100</span><span><i class="dot rec-yellow"></i>34–66</span><span><i class="dot rec-red"></i>0–33</span></div>
+          <div class="calendar" id="calendar"></div>
+          <div class="card cal-detail hidden" id="calDetail"></div>
+        </div>
+
+        <!-- Connect -->
+        <div class="panel wrap" data-panel="connect">
+          <div class="card connect-card">
+            <div>
+              <h3>WHOOP</h3>
+              <p id="whoopStatus">Checking connection…</p>
+            </div>
+            <div class="connect-actions">
+              <button class="btn btn-primary hidden" id="whoopConnect">Connect WHOOP</button>
+              <button class="btn btn-secondary hidden" id="whoopSync">Sync now</button>
+              <button class="text-btn hidden" id="whoopDisconnect">Disconnect</button>
+            </div>
+          </div>
+          <div class="card connect-card muted-card">
+            <div>
+              <h3>Apple Calendar</h3>
+              <p>Coming later: subscribe to your LifeTracker workouts from Apple Calendar.</p>
+            </div>
+          </div>
         </div>
       </section>
 

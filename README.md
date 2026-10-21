@@ -72,7 +72,23 @@ read -s -p "Anthropic API key: " V; echo; printf %s "$V" | gcloud secrets create
 Then redeploy with `ANTHROPIC_API_KEY=anthropic-api-key:latest` added to `--set-secrets`.
 Model defaults to `claude-sonnet-5-5`; override with the `CLAUDE_MODEL` env var.
 
-## 6. Daily auto-sync (later)
+## 6. Health: workouts + WHOOP
+
+Workouts are logged in **Health → Workouts** and shown on **Health → Calendar**. WHOOP adds daily recovery,
+HRV, resting heart rate, strain, sleep, and WHOOP-tracked workouts (API v2, OAuth with refresh tokens).
+
+1. Create an app at the WHOOP Developer Dashboard with redirect URL
+   `https://<your-cloud-run-url>/api/whoop/callback` and scopes `read:recovery read:cycles read:sleep read:workout read:profile` (+ `offline`).
+2. Store the credentials:
+   ```bash
+   read -s -p "WHOOP client ID: " V; echo; printf %s "$V" | gcloud secrets create whoop-client-id --data-file=-; unset V
+   read -s -p "WHOOP client secret: " V; echo; printf %s "$V" | gcloud secrets create whoop-client-secret --data-file=-; unset V
+   ```
+3. Redeploy with `WHOOP_REDIRECT_URI` and `FRONTEND_URL` env vars and the two secrets, then **Health → Connect → Connect WHOOP**.
+
+The first sync pulls ~6 months; later syncs pull the last 3 days (scores can change after the fact).
+
+## 7. Daily auto-sync (later)
 
 Add a Cloud Scheduler job that calls `POST /api/sync` daily. Easiest path: add a small
 `/api/cron-sync` endpoint protected by Cloud Scheduler's OIDC token.
@@ -85,5 +101,6 @@ Add a Cloud Scheduler job that calls `POST /api/sync` daily. Easiest path: add a
 - [ ] Recurring charge / subscription detection
 - [ ] Net worth over time (cash + investments)
 - [x] "Ask my finances" AI chat (Claude)
+- [x] Health: workout log, calendar, WHOOP sync
 - [ ] Assistant actions: recategorize, set budgets
 - [ ] "Change the app" requests → GitHub issue → Claude Code PR
