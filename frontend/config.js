@@ -1,6 +1,6 @@
 // Public config — safe to commit (Firebase web config is not a secret;
 // the backend enforces who can actually read data).
-export const API_BASE = "https://YOUR-CLOUD-RUN-URL.run.app"; // e.g. https://lifetracker-api-xxxx.us-east4.run.app
+export const API_BASE = "https://lifetracker-api-102116119622.us-east4.run.app";
 
 export const FIREBASE_CONFIG = {
   apiKey: "AIzaSyDaG9oKTfsKGBdmgr8R52Zrs7n4WG-gOOI",

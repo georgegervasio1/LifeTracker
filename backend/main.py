@@ -298,7 +298,7 @@ def holdings():
                    history=[{"date": s["date"], "total": s["total"]} for s in reversed(snaps)])
 
 
-@app.get("/healthz")
+@app.get("/health")
 def health():
     return jsonify(ok=True, time=datetime.utcnow().isoformat())
 

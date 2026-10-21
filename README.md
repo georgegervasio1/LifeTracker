@@ -18,7 +18,7 @@ python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env          # fill in Plaid sandbox keys, set DEV_SKIP_AUTH=1
 gcloud auth application-default login   # lets Firestore work locally
-python main.py                # http://localhost:8080/healthz
+python main.py                # http://localhost:8080/health
 ```
 
 Frontend: set `API_BASE` in `frontend/config.js` to `http://localhost:8080`, then serve the folder
