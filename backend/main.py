@@ -8,8 +8,10 @@ Endpoints (all require a Firebase ID token for ALLOWED_EMAIL):
   GET  /api/transactions            -> normalized transactions (?start=&end=)
   GET  /api/summary                 -> spending by category + monthly totals
   GET  /api/holdings                -> latest investment holdings
+  POST /api/chat                    -> ask the AI assistant (Claude) about your finances
 """
 import csv
+import json
 import hashlib
 import io
 import os
@@ -269,7 +271,10 @@ def list_transactions():
 @app.get("/api/summary")
 @require_owner
 def summary():
-    start, end = _date_range()
+    return jsonify(compute_summary(*_date_range()))
+
+
+def compute_summary(start, end):
     by_cat, by_month, by_source = defaultdict(float), defaultdict(float), defaultdict(float)
     income = spend = 0.0
     for t in _load_transactions(start, end):
@@ -283,19 +288,86 @@ def summary():
         by_month[t["date"][:7]] += t["amount"]
         by_source[t["source"]] += t["amount"]
     rnd = lambda d: {k: round(v, 2) for k, v in sorted(d.items(), key=lambda kv: -kv[1])}
-    return jsonify(start=start, end=end, total_spent=round(spend, 2), total_in=round(income, 2),
-                   by_category=rnd(by_cat), by_source=rnd(by_source),
-                   by_month=dict(sorted({k: round(v, 2) for k, v in by_month.items()}.items())))
+    return dict(start=start, end=end, total_spent=round(spend, 2), total_in=round(income, 2),
+                by_category=rnd(by_cat), by_source=rnd(by_source),
+                by_month=dict(sorted({k: round(v, 2) for k, v in by_month.items()}.items())))
+
+
+def load_holdings():
+    snaps = (user_ref().collection("holdings")
+             .order_by("date", direction=firestore.Query.DESCENDING).limit(180).stream())
+    snaps = [s.to_dict() for s in snaps]
+    return dict(latest=snaps[0] if snaps else None,
+                history=[{"date": s["date"], "total": s["total"]} for s in reversed(snaps)])
 
 
 @app.get("/api/holdings")
 @require_owner
 def holdings():
-    snaps = (user_ref().collection("holdings")
-             .order_by("date", direction=firestore.Query.DESCENDING).limit(180).stream())
-    snaps = [s.to_dict() for s in snaps]
-    return jsonify(latest=snaps[0] if snaps else None,
-                   history=[{"date": s["date"], "total": s["total"]} for s in reversed(snaps)])
+    return jsonify(load_holdings())
+
+
+# ---------------------------------------------------------------- AI assistant
+import assistant
+
+
+def tool_search_transactions(start=None, end=None, text=None, category=None, source=None,
+                             min_amount=None, max_amount=None, limit=50):
+    start = start or (date.today() - timedelta(days=365)).isoformat()
+    end = end or date.today().isoformat()
+    rows = _load_transactions(start, end)
+    t, c, s = (text or "").lower(), (category or "").lower(), (source or "").lower()
+    out = [r for r in rows
+           if (not t or t in f"{r.get('merchant')} {r.get('note')} {r.get('category')}".lower())
+           and (not c or c in str(r.get("category", "")).lower())
+           and (not s or s in str(r.get("source", "")).lower())
+           and (min_amount is None or r["amount"] >= min_amount)
+           and (max_amount is None or r["amount"] <= max_amount)]
+    out.sort(key=lambda r: r["date"], reverse=True)
+    keep = ("date", "merchant", "amount", "category", "source", "note", "pending")
+    return {"match_count": len(out),
+            "total_amount": round(sum(r["amount"] for r in out), 2),
+            "transactions": [{k: r.get(k) for k in keep} for r in out[:min(int(limit or 50), 200)]]}
+
+
+def assistant_context():
+    items = [d.to_dict() for d in user_ref().collection("items").stream()]
+    accts = ", ".join(f"{i.get('institution')} ({i.get('kind')})" for i in items) or "no linked accounts"
+    return f"Linked via Plaid: {accts}. Venmo data comes from monthly CSV uploads, if any."
+
+
+@app.post("/api/chat")
+@require_owner
+def chat():
+    body = request.get_json(force=True) or {}
+    tools_impl = {
+        "get_spending_summary": compute_summary,
+        "search_transactions": tool_search_transactions,
+        "get_investments": load_holdings,
+    }
+    try:
+        reply, used = assistant.run_chat(body.get("messages", []), tools_impl, assistant_context())
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+    return jsonify(reply=reply, tools_used=used)
+
+
+# ---------------------------------------------------------------- Errors as JSON
+@app.errorhandler(Exception)
+def handle_error(e):
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        return jsonify(error=e.description), e.code
+    app.logger.exception("Unhandled error")
+    if isinstance(e, plaid.ApiException):
+        try:
+            detail = json.loads(e.body)
+            return jsonify(error=f"Plaid: {detail.get('error_code')} — {detail.get('error_message')}"), 502
+        except Exception:
+            pass
+    if e.__class__.__module__.startswith("anthropic"):
+        return jsonify(error=f"AI assistant error: {e.__class__.__name__}"), 502
+    return jsonify(error=f"Server error: {e.__class__.__name__}"), 500
 
 
 @app.get("/health")

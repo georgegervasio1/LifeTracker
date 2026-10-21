@@ -4,82 +4,98 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="robots" content="noindex, nofollow" />
-  <title>LifeTracker</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet" />
+  <title>LifeTracker | Personal Finance</title>
   <link rel="stylesheet" href="styles.css" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
   <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
 </head>
 <body>
-  <!-- Sign-in gate -->
-  <section id="login" class="login">
-    <div class="login-card">
-      <div class="brand"><span class="logo">◆</span> LifeTracker</div>
-      <p class="muted">Your money, all in one place.</p>
-      <button id="signin" class="btn primary">Sign in with Google</button>
+  <div class="toast" id="toast"></div>
+
+  <!-- ── Login ─────────────────────────────────────────────────────────── -->
+  <div class="login-overlay" id="login">
+    <div class="login-box">
+      <h2>LifeTracker</h2>
+      <p>Your money, all in one place.</p>
+      <button id="signin">Sign in with Google</button>
     </div>
-  </section>
+  </div>
 
-  <!-- App -->
   <div id="app" class="hidden">
-    <header class="topbar">
-      <div class="brand"><span class="logo">◆</span> LifeTracker</div>
-      <nav class="tabs">
-        <button class="tab active" data-view="overview">Overview</button>
-        <button class="tab" data-view="transactions">Transactions</button>
-        <button class="tab" data-view="investments">Investments</button>
-        <button class="tab" data-view="accounts">Accounts</button>
-      </nav>
-      <div class="actions">
-        <select id="range">
-          <option value="30">30 days</option>
-          <option value="90" selected>90 days</option>
-          <option value="365">12 months</option>
+    <!-- ── Nav ──────────────────────────────────────────────────────────── -->
+    <nav>
+      <div class="nav-brand">LifeTracker</div>
+      <div class="nav-right">
+        <select id="range" class="nav-select" title="Date range">
+          <option value="30">Last 30 days</option>
+          <option value="90" selected>Last 90 days</option>
+          <option value="365">Last 12 months</option>
         </select>
-        <button id="sync" class="btn">↻ Sync</button>
-        <button id="signout" class="btn ghost">Sign out</button>
+        <button id="sync" class="ghost-btn" title="Pull new transactions">↻ Sync</button>
+        <button class="theme-toggle" id="themeBtn" title="Toggle light/dark mode">🌙</button>
+        <button id="signout" class="ghost-btn">Sign out</button>
       </div>
-    </header>
+    </nav>
 
-    <main>
-      <!-- Overview -->
-      <section id="view-overview" class="view">
-        <div class="kpis">
-          <div class="kpi"><span class="label">Spent</span><span id="kpi-spent" class="value">—</span></div>
-          <div class="kpi"><span class="label">Money in</span><span id="kpi-in" class="value">—</span></div>
-          <div class="kpi"><span class="label">Net</span><span id="kpi-net" class="value">—</span></div>
-          <div class="kpi"><span class="label">Portfolio</span><span id="kpi-portfolio" class="value">—</span></div>
+    <div class="container">
+      <div class="tab-nav">
+        <button class="tab-button active" data-view="overview">🏠 Overview</button>
+        <button class="tab-button" data-view="transactions">💳 Transactions</button>
+        <button class="tab-button" data-view="investments">📈 Investments</button>
+        <button class="tab-button" data-view="assistant">🤖 AI Assistant</button>
+        <button class="tab-button" data-view="accounts">🔗 Accounts</button>
+      </div>
+
+      <!-- ── OVERVIEW ──────────────────────────────────────────────────── -->
+      <section id="view-overview" class="tab-content active">
+        <div class="hero-section">
+          <div class="hero-content">
+            <div class="firm-logo">LifeTracker</div>
+            <div class="firm-tagline" id="heroTagline">Spending, cash flow and investments — one dashboard</div>
+          </div>
         </div>
-        <div class="grid">
-          <div class="card"><h3>Spending by category</h3><canvas id="chart-category"></canvas></div>
-          <div class="card"><h3>Monthly spending</h3><canvas id="chart-month"></canvas></div>
-          <div class="card"><h3>By source</h3><canvas id="chart-source"></canvas></div>
-          <div class="card"><h3>Top merchants</h3><ul id="top-merchants" class="list"></ul></div>
+
+        <div class="stats-grid">
+          <div class="stat-card"><div class="stat-icon">💸</div><div class="stat-value" id="kpi-spent">—</div><div class="stat-label">Spent</div><div class="stat-sub" id="kpi-spent-sub"></div></div>
+          <div class="stat-card"><div class="stat-icon">💵</div><div class="stat-value" id="kpi-in">—</div><div class="stat-label">Money In</div></div>
+          <div class="stat-card"><div class="stat-icon">⚖️</div><div class="stat-value" id="kpi-net">—</div><div class="stat-label">Net Cash Flow</div></div>
+          <div class="stat-card clickable" data-goto="investments"><div class="stat-icon">📈</div><div class="stat-value" id="kpi-portfolio">—</div><div class="stat-label">Portfolio</div><div class="click-hint">VIEW HOLDINGS ↗</div></div>
+        </div>
+
+        <div class="charts-row">
+          <div class="chart-card"><h3>📊 Spending by Category <span id="catSubtitle"></span></h3><div id="categoryBars"></div></div>
+          <div class="chart-card"><h3>📅 Monthly Spending</h3><canvas id="chart-month"></canvas></div>
+          <div class="chart-card"><h3>🏦 By Source</h3><div id="sourceBars"></div></div>
+          <div class="chart-card"><h3>🛍 Top Merchants</h3><div id="merchantBars"></div></div>
         </div>
       </section>
 
-      <!-- Transactions -->
-      <section id="view-transactions" class="view hidden">
-        <div class="card">
-          <div class="card-head">
-            <h3>Transactions</h3>
-            <input id="tx-search" placeholder="Search merchant, category…" />
+      <!-- ── TRANSACTIONS ──────────────────────────────────────────────── -->
+      <section id="view-transactions" class="tab-content">
+        <div class="search-section">
+          <input id="tx-search" class="search-input" placeholder="Search merchant, category, source…" />
+          <div class="stats-bar">
+            <div class="stat-item"><div class="stat-label">Shown</div><div class="stat-value" id="tx-count">0</div></div>
+            <div class="stat-item"><div class="stat-label">Total</div><div class="stat-value" id="tx-total">$0</div></div>
           </div>
-          <table class="table">
+        </div>
+        <div class="chart-card table-card">
+          <table class="data-table">
             <thead><tr><th>Date</th><th>Merchant</th><th>Category</th><th>Source</th><th class="num">Amount</th></tr></thead>
             <tbody id="tx-body"></tbody>
           </table>
         </div>
       </section>
 
-      <!-- Investments -->
-      <section id="view-investments" class="view hidden">
-        <div class="grid">
-          <div class="card wide"><h3>Portfolio value</h3><canvas id="chart-portfolio"></canvas></div>
-          <div class="card wide">
-            <h3>Holdings</h3>
-            <table class="table">
+      <!-- ── INVESTMENTS ───────────────────────────────────────────────── -->
+      <section id="view-investments" class="tab-content">
+        <div class="charts-row">
+          <div class="chart-card wide"><h3>📈 Portfolio Value</h3><canvas id="chart-portfolio"></canvas></div>
+          <div class="chart-card wide table-card">
+            <h3>📋 Holdings</h3>
+            <table class="data-table">
               <thead><tr><th>Ticker</th><th>Name</th><th class="num">Qty</th><th class="num">Value</th><th class="num">Gain</th></tr></thead>
               <tbody id="holdings-body"></tbody>
             </table>
@@ -87,29 +103,54 @@
         </div>
       </section>
 
-      <!-- Accounts -->
-      <section id="view-accounts" class="view hidden">
-        <div class="grid">
-          <div class="card">
-            <h3>Connect accounts</h3>
-            <p class="muted">Bank &amp; credit cards (Chase) use Plaid Transactions. Brokerage (UBS) uses Plaid Investments.</p>
-            <div class="stack">
-              <button class="btn primary" data-link="bank">+ Connect bank / credit card</button>
-              <button class="btn primary" data-link="investments">+ Connect brokerage</button>
+      <!-- ── AI ASSISTANT ──────────────────────────────────────────────── -->
+      <section id="view-assistant" class="tab-content">
+        <div class="chat-container">
+          <div class="chat-header">
+            <h2>🤖 AI Financial Assistant</h2>
+            <p>Ask anything about your spending, cash flow or investments. Powered by Claude — it looks up your real numbers before answering.</p>
+          </div>
+          <div class="chat-messages" id="chatMessages">
+            <div class="message assistant">
+              <div class="message-avatar">AI</div>
+              <div class="message-body"><div class="message-content">Hi! I can see your linked accounts and imports. Try one of the suggestions below, or ask your own question.</div></div>
             </div>
           </div>
-          <div class="card">
-            <h3>Import Venmo</h3>
-            <p class="muted">venmo.com → Statements → pick a month → Download CSV. Re-uploading the same month won't duplicate.</p>
-            <input type="file" id="venmo-file" accept=".csv" />
-            <button id="venmo-upload" class="btn">Upload</button>
+          <div class="chat-input-area">
+            <div class="chat-input-wrapper">
+              <textarea id="chatInput" class="chat-input" rows="2" placeholder="e.g. How much did I spend on food last month?"></textarea>
+              <button id="chatSend" class="send-btn">Send</button>
+            </div>
+            <div class="suggestion-bubbles" id="chatSuggestions">
+              <button class="suggestion-chip">How much did I spend last month, by category?</button>
+              <button class="suggestion-chip">What are my biggest recurring charges?</button>
+              <button class="suggestion-chip">Compare this month's spending to last month</button>
+              <button class="suggestion-chip">How is my portfolio allocated?</button>
+            </div>
           </div>
         </div>
       </section>
-    </main>
-    <div id="toast" class="toast hidden"></div>
+
+      <!-- ── ACCOUNTS ──────────────────────────────────────────────────── -->
+      <section id="view-accounts" class="tab-content">
+        <div class="quick-actions">
+          <div class="action-card" data-link="bank"><h3>🏦 Connect Bank / Credit Card</h3><p>Chase checking, savings and credit cards via Plaid. Log in once and select every account you want tracked.</p></div>
+          <div class="action-card" data-link="investments"><h3>📈 Connect Brokerage</h3><p>UBS or other investment accounts via Plaid Investments — holdings and portfolio value.</p></div>
+        </div>
+        <div class="upload-section">
+          <h2>Import Venmo</h2>
+          <p>venmo.com → Statements → pick a month → Download CSV. Re-uploading the same month won't create duplicates.</p>
+          <label class="file-drop" id="venmoDrop">
+            <input type="file" id="venmo-file" accept=".csv" />
+            <span id="venmoLabel">📁 Click to choose a Venmo CSV</span>
+          </label>
+          <button id="venmo-upload" class="upload-btn">Upload</button>
+        </div>
+      </section>
+    </div>
   </div>
 
+  <div class="watermark">LIFETRACKER</div>
   <script type="module" src="app.js"></script>
 </body>
 </html>

@@ -60,7 +60,19 @@ Push to `main` → `deploy-backend.yml` deploys the API. Copy the Cloud Run URL 
 Settings → Pages → Source: **GitHub Actions**. Push to `main` → `pages.yml` publishes `/frontend`.
 (Pages on a private repo needs GitHub Pro — free with the GitHub Student Developer Pack.)
 
-## 5. Daily auto-sync (later)
+## 5. AI assistant (Claude)
+
+The **🤖 AI Assistant** tab sends your question to `POST /api/chat`. The backend calls the Claude API with
+three read-only tools (`get_spending_summary`, `search_transactions`, `get_investments`) scoped to your own
+data, so Claude looks up real numbers before answering. It cannot change data or move money.
+
+```bash
+read -s -p "Anthropic API key: " V; echo; printf %s "$V" | gcloud secrets create anthropic-api-key --data-file=-; unset V
+```
+Then redeploy with `ANTHROPIC_API_KEY=anthropic-api-key:latest` added to `--set-secrets`.
+Model defaults to `claude-sonnet-5-5`; override with the `CLAUDE_MODEL` env var.
+
+## 6. Daily auto-sync (later)
 
 Add a Cloud Scheduler job that calls `POST /api/sync` daily. Easiest path: add a small
 `/api/cron-sync` endpoint protected by Cloud Scheduler's OIDC token.
@@ -72,4 +84,6 @@ Add a Cloud Scheduler job that calls `POST /api/sync` daily. Easiest path: add a
 - [ ] Budgets and alerts
 - [ ] Recurring charge / subscription detection
 - [ ] Net worth over time (cash + investments)
-- [ ] "Ask my finances" LLM chat
+- [x] "Ask my finances" AI chat (Claude)
+- [ ] Assistant actions: recategorize, set budgets
+- [ ] "Change the app" requests → GitHub issue → Claude Code PR

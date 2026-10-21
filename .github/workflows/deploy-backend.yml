@@ -38,3 +38,4 @@ jobs:
             PLAID_CLIENT_ID=plaid-client-id:latest
             PLAID_SECRET=plaid-secret:latest
             ALLOWED_EMAIL=allowed-email:latest
+            ANTHROPIC_API_KEY=anthropic-api-key:latest
