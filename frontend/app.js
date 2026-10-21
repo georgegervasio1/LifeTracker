@@ -121,6 +121,10 @@ async function doSync() {
 }
 
 async function refresh() {
+  if (API_BASE.includes("YOUR-")) {
+    toast(`Signed in as ${auth.currentUser.email}. Backend not connected yet.`);
+    return;
+  }
   const active = document.querySelector(".tab.active").dataset.view;
   if (active === "investments") await loadInvestments(); else await loadOverview();
 }
