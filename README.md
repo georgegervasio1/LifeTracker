@@ -88,7 +88,15 @@ HRV, resting heart rate, strain, sleep, and WHOOP-tracked workouts (API v2, OAut
 
 The first sync pulls ~6 months; later syncs pull the last 3 days (scores can change after the fact).
 
-## 7. Daily auto-sync (later)
+## 7. Education
+
+**Education** tracks courses and grades, computes GPA with Georgetown Law's grade points (A+ 4.33 … F 0;
+P/H/CR excluded), separates actual from projected grades, solves for the average needed to hit a target GPA,
+audits J.D. requirements (85 credits, 54 at the Law Center, 6 experiential, PR, upperclass writing,
+critical-perspectives course, 2.00 minimum), and plans upcoming terms with time-conflict detection.
+Load data via **Education → Import file** (`{profile, courses}` JSON) or add courses in the Planner.
+
+## 8. Daily auto-sync (later)
 
 Add a Cloud Scheduler job that calls `POST /api/sync` daily. Easiest path: add a small
 `/api/cron-sync` endpoint protected by Cloud Scheduler's OIDC token.
@@ -102,5 +110,7 @@ Add a Cloud Scheduler job that calls `POST /api/sync` daily. Easiest path: add a
 - [ ] Net worth over time (cash + investments)
 - [x] "Ask my finances" AI chat (Claude)
 - [x] Health: workout log, calendar, WHOOP sync
+- [x] Education: GPA engine, degree audit, course planner
+- [ ] Education: weekly schedule, finals planner, Canvas feed
 - [ ] Assistant actions: recategorize, set budgets
 - [ ] "Change the app" requests → GitHub issue → Claude Code PR

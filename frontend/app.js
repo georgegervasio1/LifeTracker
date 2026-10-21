@@ -22,7 +22,8 @@ const SECTIONS = {
     ["assistant", "Assistant"], ["accounts", "Accounts"]] },
   health: { title: "Health", tabs: [
     ["overview", "Overview"], ["workouts", "Workouts"], ["calendar", "Calendar"], ["connect", "Connect"]] },
-  education: { title: "Education", tabs: [] },
+  education: { title: "Education", tabs: [
+    ["overview", "Overview"], ["grades", "Grades & GPA"], ["audit", "Degree Audit"], ["planner", "Planner"]] },
   goals: { title: "Goals", tabs: [] },
 };
 
@@ -63,6 +64,7 @@ async function load(section, tab) {
   if (section === "home") return loadHome();
   if (!backendReady) return toast("Backend not connected yet");
   if (section === "health") return loadHealth(tab);
+  if (section === "education") return loadEducation(tab);
   if (section !== "finances") return;
   if (tab === "overview" || tab === "transactions") return loadOverview();
   if (tab === "investments") return loadInvestments();
@@ -192,6 +194,14 @@ async function loadHome() {
       ? `${Math.round(rec)}%<small>recovery · ${h.workouts_this_week} workout${h.workouts_this_week === 1 ? "" : "s"} this week</small>`
       : `${h.workouts_this_week}<small>workout${h.workouts_this_week === 1 ? "" : "s"} this week</small>`;
   } catch { $("homeHealth").textContent = "Log your first workout"; }
+  try {
+    const e = await api("/api/edu");
+    const C = e.computed;
+    $("homeEdu").classList.toggle("muted-stat", !e.courses.length);
+    $("homeEdu").innerHTML = e.courses.length
+      ? `${C.gpa_actual?.toFixed(2) ?? "—"}<small>GPA · projected ${C.gpa_projected?.toFixed(2) ?? "—"} vs ${C.profile.target_gpa.toFixed(2)} target</small>`
+      : "Import your courses";
+  } catch { $("homeEdu").textContent = "Import your courses"; }
 }
 
 // ---------- Finances ----------
@@ -518,6 +528,270 @@ $("whoopSync").onclick = syncWhoop;
 $("whoopDisconnect").onclick = async () => {
   if (!confirm("Disconnect WHOOP? Your synced history stays in LifeTracker.")) return;
   await api("/api/whoop", { method: "DELETE" }); toast("WHOOP disconnected"); loadConnect();
+};
+
+// ---------- Education ----------
+let edu = null;            // server state {courses, computed, has_data}
+let gradeDraft = {};       // courseId -> {grade, grade_status} while editing on the Grades tab
+let plannerTerm = null;
+let editingCourse = null;
+const PRIORITY = { 3: "Must take", 2: "High", 1: "Maybe", 0: "" };
+const STATUS_LABEL = { completed: "Completed", enrolled: "Enrolled", planned: "Planned", waitlisted: "Waitlisted", considering: "Considering", dropped: "Dropped" };
+const fmtGpa = (v) => (v == null ? "—" : v.toFixed(2));
+const r2 = (x) => Math.floor(x * 100 + 0.5 + 1e-9) / 100;
+
+async function loadEducation(tab) {
+  edu = await api("/api/edu");
+  const p = edu.computed.profile;
+  $("eduSchool").textContent = [p.school, p.program, p.grad_term ? `Expected ${p.grad_term}` : ""].filter(Boolean).join(" · ");
+  const empty = !edu.courses.length;
+  $("eduEmpty").classList.toggle("hidden", !empty);
+  $("eduOverview").classList.toggle("hidden", empty);
+  if (tab === "overview" && !empty) renderEduOverview();
+  if (tab === "grades") { gradeDraft = {}; renderGrades(); }
+  if (tab === "audit") renderAudit();
+  if (tab === "planner") renderPlanner();
+}
+
+// Same math as education.compute(), used for instant what-if on the Grades tab.
+function liveGpa() {
+  const GP = edu.computed.grade_points, target = +$("targetGpa").value || edu.computed.profile.target_gpa;
+  const counts = new Set(["completed", "enrolled", "planned"]);
+  let aq = 0, ag = 0, pq = 0, pg = 0; const terms = {};
+  edu.courses.forEach((c) => {
+    if (!counts.has(c.status)) return;
+    const d = gradeDraft[c.id] || {}; const g = d.grade ?? c.grade, gs = d.grade_status ?? c.grade_status;
+    if (!(g in GP)) return;
+    const cr = +c.credits || 0, q = GP[g] * cr;
+    pq += q; pg += cr; (terms[c.term] ||= { q: 0, g: 0 }); terms[c.term].q += q; terms[c.term].g += cr;
+    if (gs === "actual") { aq += q; ag += cr; }
+  });
+  const rem = edu.courses.filter((c) => ["enrolled", "planned"].includes(c.status) && (gradeDraft[c.id]?.grade_status ?? c.grade_status) !== "actual"
+    && c.graded !== false && !["P", "H", "CR"].includes(gradeDraft[c.id]?.grade ?? c.grade));
+  const remCr = rem.reduce((a, c) => a + (+c.credits || 0), 0);
+  return { actual: ag ? r2(aq / ag) : null, projected: pg ? r2(pq / pg) : null,
+           terms: Object.fromEntries(Object.entries(terms).map(([t, v]) => [t, v.g ? r2(v.q / v.g) : null])),
+           needed: remCr ? (target * (ag + remCr) - aq) / remCr : null, remCr, target };
+}
+
+function renderEduOverview() {
+  const C = edu.computed, n = C.needed;
+  $("e-gpa").textContent = fmtGpa(C.gpa_actual);
+  $("e-gpa-sub").textContent = `${C.graded_credits_actual} graded credits`;
+  $("e-proj").textContent = fmtGpa(C.gpa_projected);
+  $("e-proj").className = "kpi-value " + (C.gpa_projected != null ? (C.gpa_projected >= C.profile.target_gpa ? "pos" : "neg") : "");
+  $("e-proj-sub").textContent = `vs. ${C.profile.target_gpa.toFixed(2)} target`;
+  $("e-need").textContent = n ? (n.already_met ? "Met" : n.achievable ? n.average.toFixed(2) : "Out of reach") : "—";
+  $("e-need-sub").textContent = n ? `avg on ${n.graded_credits} remaining graded credits` : "No remaining graded courses";
+  $("e-credits").textContent = `${C.credits.earned + C.credits.in_progress + C.credits.planned} / ${C.credits.required}`;
+  $("e-credits-sub").textContent = `${C.credits.earned} earned · ${C.credits.in_progress} in progress · ${C.credits.planned} planned`;
+
+  const terms = C.terms.filter((t) => t.gpa_projected != null);
+  drawChart("chart-gpa", "bar", terms.map((t) => t.term), terms.map((t) => t.gpa_projected),
+    { tip: (v) => v.toFixed(2), tick: (v) => v.toFixed(1) }, { y: { min: 2.5, max: 4.33 } });
+  // dim projected bars
+  const ch = charts["chart-gpa"]; const acc = cssVar("--accent");
+  ch.data.datasets[0].backgroundColor = terms.map((t) => (t.gpa_actual != null ? acc : acc + "66")); ch.update("none");
+
+  $("eduAuditMini").innerHTML = C.audit.map((a) => `<div class="audit-mini"><span class="pill pill-${a.status}">${{ met: "Met", on_track: "On track", missing: "Missing" }[a.status]}</span><span>${esc(a.label)}</span></div>`).join("");
+
+  const next = C.terms.find((t) => t.status === "planned") || C.terms.find((t) => t.status === "enrolled");
+  if (next) {
+    $("eduNextTermTitle").textContent = next.term;
+    const pl = C.planner[next.term];
+    const list = edu.courses.filter((c) => c.term === next.term && ["planned", "enrolled"].includes(c.status));
+    $("eduNextTerm").innerHTML = `<div class="mini-stats"><span><strong>${pl.committed_credits}</strong> credits</span><span><strong>${pl.considering}</strong> still considering</span>${pl.conflicts.length ? `<span class="neg"><strong>${pl.conflicts.length}</strong> time conflict${pl.conflicts.length > 1 ? "s" : ""}</span>` : ""}</div>` +
+      list.map((c) => `<div class="mini-row"><span>${esc(c.title)}</span><span class="tag">${c.credits ?? "—"} cr${c.graded === false ? " · P/F" : ""}</span></div>`).join("");
+  }
+  const hr = C.profile.honors_reference || [];
+  $("eduHonors").innerHTML = `<p class="honors-target">Your target: <strong>${C.profile.target_gpa.toFixed(2)}</strong>. Projected: <strong class="${(C.gpa_projected || 0) >= C.profile.target_gpa ? "pos" : "neg"}">${fmtGpa(C.gpa_projected)}</strong></p>
+    <p class="hint">Georgetown Law awards cum laude to the top third and magna cum laude to the top 10% of the class, so cutoffs move each year. Published examples:</p>
+    ${hr.map((h) => `<div class="mini-row"><span>${esc(h.label)}</span><span class="tag">${h.examples.map((e) => `${e.gpa.toFixed(2)} (${e.year})`).join(" · ")}</span></div>`).join("")}`;
+}
+
+function gradeOptions(selected, includeBlank = true) {
+  const opts = Object.keys(edu.computed.grade_points).concat(["P", "H", "CR"]);
+  return (includeBlank ? `<option value="">—</option>` : "") + opts.map((g) => `<option ${g === selected ? "selected" : ""}>${g}</option>`).join("");
+}
+
+function renderGrades() {
+  const C = edu.computed;
+  if (document.activeElement !== $("targetGpa")) $("targetGpa").value = C.profile.target_gpa.toFixed(2);
+  const live = liveGpa();
+  $("gradeTerms").innerHTML = C.terms.filter((t) => t.status !== "empty").map((t) => {
+    const rows = edu.courses.filter((c) => c.term === t.term && ["completed", "enrolled", "planned"].includes(c.status));
+    return `<div class="card card-flush term-card">
+      <div class="card-head padded"><h3>${esc(t.term)}</h3><span class="card-meta">${t.credits} credits · GPA <strong>${fmtGpa(live.terms[t.term])}</strong>${t.status !== "completed" ? " projected" : ""}</span></div>
+      <table class="table grade-table"><colgroup><col /><col class="c-cr" /><col class="c-gr" /><col class="c-ty" /><col class="c-ed" /></colgroup><thead><tr><th>Course</th><th class="num">Credits</th><th>Grade</th><th>Type</th><th></th></tr></thead><tbody>
+      ${rows.map((c) => { const d = gradeDraft[c.id] || {}; const g = d.grade ?? c.grade ?? ""; const gs = d.grade_status ?? c.grade_status ?? "projected";
+        return `<tr class="${gradeDraft[c.id] ? "dirty" : ""}"><td>${esc(c.title)}</td><td class="num">${c.credits ?? "—"}</td>
+        <td><select class="select grade-select" data-gid="${c.id}">${gradeOptions(g)}</select></td>
+        <td><button class="seg ${gs === "actual" ? "seg-on" : ""}" data-gs="${c.id}" title="Toggle actual / projected">${gs === "actual" ? "Actual" : "Projected"}</button></td>
+        <td class="num"><button class="text-btn" data-edit="${c.id}">Edit</button></td></tr>`; }).join("")}
+      </tbody></table></div>`;
+  }).join("");
+  renderSolver(live);
+  $("gradeSavebar").classList.toggle("hidden", !Object.keys(gradeDraft).length);
+  $$(".grade-select").forEach((s) => (s.onchange = () => {
+    const c = edu.courses.find((x) => x.id === s.dataset.gid);
+    gradeDraft[c.id] = { ...(gradeDraft[c.id] || {}), grade: s.value || null };
+    renderGrades();
+  }));
+  $$("[data-gs]").forEach((b) => (b.onclick = () => {
+    const c = edu.courses.find((x) => x.id === b.dataset.gs);
+    const cur = gradeDraft[c.id]?.grade_status ?? c.grade_status ?? "projected";
+    gradeDraft[c.id] = { ...(gradeDraft[c.id] || {}), grade_status: cur === "actual" ? "projected" : "actual" };
+    renderGrades();
+  }));
+  $$("[data-edit]").forEach((b) => (b.onclick = () => openCourse(edu.courses.find((x) => x.id === b.dataset.edit))));
+}
+
+function renderSolver(live) {
+  const n = live.needed, server = edu.computed.needed;
+  let html = `<div class="solver-stats"><div><span class="kpi-label">Current</span><strong>${fmtGpa(live.actual)}</strong></div>
+    <div><span class="kpi-label">Projected</span><strong class="${(live.projected || 0) >= live.target ? "pos" : "neg"}">${fmtGpa(live.projected)}</strong></div>
+    <div><span class="kpi-label">Needed average</span><strong>${n == null ? "—" : n <= 0 ? "Met" : n > 4.33 ? "Out of reach" : n.toFixed(2)}</strong></div></div>`;
+  if (n != null && n > 0 && n <= 4.33) {
+    html += `<p class="solver-text">To finish at <strong>${live.target.toFixed(2)}</strong>, you need a <strong>${n.toFixed(2)}</strong> average across your ${live.remCr} remaining graded credits.</p>`;
+    if (server?.plan && !Object.keys(gradeDraft).length) {
+      const as = server.plan.filter((p) => ["A", "A+"].includes(p.grade)), rest = server.plan.filter((p) => !["A", "A+"].includes(p.grade));
+      html += `<p class="solver-text">One way to get there: <strong>${as.map((p) => `${p.grade} in ${esc(p.title.split(":")[0])}`).join(", ")}</strong>${rest.length ? `, and ${rest[0].grade} or better in the rest` : ""}.</p>
+        <button class="btn btn-secondary btn-sm" id="applyPlan">Try this plan</button>`;
+    }
+  } else if (n != null && n > 4.33) {
+    html += `<p class="solver-text">That target isn't reachable with your remaining graded credits.</p>`;
+  }
+  $("solverOut").innerHTML = html;
+  $("applyPlan")?.addEventListener("click", () => {
+    server.plan.forEach((p) => (gradeDraft[p.id] = { ...(gradeDraft[p.id] || {}), grade: p.grade }));
+    renderGrades(); toast("Applied as a what-if. Save to keep it.");
+  });
+}
+
+$("targetGpa").oninput = () => { if (edu) renderSolver(liveGpa()); };
+$("targetSave").onclick = async () => {
+  try { edu = await api("/api/edu/profile", { method: "PUT", body: JSON.stringify({ target_gpa: +$("targetGpa").value }) }); toast("Target updated"); renderGrades(); }
+  catch (e) { toast(e.message); }
+};
+$("gradeDiscard").onclick = () => { gradeDraft = {}; renderGrades(); };
+$("gradeSave").onclick = async () => {
+  $("gradeSave").disabled = true;
+  try {
+    for (const [id, d] of Object.entries(gradeDraft)) {
+      const body = { ...d };
+      if ("grade" in d) body.graded = !["P", "H", "CR"].includes(d.grade);
+      edu = await api(`/api/edu/courses/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+    }
+    gradeDraft = {}; toast("Grades saved"); renderGrades();
+  } catch (e) { toast(e.message); }
+  finally { $("gradeSave").disabled = false; }
+};
+
+function renderAudit() {
+  $("auditList").innerHTML = edu.computed.audit.map((a) => {
+    let body = "";
+    if (a.type === "credits") {
+      const pct = (v) => Math.min(100, (v / a.need) * 100);
+      body = `<div class="stack-bar"><span class="seg-done" style="width:${pct(a.done)}%"></span><span class="seg-prog" style="width:${pct(a.in_progress)}%"></span><span class="seg-plan" style="width:${pct(a.planned)}%"></span></div>
+        <div class="stack-legend"><span><i class="lg lg-done"></i>${a.done} earned</span><span><i class="lg lg-prog"></i>${a.in_progress} in progress</span><span><i class="lg lg-plan"></i>${a.planned} planned</span>${a.short_by ? `<span class="neg">${a.short_by} short</span>` : ""}</div>`;
+    }
+    if (a.type === "gpa") body = `<div class="audit-courses">Current GPA ${fmtGpa(a.value)}</div>`;
+    if (a.courses) body += `<div class="audit-courses">${a.courses.length ? a.courses.map(esc).join(" · ") : "No course tagged yet. Open a course in the Planner and check this requirement."}</div>`;
+    return `<div class="audit-row"><div class="audit-title"><span class="pill pill-${a.status}">${{ met: "Met", on_track: "On track", missing: "Missing" }[a.status]}</span><h3>${esc(a.label)}</h3></div>${body}</div>`;
+  }).join("");
+}
+
+function renderPlanner() {
+  const C = edu.computed;
+  const terms = C.profile.terms;
+  if (!plannerTerm) plannerTerm = (C.terms.find((t) => t.status === "planned") || C.terms[C.terms.length - 1] || {}).term || terms[0];
+  $("plannerTerm").innerHTML = terms.map((t) => `<option ${t === plannerTerm ? "selected" : ""}>${esc(t)}</option>`).join("");
+  const pl = C.planner[plannerTerm] || { committed_credits: 0, graded_credits: 0, pf_credits: 0, conflicts: [], considering: 0 };
+  const remaining = C.credits.remaining_after_plan;
+  $("plannerStats").innerHTML = `<span><strong>${pl.committed_credits}</strong> credits planned</span><span><strong>${pl.graded_credits}</strong> graded · <strong>${pl.pf_credits}</strong> P/F</span><span class="${remaining ? "neg" : "pos"}">${remaining ? `${remaining} credits short of ${C.credits.required}` : `Reaches ${C.credits.required} credits`}</span>`;
+  const missing = C.audit.filter((a) => a.status === "missing" && a.key !== "min_gpa");
+  $("plannerAlerts").innerHTML =
+    pl.conflicts.map((c) => `<div class="alert ${c.both_committed ? "alert-bad" : ""}">Time conflict: ${esc(c.a_title)} and ${esc(c.b_title)}${c.both_committed ? " (both planned)" : ""}</div>`).join("") +
+    (missing.length ? `<div class="alert">Still unmet after this plan: ${missing.map((m) => esc(m.label)).join(", ")}</div>` : "");
+  const conflictIds = new Set(pl.conflicts.flatMap((c) => [c.a, c.b]));
+  const cols = [["planned", "Planned"], ["enrolled", "Enrolled"], ["waitlisted", "Waitlisted"], ["considering", "Considering"], ["dropped", "Dropped"]];
+  const inTerm = edu.courses.filter((c) => c.term === plannerTerm);
+  $("plannerBoard").innerHTML = cols.filter(([k]) => k !== "enrolled" || inTerm.some((c) => c.status === "enrolled")).map(([k, label]) => {
+    const list = inTerm.filter((c) => c.status === k || (k === "planned" && c.status === "completed"));
+    const cr = list.reduce((a, c) => a + (+c.credits || 0), 0);
+    return `<div class="board-col"><div class="board-col-head"><span>${label}</span><span class="tag">${list.length} · ${cr} cr</span></div>
+      ${list.map((c) => `<div class="course-card ${conflictIds.has(c.id) ? "has-conflict" : ""}" data-course="${c.id}">
+        <div class="course-top">${c.priority ? `<span class="prio prio-${c.priority}">${PRIORITY[c.priority]}</span>` : ""}${(c.tags || []).map((t) => `<span class="req-tag">${{ pr: "PR", ulwr: "Writing", experiential: "Experiential", ilo8: "ILO #8" }[t]}</span>`).join("")}</div>
+        <div class="course-title">${esc(c.title)}</div>
+        <div class="course-meta">${[c.code, c.credits != null ? `${c.credits} cr` : null, c.graded === false ? "P/F" : null, c.exam_type].filter(Boolean).map(esc).join(" · ")}</div>
+        ${c.meetings_text ? `<div class="course-meta">${esc(c.meetings_text)}</div>` : ""}
+        ${c.notes ? `<div class="course-note">${esc(c.notes)}</div>` : ""}
+        <select class="select status-select" data-move="${c.id}" aria-label="Move course">${Object.entries(STATUS_LABEL).map(([v, l]) => `<option value="${v}" ${v === c.status ? "selected" : ""}>${l}</option>`).join("")}</select>
+      </div>`).join("") || `<div class="empty small">None</div>`}
+    </div>`;
+  }).join("");
+  $$("[data-move]").forEach((s) => {
+    s.onclick = (e) => e.stopPropagation();
+    s.onchange = async () => {
+      try { edu = await api(`/api/edu/courses/${s.dataset.move}`, { method: "PATCH", body: JSON.stringify({ status: s.value }) }); renderPlanner(); }
+      catch (e) { toast(e.message); }
+    };
+  });
+  $$("[data-course]").forEach((card) => (card.onclick = () => openCourse(edu.courses.find((c) => c.id === card.dataset.course))));
+}
+$("plannerTerm").onchange = () => { plannerTerm = $("plannerTerm").value; renderPlanner(); };
+$("addCourse").onclick = () => openCourse(null);
+
+// Course editor dialog
+function openCourse(c) {
+  editingCourse = c;
+  const f = $("courseForm");
+  $("courseDialogTitle").textContent = c ? "Edit course" : "Add course";
+  $("courseTermSelect").innerHTML = edu.computed.profile.terms.map((t) => `<option>${esc(t)}</option>`).join("");
+  $("courseGradeSelect").innerHTML = gradeOptions(c?.grade || "");
+  const v = c || { term: plannerTerm, status: "considering", priority: 0, grade_status: "projected", tags: [] };
+  ["title", "code", "crn", "term", "credits", "status", "priority", "grade_status", "meetings_text", "professor", "exam_type", "category", "waitlist", "notes", "experiential_credits"]
+    .forEach((k) => { if (f.elements[k]) f.elements[k].value = v[k] ?? (k === "grade_status" ? "projected" : ""); });
+  f.elements.grade.value = v.grade || "";
+  f.elements.pf.checked = v.graded === false;
+  f.elements.pf_eligible.checked = !!v.pf_eligible;
+  ["pr", "ulwr", "ilo8", "experiential"].forEach((t) => (f.elements[`tag_${t}`].checked = (v.tags || []).includes(t)));
+  $("courseDelete").classList.toggle("hidden", !c);
+  $("courseDialog").showModal();
+}
+$("courseCancel").onclick = () => $("courseDialog").close();
+$("courseForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const f = $("courseForm"), val = (k) => f.elements[k].value.trim();
+  const body = {
+    title: val("title"), code: val("code"), crn: val("crn"), term: val("term"), credits: val("credits") || null,
+    status: val("status"), priority: +val("priority"), grade: val("grade") || null, grade_status: val("grade") ? val("grade_status") : null,
+    graded: !f.elements.pf.checked && !["P", "H", "CR"].includes(val("grade")), pf_eligible: f.elements.pf_eligible.checked,
+    meetings_text: val("meetings_text"), professor: val("professor"), exam_type: val("exam_type"), category: val("category"),
+    waitlist: val("waitlist"), notes: val("notes"), experiential_credits: val("experiential_credits") || null,
+    tags: ["pr", "ulwr", "ilo8", "experiential"].filter((t) => f.elements[`tag_${t}`].checked),
+  };
+  try {
+    edu = editingCourse
+      ? await api(`/api/edu/courses/${editingCourse.id}`, { method: "PATCH", body: JSON.stringify(body) })
+      : await api("/api/edu/courses", { method: "POST", body: JSON.stringify(body) });
+    $("courseDialog").close(); toast(editingCourse ? "Course updated" : "Course added");
+    render();
+  } catch (err) { toast(err.message); }
+};
+$("courseDelete").onclick = async () => {
+  if (!editingCourse || !confirm(`Delete ${editingCourse.title}?`)) return;
+  edu = await api(`/api/edu/courses/${editingCourse.id}`, { method: "DELETE" });
+  $("courseDialog").close(); toast("Course deleted"); render();
+};
+
+$("eduImportFile").onchange = async () => {
+  const f = $("eduImportFile").files[0]; if (!f) return;
+  try {
+    const payload = JSON.parse(await f.text());
+    const r = await api("/api/edu/import", { method: "POST", body: JSON.stringify(payload) });
+    toast(`Imported ${r.imported} courses`); render();
+  } catch (e) { toast(e instanceof SyntaxError ? "That file isn't valid JSON" : e.message); }
 };
 
 // ---------- Wiring ----------
