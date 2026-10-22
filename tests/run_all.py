@@ -1,4 +1,4 @@
-"""Run every offline test: python tests/run_all.py  (needs backend/requirements.txt installed).
+"""Run every offline test: python tests/run_all.py  (needs backend/requirements.txt and pytest installed).
 Tests that need personal fixtures look in $LT_PRIVATE (default ../lifetracker-private) and skip if absent."""
 import os, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -14,4 +14,9 @@ for d, n in names:
     print(f"{'ok  ' if r.returncode == 0 else 'FAIL'} {n:28s} {last}")
     if r.returncode:
         failed.append(n); print(r.stdout[-1500:], r.stderr[-1500:])
+# backend/tests: pytest suite (ledger, finance, taxes). UBS PDF tests need LIFETRACKER_FIXTURES, else skip.
+r = subprocess.run([sys.executable, "-m", "pytest", "-q", "tests"], cwd=os.path.join(HERE, "..", "backend"), capture_output=True, text=True)
+print(f"{'ok  ' if r.returncode == 0 else 'FAIL'} {'backend/tests (pytest)':28s} {(r.stdout.strip().splitlines() or [''])[-1]}")
+if r.returncode:
+    failed.append("backend/tests"); print(r.stdout[-3000:], r.stderr[-1500:])
 sys.exit(1 if failed else 0)

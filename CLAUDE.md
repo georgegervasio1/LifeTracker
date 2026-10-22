@@ -5,6 +5,8 @@ This file is the technical handoff. Personal context (the owner's data, open dec
 handoff doc in the Claude project, not here: **this repo is public**.
 
 ## Rules (read first)
+- **Several sessions work in parallel.** `git pull --rebase` before starting and before pushing; keep commits
+  focused; if a rebase conflicts, read the other session's change and merge both intents.
 - **Public repo: never commit personal data.** No merchant names, employer names, account numbers, statements,
   grades, pay amounts, or CSV/JSON exports. Personal facts are read from Firestore at runtime (e.g. the employer
   name on Finances → Summer 2026 comes from bank deposits). `.gitignore` blocks `*.csv`, `.env*`, keys.
@@ -28,32 +30,44 @@ Libraries (cdnjs, pinned): Chart.js 4.4.1, marked, DOMPurify, Sortable 1.15.2; P
 
 ### Backend modules (`backend/`)
 Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` and is registered in `main.py`.
-- `main.py`: Plaid link/sync, transactions, `/api/summary` (transfer categories excluded; Refund reduces spend;
-  money **in** is a **negative** amount), bank/card CSV import (`/api/import/csv`), Venmo CSV, holdings, `/health`.
+- `main.py`: app setup, auth, Plaid link/sync, CSV/Venmo/PDF upload routes, `/health`. Money **in** is a
+  **negative** amount in transactions.
+- `ledger.py`: **the finance data model.** One canonical record per real account and transaction across Plaid,
+  UBS statement PDFs, Chase CSV, Venmo CSV and manual entry (`src`, canonical `account`); deterministic ids and
+  cross-source matching so nothing is double counted; transfer pairing; statement reconciliation.
+- `ubs_parser.py`: UBS statement and tax-form PDFs → dicts (pages assigned by footer account code; rotated pages).
+- `portfolio.py`: investments and net worth from the ledger; modified-Dietz / time-weighted returns; S&P 500
+  comparison from the index returns printed on UBS statements.
+- `finance.py`: `/api/fin/*` (overview/net worth, cash & cards, investments, income, taxes, imports).
+- `fintax.py`: the whole-year tax picture (wages + trust distribution + investment income; federal, IL
+  nonresident, DC resident with IL credit; estimated payments; settings for what documents can't tell us).
 - `categorize.py`: generic merchant → category rules only.
 - `assistant.py`: `/api/chat`, Claude tool loop over the finance data (model from `CLAUDE_MODEL`).
 - `health.py`: WHOOP OAuth v2 (rotating refresh tokens, 8-char state), daily recovery/sleep/strain, workouts,
   calendar. WHOOP workouts merged into a training session are hidden (`merged_into`).
 - `training.py`: workout planner (multi-week template, Mon–Sun board + tray, %-of-max targets), live sessions,
   history with PRs (Epley e1RM; PR = beats all *earlier* sessions on top weight or e1RM), WHOOP merge, import.
+- `syllabus.py`: Education → Syllabi: upload a syllabus (Claude extracts sessions/deadlines) or import JSON;
+  deadlines feed the calendar. Originals kept in `edu_syllabus_files`.
 - `education.py`: GULC grade points, GPA engine (half-up `r2`), needed-average solver + grade plan, degree audit,
   planner conflicts, **P/F option budget** (7 credits, one course per semester, counted even if the letter grade
-  is kept), **academic calendar** (GULC 2026–27 key dates) + **finals** (Registrar's Fall 2026 schedule matched to
+  is kept; a completed P course counts unless marked `pf_mandatory`; `pf_prior_credits` for untracked terms), **academic calendar** (GULC 2026–27 key dates) + **finals** (Registrar's Fall 2026 schedule matched to
   enrolled courses; ambiguous sections offer a picker; `exam_type: "Paper"` shows "Paper due"), merge import.
-- `earnings.py`: paychecks + taxes. Pub 15-T (2026) Worksheet 1A withholding, SS/Medicare, Illinois IL-700-T,
+- `earnings.py`: paychecks (feeds Income/Taxes). Pub 15-T (2026) Worksheet 1A withholding, SS/Medicare, Illinois IL-700-T,
   year-end federal / IL nonresident / DC resident with credit for other-state tax. `SEED` holds the owner's past
   summer job (no employer name); payroll deposits are matched from the bank feed. `/api/taxes` builds the
   Taxes tab (where every dollar went, marginal rate via +$100 re-run, settle-up, bracket ladder, bank tax activity).
   Tax tables live in `TAX[2026]` with sources in comments; add a new year there.
 
 ### Firestore (`users/{uid}/…`)
-`transactions`, `items` (Plaid), `holdings`, `health_days`, `workouts`, `integrations/whoop`, `oauth_states`,
-`training` (state/template/sessions), `education/profile`, `edu_courses`, `earnings/settings`, `paychecks`.
+`transactions` (ledger), `items` (Plaid), `inv_snapshots`, `inv_activity`, `holdings` (legacy), `health_days`, `workouts`, `integrations/whoop`, `oauth_states`,
+`training` (state/template/sessions), `education/profile`, `edu_courses`, `edu_syllabi`, `edu_syllabus_files`,
+`earnings/settings`, `paychecks`.
 
 ### Frontend map (`frontend/app.js`)
-Hash routes `#/section/tab`, `SECTIONS` config at the top. Finances: Overview, Transactions, Investments,
-Summer 2026 (`paychecks`), Taxes, Assistant, Accounts. Health: Overview, Planner, History, Calendar, Connect.
-Education: Overview, Grades & GPA, Degree Audit, Planner, Calendar. Goals: placeholder.
+Hash routes `#/section/tab`, `SECTIONS` config at the top. Finances: Net Worth, Cash & Cards, Investments,
+Income, Taxes, Accounts & Imports (chat on every tab). Health: Overview, Planner, History, Calendar, Connect.
+Education: Overview, Syllabi, Grades & GPA, Degree Audit, Planner, Calendar. Goals: placeholder.
 Design tokens on `:root` in `styles.css` (`--accent`, `--pos`, `--neg`, `--warn`, `--exam`, `--done`, …).
 
 ### Environment & secrets (Cloud Run)
@@ -62,8 +76,9 @@ Secrets: `plaid-client-id`, `plaid-secret`, `allowed-email`, `anthropic-api-key`
 `WHOOP_REDIRECT_URI`, `FRONTEND_URL`, `FRONTEND_ORIGIN`. Local dev: `DEV_SKIP_AUTH=1`.
 
 ## Testing
-`pip install -r backend/requirements.txt` then `python tests/run_all.py`.
-Tests run offline against an in-memory Firestore (`tests/test_health.py` holds the shared fake) with no network.
+`pip install -r backend/requirements.txt pytest` then `python tests/run_all.py`. It runs `tests/` (scripts) and
+`backend/tests/` (pytest: ledger, finance, taxes). All offline against in-memory Firestore fakes, no network.
+UBS PDF tests need `LIFETRACKER_FIXTURES` pointing at the statement PDFs (never in the repo), else they skip.
 Tests that need the owner's real data live in the private kit (`lifetracker-private/tests` + fixtures); point
 `LT_PRIVATE` at it or place it next to the repo as `../lifetracker-private`. Without it they print SKIP.
 
