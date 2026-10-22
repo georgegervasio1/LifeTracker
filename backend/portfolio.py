@@ -208,7 +208,7 @@ def allocation(acct=None):
     pend = [a for a in L.load_activity(account=acct) if a.get("pending") and a["type"] == "buy"] if acct else \
            [a for a in L.load_activity() if a.get("pending") and a["type"] == "buy"]
     if pend:
-        flags.append(f"{L.r2(-sum(a['amount'] for a in pend)):,.2f} of purchases were pending settlement on the statement date; "
+        flags.append(f"${L.r2(-sum(a['amount'] for a in pend)):,.2f} of purchases were pending settlement on the statement date; "
                      "they'll show as holdings on the next statement or Plaid sync.")
     for k in ("Bonds", "International stocks", "Crypto"):
         by_asset.setdefault(k, 0.0)
@@ -361,9 +361,15 @@ def net_worth():
                 ch = st.get("change") or {}
                 mkt += (ch.get("market_change") or 0) + (ch.get("div_int") or 0)
         new_money = sum(x["amount"] for x in L.load_activity(a["date"], b["date"]) if x["date"] > a["date"] and x["type"] == "trust_distribution")
+        # accounts whose first balance lands this month aren't a change in wealth, just newly tracked
+        added = 0.0
+        for acc in accts:
+            pts = bal.get(acc["id"], [])
+            if pts and a["date"] < pts[0][0] <= b["date"]:
+                added += -abs(pts[0][1]) if acc["liability"] else pts[0][1]
         change = b["net_worth"] - a["net_worth"]
         moves.append({"month": b["date"][:7], "change": r2(change), "investment_returns": r2(mkt), "new_money": r2(new_money),
-                      "saving_and_spending": r2(change - mkt - new_money)})
+                      "newly_tracked": r2(added), "saving_and_spending": r2(change - mkt - new_money - added)})
     missing = [r["name"] for r in rows if r["balance"] is None]
     return {"assets": r2(assets), "liabilities": r2(debts), "net_worth": r2(assets - debts), "accounts": rows,
             "by_type": [{"label": k, "value": r2(v)} for k, v in sorted(by_type.items(), key=lambda kv: -abs(kv[1]))],

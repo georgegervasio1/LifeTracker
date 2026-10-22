@@ -109,71 +109,60 @@
 
       <!-- ───────────────────────── FINANCES ───────────────────────── -->
       <section class="route" data-route="finances">
-        <!-- Overview -->
-        <div class="panel wrap" data-panel="overview">
-          <div class="kpis">
-            <div class="kpi"><span class="kpi-label">Spent</span><span class="kpi-value" id="kpi-spent">—</span><span class="kpi-sub" id="kpi-spent-sub"></span></div>
-            <div class="kpi"><span class="kpi-label">Money in</span><span class="kpi-value" id="kpi-in">—</span></div>
-            <div class="kpi"><span class="kpi-label">Net cash flow</span><span class="kpi-value" id="kpi-net">—</span></div>
-            <a class="kpi kpi-link" href="#/finances/investments"><span class="kpi-label">Portfolio</span><span class="kpi-value" id="kpi-portfolio">—</span><span class="kpi-sub">View holdings →</span></a>
+        <!-- Net worth -->
+        <div class="panel wrap" data-panel="networth">
+          <div class="nw-head">
+            <p class="eyebrow">Net worth</p>
+            <h2 class="nw-total" id="nwTotal">—</h2>
+            <p class="lede-sm" id="nwSub"></p>
+          </div>
+          <div class="kpis" id="nwKpis"></div>
+          <div class="grid-2">
+            <div class="card"><div class="card-head"><h3>Net worth over time</h3><span class="card-meta" id="nwHistMeta">Month-end balances</span></div><canvas id="chart-nw"></canvas></div>
+            <div class="card"><div class="card-head"><h3>By type</h3><span class="card-meta">Assets minus debts</span></div><div id="nwTypes"></div></div>
+          </div>
+          <div class="card card-flush">
+            <div class="card-head padded"><h3>Accounts</h3><span class="card-meta">Latest balance and where it came from</span></div>
+            <div id="nwAccounts" class="acct-list"></div>
           </div>
           <div class="grid-2">
-            <div class="card"><div class="card-head"><h3>Spending by category</h3><span class="card-meta" id="catSubtitle"></span></div><div id="categoryBars"></div></div>
-            <div class="card"><div class="card-head"><h3>Monthly spending</h3></div><canvas id="chart-month"></canvas></div>
-            <div class="card"><div class="card-head"><h3>By source</h3></div><div id="sourceBars"></div></div>
-            <div class="card"><div class="card-head"><h3>Top merchants</h3></div><div id="merchantBars"></div></div>
+            <div class="card"><div class="card-head"><h3>What moved it</h3><span class="card-meta">Month by month</span></div><div id="nwMoves"></div></div>
+            <div class="card"><div class="card-head"><h3 id="nwMoversTitle">Investments</h3><a class="link-sm" href="#/finances/investments">Portfolio →</a></div><div id="nwMovers"></div></div>
           </div>
         </div>
 
-        <!-- Transactions -->
-        <div class="panel wrap" data-panel="transactions">
+        <!-- Cash & Cards -->
+        <div class="panel wrap" data-panel="cash">
+          <div class="subtabs" id="cashTabs" role="tablist"></div>
+          <div class="kpis" id="cashKpis"></div>
+          <div class="grid-2">
+            <div class="card"><div class="card-head"><h3>Spending by category</h3><span class="card-meta" id="cashCatMeta"></span></div><div id="cashCats"></div></div>
+            <div class="card"><div class="card-head"><h3>By month</h3></div><canvas id="chart-cash"></canvas></div>
+          </div>
           <div class="toolbar">
-            <input id="tx-search" class="input" placeholder="Search merchant, category or source" />
+            <input id="tx-search" class="input" placeholder="Search merchant, category or account" />
             <div class="toolbar-stats"><span><strong id="tx-count">0</strong> transactions</span><span>Net <strong id="tx-total">$0</strong></span></div>
           </div>
           <div class="card card-flush">
-            <table class="table">
-              <thead><tr><th>Date</th><th>Merchant</th><th>Category</th><th>Source</th><th class="num">Amount</th></tr></thead>
+            <div class="table-scroll"><table class="table">
+              <thead><tr><th>Date</th><th>Merchant</th><th>Category</th><th>Account</th><th class="num">Amount</th></tr></thead>
               <tbody id="tx-body"></tbody>
-            </table>
+            </table></div>
           </div>
+          <p class="hint" id="cashNote"></p>
         </div>
 
         <!-- Investments -->
         <div class="panel wrap" data-panel="investments">
-          <div class="card"><div class="card-head"><h3>Portfolio value</h3><span class="card-meta" id="portfolioTotal"></span></div><canvas id="chart-portfolio"></canvas></div>
-          <div class="card card-flush">
-            <div class="card-head padded"><h3>Holdings</h3></div>
-            <table class="table">
-              <thead><tr><th>Ticker</th><th>Name</th><th class="num">Quantity</th><th class="num">Value</th><th class="num">Gain</th></tr></thead>
-              <tbody id="holdings-body"></tbody>
-            </table>
-          </div>
+          <div class="subtabs" id="invTabs" role="tablist"></div>
+          <div id="invBody"></div>
         </div>
 
-        <!-- Assistant -->
-        <div class="panel wrap" data-panel="assistant">
-          <div class="chat">
-            <div class="chat-intro">
-              <h2 class="title">Ask about your money.</h2>
-              <p class="lede-sm">The assistant looks up your actual transactions and holdings before it answers.</p>
-            </div>
-            <div class="chat-log" id="chatMessages"></div>
-            <div class="chat-suggestions" id="chatSuggestions">
-              <button class="chip">How much did I spend last month, by category?</button>
-              <button class="chip">What are my biggest recurring charges?</button>
-              <button class="chip">Compare this month to last month</button>
-              <button class="chip">How is my portfolio allocated?</button>
-            </div>
-            <div class="chat-composer">
-              <textarea id="chatInput" rows="1" placeholder="Message the finance assistant"></textarea>
-              <button id="chatSend" class="btn btn-primary">Send</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Paychecks -->
-        <div class="panel wrap" data-panel="paychecks">
+        <!-- Income -->
+        <div class="panel wrap" data-panel="income">
+          <div class="subtabs" id="incTabs" role="tablist"></div>
+          <div id="incBody"></div>
+          <div id="incKirkland" class="hidden">
           <div class="pay-head">
             <div>
               <p class="eyebrow" id="payJob">Paychecks</p>
@@ -205,42 +194,45 @@
             <div class="card"><div class="card-head"><h3>Bottom line for the year</h3></div><div id="payBottom"></div></div>
             <p class="hint">Estimates from IRS Pub 15-T (2026), the 2026 federal brackets, Illinois IL-700-T and DC's 2026 rates. Your pay stubs, W-2 and tax return are the source of truth; this isn't tax advice.</p>
           </div>
+        
+          </div>
         </div>
 
         <!-- Taxes -->
         <div class="panel wrap" data-panel="taxes">
-          <div class="pay-head"><div><p class="eyebrow" id="taxEyebrow">Taxes</p><h2 class="title" id="taxTitle">Taxes</h2><p class="lede-sm" id="taxSub"></p></div></div>
-          <div class="card empty-state hidden" id="taxEmpty"><h3>No income for this year yet</h3><p>Once a job's paychecks are in, this shows where every dollar went.</p></div>
-          <div id="taxBody" class="hidden">
-            <div class="card">
-              <div class="card-head"><h3>Where every dollar went</h3><span class="card-meta" id="taxEff"></span></div>
-              <div class="dollar-bar" id="taxBar"></div>
-              <div class="dollar-legend" id="taxLegend"></div>
-            </div>
-            <div class="grid-2">
-              <div class="card">
-                <div class="card-head"><h3>Your next dollar</h3><span class="card-meta">Combined marginal rate</span></div>
-                <div id="taxMarginal"></div>
-              </div>
-              <div class="card">
-                <div class="card-head"><h3>Settle up</h3><span class="card-meta" id="taxDue"></span></div>
-                <div id="taxSettle"></div>
-              </div>
-            </div>
-            <div class="card">
-              <div class="card-head"><h3>Federal brackets</h3><span class="card-meta" id="taxFedMeta"></span></div>
-              <div id="taxLadder"></div>
-            </div>
-            <div class="card" id="taxBankCard">
-              <div class="card-head"><h3>Tax activity in your accounts</h3><span class="card-meta">From Chase</span></div>
-              <div id="taxBank"></div>
-            </div>
-            <p class="hint">Estimates from the 2026 federal brackets, Illinois and DC rates, built on your paychecks. Not tax advice; your W-2 and return are the source of truth. <a class="link-sm" href="#/finances/paychecks">See every paycheck →</a></p>
-          </div>
+          <div id="taxPage"></div>
         </div>
 
-        <!-- Accounts -->
+        <!-- Accounts & imports -->
         <div class="panel wrap" data-panel="accounts">
+          <div class="card upload upload-wide">
+            <h3>Upload UBS statements and tax forms</h3>
+            <p>Monthly or household statement PDFs (every account inside is read) and tax-form PDFs (1099, 1099-R, 5498). Upload as many as you like, in any order, as often as you like: a statement already on file, or activity Plaid already has, is never counted twice.</p>
+            <label class="dropzone"><input type="file" id="pdf-files" accept=".pdf" multiple /><span id="pdfLabel">Choose PDFs</span></label>
+            <button id="pdf-upload" class="btn btn-primary">Upload</button>
+            <div id="pdfResults"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Coverage</h3><span class="card-meta">Which source covers which dates</span></div>
+            <div id="covTimeline"></div>
+          </div>
+          <div class="card card-flush">
+            <div class="card-head padded"><h3>Statement reconciliation</h3><span class="card-meta" id="recMeta"></span></div>
+            <div class="table-scroll"><table class="table" id="recTable"></table></div>
+          </div>
+          <div class="grid-2">
+            <div class="card"><div class="card-head"><h3>Duplicates caught</h3><button class="text-btn" id="reconcileBtn">Re-check</button></div><div id="dupReport"></div></div>
+            <div class="card"><div class="card-head"><h3>Tax forms on file</h3></div><div id="taxDocs"></div></div>
+          </div>
+          <div class="card card-flush">
+            <div class="card-head padded"><h3>Accounts</h3><button class="btn btn-secondary btn-sm" id="addAcctBtn">Add account</button></div>
+            <div id="acctAdmin" class="acct-list"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Details the documents don't show</h3><span class="card-meta">Used by Investments and Taxes</span></div>
+            <form id="finSettingsForm" class="settings-grid"></form>
+          </div>
+          <h3 class="section-label">Connect and import</h3>
           <div class="grid-2">
             <button class="card card-action" data-link="bank">
               <h3>Bank and credit cards</h3>
@@ -272,8 +264,80 @@
             </label>
             <button id="venmo-upload" class="btn btn-primary">Upload</button>
           </div>
+        
         </div>
       </section>
+
+      <!-- Finance assistant: one chat per tab -->
+      <button class="ask-fab hidden" id="askBtn" aria-label="Ask the assistant">Ask</button>
+      <aside class="drawer hidden" id="chatDrawer" aria-label="Finance assistant">
+        <div class="drawer-head"><div><p class="eyebrow" id="chatPlace">Finances</p><h3>Ask about your money</h3></div><button class="text-btn" id="chatClose">Close</button></div>
+        <div class="chat-log" id="chatMessages"></div>
+        <div class="chat-suggestions" id="chatSuggestions"></div>
+        <div class="chat-composer">
+          <textarea id="chatInput" rows="1" placeholder="Ask about this page"></textarea>
+          <button id="chatSend" class="btn btn-primary">Send</button>
+        </div>
+      </aside>
+
+      <dialog id="acctDialog" class="dialog">
+        <form method="dialog" id="acctForm" class="dialog-form" autocomplete="off">
+          <h3 id="acctDialogTitle">Add account</h3>
+          <label class="span-2">Name<input class="input" name="name" required placeholder="Genpact 401(k)" /></label>
+          <label>Institution<input class="input" name="institution" placeholder="Voya" /></label>
+          <label>Type<select class="input" name="type">
+            <option value="checking">Checking</option><option value="savings">Savings</option><option value="credit_card">Credit card</option>
+            <option value="p2p">Venmo / Zelle</option><option value="brokerage">Brokerage</option><option value="roth_ira">Roth IRA</option>
+            <option value="rollover_ira">Rollover IRA</option><option value="traditional_ira">Traditional IRA</option><option value="401k">401(k)</option>
+            <option value="roth_401k">Roth 401(k)</option><option value="loan">Loan</option><option value="other">Other</option></select></label>
+          <label>Last 4 digits<input class="input" name="mask" maxlength="4" inputmode="numeric" /></label>
+          <label>Balance<input class="input" name="balance" type="number" step="0.01" /></label>
+          <label>As of<input class="input" name="date" type="date" /></label>
+          <label class="span-2">Note<input class="input" name="note" /></label>
+          <div class="dialog-actions span-2"><span style="flex:1"></span>
+            <button type="button" class="btn btn-secondary" id="acctCancel">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog id="balDialog" class="dialog">
+        <form method="dialog" id="balForm" class="dialog-form" autocomplete="off">
+          <h3 id="balTitle">Update balance</h3>
+          <label>Balance<input class="input" name="balance" type="number" step="0.01" required /></label>
+          <label>As of<input class="input" name="date" type="date" required /></label>
+          <p class="hint span-2" id="balHint">For a credit card, enter what you owe. Plaid replaces manual balances once linked.</p>
+          <div class="dialog-actions span-2"><span style="flex:1"></span>
+            <button type="button" class="btn btn-secondary" id="balCancel">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog id="jobDialog" class="dialog">
+        <form method="dialog" id="jobForm" class="dialog-form" autocomplete="off">
+          <h3 id="jobTitle">Job</h3>
+          <label>Employer<input class="input" name="employer" required /></label>
+          <label>Role<input class="input" name="role" /></label>
+          <label>Start<input class="input" name="start" type="date" /></label>
+          <label>End<input class="input" name="end" type="date" /></label>
+          <label>Salary<input class="input" name="salary" type="number" step="1" /></label>
+          <label>Work state<input class="input" name="work_state" maxlength="2" placeholder="IL" /></label>
+          <label class="span-2">Notes<input class="input" name="notes" /></label>
+          <fieldset class="span-2 pay-entry"><legend>Add a paycheck (optional)</legend>
+            <label>Pay date<input class="input" name="p_date" type="date" /></label>
+            <label>Gross<input class="input" name="p_gross" type="number" step="0.01" /></label>
+            <label>Net<input class="input" name="p_net" type="number" step="0.01" /></label>
+            <label>Federal withheld<input class="input" name="p_federal" type="number" step="0.01" /></label>
+            <label>State withheld<input class="input" name="p_state" type="number" step="0.01" /></label>
+          </fieldset>
+          <div class="dialog-actions span-2">
+            <button type="button" class="text-btn danger" id="jobDelete">Delete</button><span style="flex:1"></span>
+            <button type="button" class="btn btn-secondary" id="jobCancel">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </div>
+        </form>
+      </dialog>
 
       <!-- ───────────────────────── PLACEHOLDER SECTIONS ───────────────────────── -->
       <section class="route" data-route="health">

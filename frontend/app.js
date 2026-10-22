@@ -13,13 +13,13 @@ const iso = (d) => d.toISOString().slice(0, 10);
 const backendReady = !API_BASE.includes("YOUR-");
 const charts = {};
 let allTx = [];
-const chatHistory = []; // [{role, content}] — kept in the browser only
+
 
 // ---------- Sections & routing ----------
 const SECTIONS = {
   finances: { title: "Finances", tabs: [
-    ["overview", "Overview"], ["transactions", "Transactions"], ["investments", "Investments"],
-    ["paychecks", "Summer 2026"], ["taxes", "Taxes"], ["assistant", "Assistant"], ["accounts", "Accounts"]] },
+    ["networth", "Net Worth"], ["cash", "Cash & Cards"], ["investments", "Investments"],
+    ["income", "Income"], ["taxes", "Taxes"], ["accounts", "Accounts & Imports"]] },
   health: { title: "Health", tabs: [
     ["overview", "Overview"], ["planner", "Planner"], ["history", "History"], ["calendar", "Calendar"], ["connect", "Connect"]] },
   education: { title: "Education", tabs: [
@@ -34,7 +34,10 @@ function parseRoute() {
   routeQuery = new URLSearchParams(query || "");
   if (!SECTIONS[section]) return { section: "home" };
   const tabs = SECTIONS[section].tabs;
-  return { section, tab: tabs.some(([k]) => k === tab) ? tab : tabs[0]?.[0] };
+  const alias = section === "finances" ? { overview: "networth", transactions: "cash", paychecks: "income", assistant: "networth" }[tab] : null;
+  if (alias === "income" && !routeQuery.get("sub")) routeQuery.set("sub", "kirkland");
+  const t = alias || tab;
+  return { section, tab: tabs.some(([k]) => k === t) ? t : tabs[0]?.[0] };
 }
 
 function render() {
@@ -50,11 +53,13 @@ function render() {
     $("subnavTitle").textContent = cfg.title;
     $("subnavTabs").innerHTML = cfg.tabs.map(([k, label]) =>
       `<a href="#/${section}/${k}" class="${k === tab ? "active" : ""}">${label}</a>`).join("");
-    const showControls = (section === "finances" && ["overview", "transactions", "investments"].includes(tab))
-      || (section === "health" && tab === "overview");
+    const showControls = section === "finances" || (section === "health" && tab === "overview");
     $("sectionControls").classList.toggle("hidden", !showControls);
+    $("range").classList.toggle("hidden", section === "finances" && tab !== "cash");
     $$(`[data-route="${section}"] .panel`).forEach((p) => p.classList.toggle("active", p.dataset.panel === tab));
   }
+  $("askBtn").classList.toggle("hidden", section !== "finances");
+  if (section !== "finances") $("chatDrawer").classList.add("hidden");
   window.scrollTo({ top: 0 });
   document.title = section === "home" ? "LifeTracker" : `${cfg.title} · LifeTracker`;
   load(section, tab).catch((e) => toast(e.message));
@@ -66,11 +71,13 @@ async function load(section, tab) {
   if (section === "health") return loadHealth(tab);
   if (section === "education") return loadEducation(tab);
   if (section !== "finances") return;
-  if (tab === "overview" || tab === "transactions") return loadOverview();
-  if (tab === "investments") return loadInvestments();
-  if (tab === "paychecks") return loadPaychecks();
-  if (tab === "taxes") return loadTaxes();
-  if (tab === "assistant") setTimeout(() => $("chatInput").focus(), 50);
+  setChatPlace(tab);
+  if (tab === "networth") return loadNetWorth();
+  if (tab === "cash") return loadCash();
+  if (tab === "investments") return loadInv();
+  if (tab === "income") return loadIncome();
+  if (tab === "taxes") return loadFinTaxes();
+  if (tab === "accounts") return loadImports();
 }
 
 window.addEventListener("hashchange", render);
@@ -186,8 +193,10 @@ async function loadHome() {
   if (!backendReady) return;
   const now = new Date();
   try {
-    const s = await api(`/api/summary?start=${iso(new Date(now.getFullYear(), now.getMonth(), 1))}&end=${iso(now)}`);
-    $("homeFinance").innerHTML = `${usd0.format(s.total_spent)}<small>spent this month</small>`;
+    const o = await api("/api/fin/overview");
+    $("homeFinance").innerHTML = o.net_worth != null
+      ? `${usd0.format(o.net_worth)}<small>net worth · ${usd0.format(o.month_spent || 0)} spent this month</small>`
+      : `${usd0.format(o.month_spent || 0)}<small>spent this month</small>`;
   } catch { $("homeFinance").textContent = "Open to connect accounts"; }
   try {
     const h = await api(`/api/health/summary?start=${iso(new Date(Date.now() - 7 * 864e5))}&end=${iso(now)}`);
@@ -207,63 +216,497 @@ async function loadHome() {
   } catch { $("homeEdu").textContent = "Import your courses"; }
 }
 
-// ---------- Finances ----------
-async function loadOverview() {
-  const [s, h, tx] = await Promise.all([
-    api("/api/summary" + rangeParams()), api("/api/holdings"), api("/api/transactions" + rangeParams())]);
-  $("kpi-spent").textContent = usd0.format(s.total_spent);
-  $("kpi-in").textContent = usd0.format(s.total_in);
-  const net = s.total_in - s.total_spent;
-  $("kpi-net").textContent = (net < 0 ? "−" : "") + usd0.format(Math.abs(net));
-  $("kpi-net").className = "kpi-value " + (net >= 0 ? "pos" : "neg");
-  $("kpi-portfolio").textContent = h.latest ? usd0.format(h.latest.total) : "—";
-  const fmt = (d) => new Date(d + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  $("kpi-spent-sub").textContent = `${fmt(s.start)} – ${fmt(s.end)}`;
-  $("catSubtitle").textContent = `${Object.keys(s.by_category).length} categories`;
+// ---------- Finances (net worth, cash & cards, investments, income, taxes, imports) ----------
+const m0 = (v) => (v == null ? "—" : usd0.format(v));
+const m2 = (v) => (v == null ? "—" : usd.format(v));
+const signed = (v, f = m2) => (v == null ? "—" : `${v > 0 ? "+" : v < 0 ? "−" : ""}${f(Math.abs(v))}`);
+const pctTxt = (v, d = 2) => (v == null ? "—" : `${v > 0 ? "+" : ""}${(+v).toFixed(d)}%`);
+const fdate = (d, o = { month: "short", day: "numeric", year: "numeric" }) => (d ? new Date(d.slice(0, 10) + "T00:00").toLocaleDateString("en-US", o) : "—");
+const SRC = { plaid: "Plaid", ubs_pdf: "UBS statement", chase_csv: "Chase CSV", venmo_csv: "Venmo CSV", csv: "CSV", manual: "Entered by you" };
+let finAccounts = [];
 
-  barRows("categoryBars", Object.entries(s.by_category));
-  barRows("sourceBars", Object.entries(s.by_source));
-  const months = Object.keys(s.by_month).map((m) => new Date(m + "-01T00:00").toLocaleDateString("en-US", { month: "short" }));
-  drawChart("chart-month", "bar", months, Object.values(s.by_month));
+function subtabs(elId, items, active, tab, param) {
+  $(elId).innerHTML = items.map(([k, label]) =>
+    `<a role="tab" class="subtab ${k === active ? "active" : ""}" href="#/finances/${tab}?${param}=${encodeURIComponent(k)}">${esc(label)}</a>`).join("");
+}
 
-  allTx = tx.transactions;
-  const byMerchant = {};
-  allTx.filter((t) => t.amount > 0).forEach((t) => (byMerchant[t.merchant] = (byMerchant[t.merchant] || 0) + t.amount));
-  barRows("merchantBars", Object.entries(byMerchant).sort((a, b) => b[1] - a[1]));
+function drawLines(id, labels, series, fmt = { tip: (v) => usd.format(v), tick: (v) => usd0.format(v) }) {
+  charts[id]?.destroy();
+  const k = chartColors();
+  Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+  charts[id] = new Chart($(id), {
+    type: "line",
+    data: { labels, datasets: series.map((s, i) => ({
+      label: s.label, data: s.data, borderColor: s.color || (i ? cssVar("--text-3") : k.accent), borderWidth: 2,
+      borderDash: s.dash ? [5, 4] : [], pointRadius: 3, pointHoverRadius: 5, tension: 0.25, fill: false, spanGaps: true,
+      backgroundColor: s.color || (i ? cssVar("--text-3") : k.accent) })) },
+    options: {
+      aspectRatio: 2.2,
+      plugins: { legend: { display: series.length > 1, labels: { color: k.text, boxWidth: 10, boxHeight: 10, usePointStyle: true } },
+                 tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${fmt.tip(c.parsed.y)}` } } },
+      scales: {
+        y: { border: { display: false }, ticks: { color: k.text, maxTicksLimit: 5, callback: (v) => fmt.tick(v) }, grid: { color: k.line } },
+        x: { border: { display: false }, ticks: { color: k.text, maxTicksLimit: 7, maxRotation: 0 }, grid: { display: false } },
+      },
+    },
+  });
+}
+
+function signedBars(elId, rows) {
+  const top = Math.max(1, ...rows.map((r) => Math.abs(r.value || 0)));
+  $(elId).innerHTML = rows.length ? rows.map((r) => `<div class="bar-row">
+      <span class="bar-label">${esc(r.label)}</span>
+      <span class="bar-track"><span class="bar-fill ${r.value < 0 ? "neg-fill" : ""}" style="display:block;width:${Math.max(1.5, Math.abs(r.value) / top * 100)}%"></span></span>
+      <span class="bar-value ${r.value < 0 ? "neg" : ""}">${signed(r.value, m0).replace("+", "")}</span></div>`).join("")
+    : `<div class="empty">No balances yet.</div>`;
+}
+
+// ---- Net worth
+async function loadNetWorth() {
+  const o = await api("/api/fin/overview");
+  finAccounts = o.accounts;
+  $("nwTotal").textContent = m0(o.net_worth);
+  $("nwSub").textContent = `${m0(o.assets)} in assets − ${m0(o.liabilities)} in debts` +
+    (o.missing_balances.length ? ` · no balance yet for ${o.missing_balances.join(", ")}` : "");
+  const tax = o.taxes || {};
+  $("nwKpis").innerHTML = `
+    <div class="kpi"><span class="kpi-label">Assets</span><span class="kpi-value">${m0(o.assets)}</span><span class="kpi-sub">${o.accounts.filter((a) => a.balance != null && !a.liability).length} accounts</span></div>
+    <div class="kpi"><span class="kpi-label">Debts</span><span class="kpi-value">${m0(o.liabilities)}</span><span class="kpi-sub">Credit cards and loans</span></div>
+    <a class="kpi kpi-link" href="#/finances/cash"><span class="kpi-label">Spent this month</span><span class="kpi-value">${m0(o.month_spent)}</span><span class="kpi-sub">Cash & cards →</span></a>
+    <a class="kpi kpi-link" href="#/finances/taxes"><span class="kpi-label">${new Date().getFullYear()} taxes</span><span class="kpi-value ${tax.settle < 0 ? "neg" : "pos"}">${tax.settle == null ? "—" : m0(Math.abs(tax.settle))}</span><span class="kpi-sub">${tax.settle == null ? "Estimate unavailable" : tax.settle < 0 ? "Estimated to owe →" : "Estimated refund →"}</span></a>`;
+  const h = o.history.filter((x) => x.accounts);
+  if (h.length) drawChart("chart-nw", "line", h.map((x) => fdate(x.date, { month: "short", year: "2-digit" })), h.map((x) => x.net_worth));
+  signedBars("nwTypes", o.by_type);
+  const link = (a) => ["investment", "retirement"].includes(a.group) ? `#/finances/investments?acct=${a.account}` : `#/finances/cash?acct=${a.account}`;
+  $("nwAccounts").innerHTML = o.accounts.map((a) => `<div class="acct-row">
+      <a href="${link(a)}" class="acct-name"><strong>${esc(a.name)}</strong><span class="tag">${esc(a.type_label)}</span></a>
+      <span class="acct-src">${a.as_of ? `${fdate(a.as_of)} · ${SRC[a.src] || a.src}${a.stale_days > 35 ? ` <span class="warn">${a.stale_days} days old</span>` : ""}` : "No balance yet"}</span>
+      <span class="acct-bal ${a.liability && a.balance ? "neg" : ""}">${a.balance == null ? "—" : (a.liability ? "−" : "") + m2(Math.abs(a.balance))}</span>
+      ${a.src !== "plaid" && ["cash", "credit"].includes(a.group) ? `<button class="text-btn" data-bal="${a.account}">Update</button>` : "<span></span>"}
+    </div>`).join("");
+  bindBalanceButtons();
+  $("nwMoves").innerHTML = o.changes.length ? `<div class="move-head"><span>Month</span><span>Change</span><span>Investments</span><span>New money</span><span>Everything else</span></div>` +
+    o.changes.map((c) => `<div class="move-row"><span>${fdate(c.month + "-01", { month: "short", year: "numeric" })}</span><strong class="${c.change < 0 ? "neg" : ""}">${signed(c.change - (c.newly_tracked || 0), m0)}</strong><span>${signed(c.investment_returns, m0)}</span><span>${signed(c.new_money, m0)}</span><span>${signed(c.saving_and_spending, m0)}</span></div>${c.newly_tracked ? `<div class="move-note">${signed(c.newly_tracked, m0)} from accounts first tracked this month, not counted as a change</div>` : ""}`).join("") +
+    `<p class="hint">Investments = market change + dividends from your statements. New money = trust distributions. Everything else = saving, spending and transfers from accounts without a balance yet.</p>`
+    : `<div class="empty">Needs two months of balances.</div>`;
+  const mv = o.investments.movers;
+  $("nwMoversTitle").textContent = mv.daily ? "Today's movers" : "Movers";
+  $("nwMovers").innerHTML = `<div class="inv-total"><strong>${m0(o.investments.total)}</strong><span>invested across accounts</span></div>` +
+    (mv.items.length ? `<p class="hint">${esc(mv.label)}: ${signed(mv.total_change, m0)}</p>` + mv.items.map((i) => `<div class="mini-row"><span><strong>${esc(i.symbol)}</strong></span><span class="${i.change_pct < 0 ? "neg" : "pos"}">${pctTxt(i.change_pct)} · ${signed(i.change_value, m0)}</span></div>`).join("")
+      : `<p class="hint">Movers appear once there are two price snapshots (two statements, or daily with Plaid).</p>`);
+}
+
+function bindBalanceButtons() {
+  $$("[data-bal]").forEach((b) => (b.onclick = () => {
+    const a = finAccounts.find((x) => (x.account || x.id) === b.dataset.bal) || {};
+    $("balForm").reset();
+    $("balForm").dataset.account = b.dataset.bal;
+    $("balTitle").textContent = `Update ${a.name || "balance"}`;
+    $("balForm").elements.date.value = iso(new Date());
+    $("balDialog").showModal();
+  }));
+}
+$("balCancel").onclick = () => $("balDialog").close();
+$("balForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const f = $("balForm");
+  try {
+    await api("/api/fin/balances", { method: "POST", body: JSON.stringify({ account: f.dataset.account, balance: +f.elements.balance.value, date: f.elements.date.value }) });
+    $("balDialog").close(); toast("Balance saved"); render();
+  } catch (err) { toast(err.message); }
+};
+
+// ---- Cash & cards
+let cashData = null;
+async function loadCash() {
+  const acct = routeQuery.get("acct") || "all";
+  const days = +$("range").value;
+  cashData = await api(`/api/fin/cash?account=${encodeURIComponent(acct)}&start=${iso(new Date(Date.now() - days * 864e5))}&end=${iso(new Date())}`);
+  finAccounts = cashData.accounts.map((a) => ({ ...a, account: a.id }));
+  const tabs = [["all", "All"], ...cashData.accounts.filter((a) => a.type !== "p2p").map((a) => [a.id, a.name]), ["p2p", "Venmo / Zelle"]];
+  subtabs("cashTabs", tabs, acct, "cash", "acct");
+  const b = cashData.balance, a = cashData.account;
+  $("cashKpis").innerHTML = `
+    <div class="kpi"><span class="kpi-label">${a ? (a.liability ? "Balance owed" : "Balance") : "Spent"}</span><span class="kpi-value">${a ? (b ? m2(Math.abs(b.value)) : "—") : m0(cashData.spent)}</span>
+      <span class="kpi-sub">${a ? (b ? `${fdate(b.date)} · ${SRC[b.src] || b.src}` : "") : `Last ${days} days`}${a && a.id ? ` · <button class="text-btn" data-bal="${a.id}">Update</button>` : ""}</span></div>
+    <div class="kpi"><span class="kpi-label">${a ? "Spent" : "Money in"}</span><span class="kpi-value">${m0(a ? cashData.spent : cashData.money_in)}</span><span class="kpi-sub">Last ${days} days</span></div>
+    <div class="kpi"><span class="kpi-label">${a ? "Money in" : "Net cash flow"}</span><span class="kpi-value">${a ? m0(cashData.money_in) : signed(cashData.money_in - cashData.spent, m0)}</span></div>
+    <div class="kpi"><span class="kpi-label">Transfers</span><span class="kpi-value">${m0(Math.abs(cashData.transfers))}</span><span class="kpi-sub">Between your accounts, not spending</span></div>`;
+  bindBalanceButtons();
+  $("cashCatMeta").textContent = `${Object.keys(cashData.by_category).length} categories`;
+  barRows("cashCats", Object.entries(cashData.by_category));
+  const months = Object.keys(cashData.by_month);
+  drawChart("chart-cash", "bar", months.map((m) => new Date(m + "-01T00:00").toLocaleDateString("en-US", { month: "short" })), Object.values(cashData.by_month));
+  allTx = cashData.transactions;
   renderTx();
+  $("cashNote").textContent = acct === "p2p"
+    ? "Venmo comes from monthly CSV uploads; Zelle payments show up in Chase checking. Each payment counts once even if it appears in both."
+    : "A purchase that's in both a CSV and Plaid counts once. Card payments and transfers between your accounts aren't spending.";
 }
 
 function renderTx() {
   const q = $("tx-search").value.toLowerCase();
-  const rows = allTx.filter((t) => !q || `${t.merchant} ${t.category} ${t.source} ${t.note || ""}`.toLowerCase().includes(q));
+  const names = Object.fromEntries((cashData?.accounts || []).map((a) => [a.id, a.name]));
+  const rows = allTx.filter((t) => !q || `${t.merchant} ${t.category} ${names[t.account] || t.source} ${t.note || ""}`.toLowerCase().includes(q));
   $("tx-count").textContent = rows.length.toLocaleString();
   const net = rows.reduce((a, t) => a + t.amount, 0);
   $("tx-total").textContent = net >= 0 ? `${usd.format(net)} out` : `+${usd.format(-net)} in`;
-  const fmt = (d) => new Date(d + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   $("tx-body").innerHTML = rows.slice(0, 500).map((t) => `
-    <tr><td>${fmt(t.date)}</td>
-      <td>${esc(t.merchant)}${t.pending ? '<span class="pending">Pending</span>' : ""}</td>
-      <td class="tag">${esc(t.category)}</td><td class="tag">${esc(t.source)}</td>
+    <tr><td>${fdate(t.date)}</td>
+      <td>${esc(t.merchant)}${t.pending ? '<span class="pending">Pending</span>' : ""}${t.transfer_pair ? '<span class="pending">Matched transfer</span>' : ""}</td>
+      <td class="tag">${esc(t.category)}</td><td class="tag">${esc(names[t.account] || t.source || "")}<span class="src-dot" title="${esc(SRC[t.src] || "")}"> · ${esc(SRC[t.src] || "")}</span></td>
       <td class="num ${t.amount < 0 ? "pos" : ""}">${t.amount < 0 ? "+" : ""}${usd.format(Math.abs(t.amount))}</td></tr>`).join("")
-    || `<tr><td colspan="5" class="empty">No transactions in this range</td></tr>`;
+    || `<tr><td colspan="5" class="empty">No transactions in this range. Import a Chase CSV or connect Plaid in Accounts & Imports.</td></tr>`;
 }
 
-async function loadInvestments() {
-  const h = await api("/api/holdings");
-  $("portfolioTotal").textContent = h.latest ? usd.format(h.latest.total) : "";
-  const fmt = (d) => new Date(d + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  drawChart("chart-portfolio", "line", h.history.map((x) => fmt(x.date)), h.history.map((x) => x.total));
-  $("holdings-body").innerHTML = (h.latest?.holdings || []).sort((a, b) => b.value - a.value).map((x) => {
-    const gain = x.cost_basis != null ? x.value - x.cost_basis : null;
-    return `<tr><td><strong>${esc(x.ticker || "—")}</strong></td><td class="tag">${esc(x.name)}</td>
-      <td class="num">${x.quantity.toLocaleString()}</td><td class="num">${usd.format(x.value)}</td>
-      <td class="num ${gain == null ? "" : gain >= 0 ? "pos" : "neg"}">${gain == null ? "—" : (gain >= 0 ? "+" : "−") + usd.format(Math.abs(gain))}</td></tr>`;
-  }).join("") || `<tr><td colspan="5" class="empty">Connect a brokerage and sync to see holdings</td></tr>`;
+// ---- Investments
+async function loadInv() {
+  const acct = routeQuery.get("acct") || "all";
+  const v = await api(`/api/fin/investments?account=${encodeURIComponent(acct)}`);
+  const tabs = [["all", "All accounts"], ...v.accounts.map((a) => [a.id, a.name])];
+  subtabs("invTabs", tabs, v.account || "all", "investments", "acct");
+  const H = v.holdings, single = !!v.account, A = v.accounts.find((a) => a.id === v.account);
+  if (!H.holdings.length && !H.cash) {
+    $("invBody").innerHTML = `<div class="card empty-state"><h3>No investment data yet</h3><p>Upload UBS statements in Accounts & Imports, or connect UBS through Plaid.</p><a class="btn btn-primary" href="#/finances/accounts">Go to Accounts & Imports</a></div>`;
+    return;
+  }
+  const asOf = Object.values(H.as_of).sort((a, b) => b.date.localeCompare(a.date))[0];
+  const gain = H.holdings.reduce((s, h) => s + (h.unrealized || 0), 0);
+  const eai = H.holdings.reduce((s, h) => s + (h.eai || 0), 0);
+  const ytd = single ? v.performance.ytd : null;
+  const roth = v.roth;
+  $("invBody").innerHTML = `
+    <div class="inv-head"><div><p class="eyebrow">${esc(A ? `${A.name} · ${A.type_label}${A.tax === "roth" ? " · tax-free growth" : A.tax === "pre_tax" ? " · pre-tax" : " · taxable"}` : "All investment accounts")}</p>
+      <h2 class="nw-total">${m2(H.total)}</h2><p class="lede-sm">As of ${fdate(asOf?.date)} · ${SRC[asOf?.src] || ""}</p></div></div>
+    <div class="kpis">
+      <div class="kpi"><span class="kpi-label">Unrealized gain</span><span class="kpi-value ${gain < 0 ? "neg" : "pos"}">${signed(gain, m0)}</span><span class="kpi-sub">On ${m0(H.holdings.reduce((s, h) => s + (h.cost_basis || 0), 0))} cost</span></div>
+      <div class="kpi"><span class="kpi-label">${single ? "Year to date" : "Cash"}</span><span class="kpi-value ${single && ytd.ytd_pct < 0 ? "neg" : ""}">${single ? pctTxt(ytd.ytd_pct) : m0(H.cash)}</span><span class="kpi-sub">${single ? `S&P 500 ${pctTxt(ytd.sp500_ytd)} · time-weighted, approx.` : `${(H.cash / H.total * 100).toFixed(1)}% of the total`}</span></div>
+      <div class="kpi"><span class="kpi-label">Est. annual income</span><span class="kpi-value">${m0(eai)}</span><span class="kpi-sub">${v.dividends.received ? `${m2(v.dividends.received)} received on file` : ""}</span></div>
+      <div class="kpi"><span class="kpi-label">Fund fees / year</span><span class="kpi-value">${m2(v.fees.fund_cost_per_year)}</span><span class="kpi-sub">${v.fees.weighted_expense_ratio != null ? `${v.fees.weighted_expense_ratio.toFixed(3)}% average expense ratio` : ""}</span></div>
+    </div>
+    <div class="grid-2">
+      <div class="card"><div class="card-head"><h3>${single ? "Return vs S&P 500" : "Value over time"}</h3><span class="card-meta">${single ? "Year to date, at each statement" : "Statements + Plaid"}</span></div><canvas id="chart-inv"></canvas>
+        ${single ? `<p class="hint">Time-weighted return from each statement's own figures (deposits removed). The S&P 500 line is the index return UBS prints on each statement; daily data comes with Plaid.</p>` : `<div id="invPerfTable"></div>`}</div>
+      <div class="card"><div class="card-head"><h3>Allocation</h3><span class="card-meta">Look-through by fund type</span></div><div id="invAlloc"></div>
+        ${v.allocation.flags.map((f) => `<p class="hint flag">${esc(f)}</p>`).join("")}</div>
+    </div>
+    <div class="card card-flush"><div class="card-head padded"><h3>Holdings</h3><span class="card-meta">Tap a holding for its tax lots</span></div>
+      <div class="table-scroll"><table class="table hold-table"><thead><tr><th>Security</th><th class="num">Shares</th><th class="num">Price</th><th class="num">Value</th><th class="num">Cost</th><th class="num">Gain</th><th class="num">Weight</th><th class="num">Yield</th></tr></thead>
+      <tbody id="invHoldings"></tbody></table></div></div>
+    <div class="grid-2">
+      <div class="card"><div class="card-head"><h3>${v.movers.daily ? "Today's movers" : "Movers"}</h3><span class="card-meta">${esc(v.movers.label || "")}</span></div><div id="invMovers"></div></div>
+      <div class="card"><div class="card-head"><h3>Fees</h3><span class="card-meta">Fund expense ratios</span></div><div id="invFees"></div></div>
+    </div>
+    <div class="grid-2">
+      <div class="card"><div class="card-head"><h3>Dividends & interest</h3><span class="card-meta">${m2(v.dividends.projected_annual)} projected a year</span></div><div id="invDivs"></div></div>
+      ${roth ? `<div class="card"><div class="card-head"><h3>Roth IRA details</h3><span class="card-meta">Contributions, conversions, 5-year clocks</span></div><div id="invRoth"></div></div>`
+             : single && A?.tax === "pre_tax" ? `<div class="card"><div class="card-head"><h3>Pre-tax money</h3></div><p>${esc(v.pre_tax?.note || "")}</p><p class="hint">This is where the Genpact 401(k) was rolled over. The statements show it was then converted to the Roth IRA in 2025 (1099-R / 5498 on file), leaving the cash balance here. See Taxes for what a withdrawal would cost.</p></div>`
+             : `<div class="card"><div class="card-head"><h3>Accounts</h3></div><div id="invAccts"></div></div>`}
+    </div>
+    ${single && v.statements?.length ? `<div class="card card-flush"><div class="card-head padded"><h3>Statements on file</h3><a class="link-sm" href="#/finances/accounts">Reconciliation →</a></div>
+      <div class="table-scroll"><table class="table"><thead><tr><th>Period</th><th class="num">Start</th><th class="num">Deposits</th><th class="num">Income</th><th class="num">Market change</th><th class="num">End</th></tr></thead>
+      <tbody>${v.statements.slice().reverse().map((s) => `<tr><td>${esc(s.period_label)}</td><td class="num">${m2(s.opening_value)}</td><td class="num">${m2(s.change?.deposits)}</td><td class="num">${m2(s.change?.div_int)}</td><td class="num ${(s.change?.market_change || 0) < 0 ? "neg" : ""}">${signed(s.change?.market_change)}</td><td class="num"><strong>${m2(s.closing_value)}</strong></td></tr>`).join("")}</tbody></table></div></div>` : ""}`;
+
+  if (single && ytd.points.length) {
+    drawLines("chart-inv", ytd.points.map((p) => fdate(p.date, { month: "short", day: "numeric" })),
+      [{ label: A.name, data: ytd.points.map((p) => p.ytd_pct) }, { label: "S&P 500", data: ytd.points.map((p) => p.sp500_ytd), dash: true }],
+      { tip: (x) => pctTxt(x), tick: (x) => `${x}%` });
+  } else if (!single) {
+    const vs = v.value_series;
+    if (vs.length) drawChart("chart-inv", "line", vs.map((p) => fdate(p.date, { month: "short", day: "numeric" })), vs.map((p) => p.value));
+    $("invPerfTable").innerHTML = `<div class="perf-rows">${v.performance.by_account.map((p) => `<a class="perf-row" href="#/finances/investments?acct=${p.account}"><span>${esc(p.name)}</span><span class="${p.ytd_pct < 0 ? "neg" : "pos"}">${pctTxt(p.ytd_pct)}</span><span class="muted">S&P ${pctTxt(p.sp500_ytd)}</span></a>`).join("")}</div><p class="hint">Year-to-date, time-weighted. Open an account for its chart.</p>`;
+  }
+  const alloc = (rows) => rows.filter((r) => r.value).map((r) => `<div class="bar-row"><span class="bar-label">${esc(r.label)}</span><span class="bar-track"><span class="bar-fill" style="display:block;width:${Math.max(1.5, r.pct)}%"></span></span><span class="bar-value">${r.pct.toFixed(1)}%</span></div>`).join("");
+  $("invAlloc").innerHTML = `<h4 class="mini-h">Asset class</h4>${alloc(v.allocation.by_asset)}<p class="hint">Bonds, international and crypto: ${v.allocation.by_asset.filter((r) => ["Bonds", "International stocks", "Crypto"].includes(r.label) && !r.value).length === 3 ? "none held" : ""}</p><h4 class="mini-h">By fund type</h4>${alloc(v.allocation.by_style)}`;
+  $("invHoldings").innerHTML = H.holdings.map((h, i) => `
+    <tr class="hold-row" data-lots="${i}"><td><strong>${esc(h.symbol)}</strong><span class="hold-name">${esc(h.name)}${!single && h.accounts?.length > 1 ? ` · ${h.accounts.length} accounts` : ""}</span></td>
+      <td class="num">${(+h.quantity).toLocaleString()}</td><td class="num">${m2(h.price)}</td><td class="num"><strong>${m2(h.value)}</strong></td>
+      <td class="num">${m2(h.cost_basis)}</td><td class="num ${h.unrealized < 0 ? "neg" : "pos"}">${signed(h.unrealized)}</td>
+      <td class="num">${h.weight_pct?.toFixed(1)}%</td><td class="num">${h.yield_pct != null ? h.yield_pct.toFixed(2) + "%" : "—"}</td></tr>
+    <tr class="lots-row hidden" id="lots-${i}"><td colspan="8">${(h.lots || []).length ? `<table class="lots"><thead><tr><th>Bought</th>${single ? "" : "<th>Account</th>"}<th class="num">Shares</th><th class="num">Cost</th><th class="num">Value</th><th class="num">Gain</th><th>Term</th></tr></thead><tbody>
+      ${h.lots.map((l) => `<tr><td>${fdate(l.trade_date)}</td>${single ? "" : `<td>${esc(l.account_name)}</td>`}<td class="num">${l.quantity}</td><td class="num">${m2(l.cost_basis)}</td><td class="num">${m2(l.value)}</td><td class="num ${l.unrealized < 0 ? "neg" : "pos"}">${signed(l.unrealized)}</td>
+        <td>${l.term === "LT" ? "Long-term" : `Short-term · long-term ${fdate(l.long_term_on)}${l.days_to_lt <= 60 ? ` <span class="warn">in ${l.days_to_lt} days</span>` : ""}`}</td></tr>`).join("")}</tbody></table>` : `<p class="hint">No tax lots from this source yet.</p>`}</td></tr>`).join("")
+    + (H.cash ? `<tr><td><strong>Cash</strong><span class="hold-name">Sweep and cash balances</span></td><td></td><td></td><td class="num"><strong>${m2(H.cash)}</strong></td><td></td><td></td><td class="num">${(H.cash / H.total * 100).toFixed(1)}%</td><td></td></tr>` : "");
+  $$(".hold-row").forEach((r) => (r.onclick = () => $(`lots-${r.dataset.lots}`).classList.toggle("hidden")));
+  const mv = v.movers;
+  $("invMovers").innerHTML = mv.items.length ? mv.items.map((i) => `<div class="mini-row"><span><strong>${esc(i.symbol)}</strong> <span class="tag">${m2(i.from)} → ${m2(i.to)}</span></span><span class="${i.change_pct < 0 ? "neg" : "pos"}">${pctTxt(i.change_pct)} · ${signed(i.change_value, m0)}</span></div>`).join("") +
+      `<p class="hint">${mv.daily ? "From the last two Plaid syncs." : "Statement to statement until Plaid adds daily prices."}</p>` : `<p class="hint">Needs two price snapshots.</p>`;
+  const F = v.fees;
+  $("invFees").innerHTML = F.funds.map((f) => `<div class="mini-row"><span><strong>${esc(f.symbol)}</strong> <span class="tag">${f.expense_ratio != null ? f.expense_ratio + "%" : "unknown"}</span></span><span>${m2(f.annual_cost)} / yr</span></div>`).join("") +
+    `<div class="mini-row total"><span>All funds</span><strong>${m2(F.fund_cost_per_year)} / yr</strong></div>
+    <p class="hint">${esc(F.note)} ${F.account_fees.length ? `Account fees on file: ${m2(F.account_fees_total)}.` : "No account fees in the activity on file."} Expense ratios from fund pages as of ${fdate(F.funds[0]?.as_of)} (${[...new Set(F.funds.map((f) => f.source).filter(Boolean))].length} sources).</p>`;
+  const D = v.dividends, months = Object.entries(D.by_month).slice(-12);
+  const topD = Math.max(1, ...months.map(([, x]) => x));
+  $("invDivs").innerHTML = `<div class="div-bars">${months.map(([m, x]) => `<div class="div-bar"><i style="height:${Math.max(4, x / topD * 100)}%"></i><span>${new Date(m + "-01T00:00").toLocaleDateString("en-US", { month: "short" })}</span><em>${m0(x)}</em></div>`).join("")}</div>
+    <div class="mini-row"><span>Received (on file)</span><strong>${m2(D.received)}</strong></div><div class="mini-row"><span>Projected next 12 months</span><strong>${m2(D.projected_annual)}</strong></div><p class="hint">${esc(D.note)}</p>`;
+  if (roth) {
+    $("invRoth").innerHTML = `<div class="mini-row"><span>Value</span><strong>${m2(roth.value)}</strong></div>
+      <div class="mini-row"><span>Your contributions (on file)</span><span>${m2(roth.contributions)}</span></div>
+      ${roth.conversions.map((c) => `<div class="mini-row"><span>Converted in ${c.year}</span><span>${m2(c.amount)} · penalty-free ${fdate(c.penalty_free_from)}</span></div>`).join("")}
+      <div class="mini-row"><span>Earnings</span><strong class="pos">${m2(roth.earnings)}</strong></div>
+      <h4 class="mini-h">Contributions by tax year</h4>
+      ${roth.by_year.map((y) => `<div class="mini-row"><span>${y.year}</span><span>${m2(y.contributed)}${y.limit ? ` of ${m0(y.limit)} limit` : ""}${y.converted ? ` · ${m0(y.converted)} converted` : ""}</span></div>`).join("")}
+      <p class="hint">${esc(roth.five_year_clock.note)}${roth.five_year_clock.qualified_from ? ` Earnings clock: tax-free from ${fdate(roth.five_year_clock.qualified_from)} (and 59½).` : ""}</p>
+      ${roth.missing_years_note ? `<p class="hint flag">${esc(roth.missing_years_note)}</p>` : ""}`;
+  } else if ($("invAccts")) {
+    $("invAccts").innerHTML = v.accounts.map((a) => { const p = v.performance.by_account?.find((x) => x.account === a.id);
+      return `<a class="mini-row" href="#/finances/investments?acct=${a.id}"><span><strong>${esc(a.name)}</strong> <span class="tag">${esc(a.type_label)}</span></span><span>${p?.ytd_pct != null ? pctTxt(p.ytd_pct) + " YTD" : ""}</span></a>`; }).join("");
+  }
 }
 
-// ---------- Finance assistant ----------
+// ---- Income
+let incData = null, editingJob = null;
+async function loadIncome() {
+  const sub = routeQuery.get("sub") || "overview";
+  incData = await api(`/api/fin/income?year=${new Date().getFullYear()}`);
+  const tabs = [["overview", "Overview"], ...incData.jobs.map((j) => [j.id, j.employer]), ["trust", "Trust distributions"], ["investment", "Investment income"]];
+  subtabs("incTabs", tabs, sub, "income", "sub");
+  $("incKirkland").classList.toggle("hidden", sub !== "kirkland");
+  $("incBody").classList.toggle("hidden", sub === "kirkland");
+  if (sub === "kirkland") return loadPaychecks();
+  const job = incData.jobs.find((j) => j.id === sub);
+  if (sub === "overview") {
+    const years = Object.entries(incData.by_year);
+    const cats = [...new Set(years.flatMap(([, d]) => Object.keys(d)))];
+    $("incBody").innerHTML = `<div class="inc-head"><h2 class="title">Income</h2><button class="btn btn-secondary btn-sm" id="addJob">Add a job</button></div>
+      <div class="card card-flush"><div class="card-head padded"><h3>By year</h3><span class="card-meta">Everything that came in, by kind</span></div>
+        <div class="table-scroll"><table class="table"><thead><tr><th>Year</th>${cats.map((c) => `<th class="num">${esc(c)}</th>`).join("")}<th class="num">Total</th></tr></thead>
+        <tbody>${years.map(([y, d]) => `<tr><td><strong>${y}</strong></td>${cats.map((c) => `<td class="num">${d[c] ? m2(d[c]) : "—"}</td>`).join("")}<td class="num"><strong>${m2(Object.values(d).reduce((a, b) => a + b, 0))}</strong></td></tr>`).join("") || `<tr><td colspan="9" class="empty">No income on file yet</td></tr>`}</tbody></table></div></div>
+      <div class="job-grid">${incData.jobs.map((j) => `<a class="card job-card" href="#/finances/income?sub=${j.id}"><span class="eyebrow">${esc(j.role || "Job")}</span><h3>${esc(j.employer)}</h3>
+        <p>${j.has_data ? `${m2(j.gross)} gross · ${j.checks} paychecks${j.year ? ` · ${j.year}` : ""}` : esc(j.notes || "No pay data yet")}</p>
+        <span class="link">${j.link === "earnings" ? "Paychecks and withholding →" : "Open →"}</span></a>`).join("")}
+        <a class="card job-card" href="#/finances/income?sub=trust"><span class="eyebrow">Inheritance</span><h3>Trust distributions</h3><p>${m2(incData.trust_total)} this year</p><span class="link">Open →</span></a></div>
+      <p class="hint">Law school years show no wages, so those years are simply absent. Genpact pay history arrives when Plaid links or you add pay stubs.</p>`;
+    $("addJob").onclick = () => openJob(null);
+  } else if (job) {
+    $("incBody").innerHTML = `<div class="inc-head"><div><p class="eyebrow">${esc(job.role || "Job")}</p><h2 class="title">${esc(job.employer)}</h2>
+        <p class="lede-sm">${[job.start && `${fdate(job.start)} – ${job.end ? fdate(job.end) : "present"}`, job.work_state && `worked in ${job.work_state}`].filter(Boolean).join(" · ")}</p></div>
+        <button class="btn btn-secondary btn-sm" id="editJob">Edit / add pay</button></div>
+      ${(job.pay || []).length ? `<div class="card card-flush"><div class="table-scroll"><table class="table"><thead><tr><th>Pay date</th><th class="num">Gross</th><th class="num">Federal</th><th class="num">State</th><th class="num">Net</th></tr></thead>
+        <tbody>${job.pay.map((p) => `<tr><td>${fdate(p.date)}</td><td class="num">${m2(p.gross)}</td><td class="num">${m2(p.federal)}</td><td class="num">${m2(p.state)}</td><td class="num"><strong>${m2(p.net)}</strong></td></tr>`).join("")}</tbody></table></div></div>`
+        : `<div class="card empty-state"><h3>No pay data yet</h3><p>${esc(job.notes || "")} Payroll deposits will be picked up automatically once Plaid links the bank you were paid into, or add pay stubs here.</p></div>`}`;
+    $("editJob").onclick = () => openJob(job);
+  } else if (sub === "trust") {
+    $("incBody").innerHTML = `<div class="inc-head"><div><p class="eyebrow">Income</p><h2 class="title">Trust distributions</h2><p class="lede-sm">From your grandfather's trust (his retirement account)</p></div></div>
+      <div class="card">${incData.trust.map((t) => `<div class="mini-row"><span><strong>${fdate(t.date)}</strong> <span class="tag">into ${esc(t.account)} · ${esc(t.description)}</span></span><strong>${m2(t.amount)}</strong></div>`).join("") || `<p class="hint">None on file.</p>`}
+        <p class="hint">Treated as taxable ordinary income on the Taxes page (change the taxable share there once the 1099-R or K-1 arrives). It's new money, not a transfer between your accounts, so it counts as income here and in net worth changes.</p>
+        <a class="link-sm" href="#/finances/taxes">See the tax on it →</a></div>`;
+  } else if (sub === "investment") {
+    const I = incData.investment_income;
+    $("incBody").innerHTML = `<div class="inc-head"><div><p class="eyebrow">Income</p><h2 class="title">${m2(I.total)} in dividends & interest</h2><p class="lede-sm">This year, all accounts. Only the brokerage account's is taxed now; IRA income isn't taxed until withdrawn (and never, from the Roth, once qualified).</p></div></div>
+      <div class="grid-2"><div class="card"><div class="card-head"><h3>By account</h3></div>${Object.entries(I.by_account).map(([k, x]) => `<div class="mini-row"><span>${esc(k)}</span><strong>${m2(x)}</strong></div>`).join("")}</div>
+      <div class="card"><div class="card-head"><h3>Payments</h3></div>${I.items.map((x) => `<div class="mini-row"><span>${fdate(x.date)} <span class="tag">${esc(x.symbol || x.type)} · ${esc(x.account)}</span></span><span>${m2(x.amount)}</span></div>`).join("")}</div></div>`;
+  }
+}
+
+function openJob(job) {
+  editingJob = job;
+  const f = $("jobForm"); f.reset();
+  $("jobTitle").textContent = job ? job.employer : "Add a job";
+  for (const k of ["employer", "role", "start", "end", "salary", "work_state", "notes"]) f.elements[k].value = job?.[k] ?? "";
+  $("jobDelete").classList.toggle("hidden", !job || job.link === "earnings");
+  $("jobDialog").showModal();
+}
+$("jobCancel").onclick = () => $("jobDialog").close();
+$("jobDelete").onclick = async () => {
+  if (!editingJob || !confirm(`Delete ${editingJob.employer}?`)) return;
+  try { await api(`/api/fin/income/jobs/${editingJob.id}`, { method: "DELETE" }); $("jobDialog").close(); location.hash = "#/finances/income"; }
+  catch (e) { toast(e.message); }
+};
+$("jobForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const f = $("jobForm"), val = (k) => f.elements[k].value.trim();
+  const body = Object.fromEntries(["employer", "role", "start", "end", "salary", "work_state", "notes"].map((k) => [k, val(k) || null]));
+  if (val("p_date") && val("p_gross")) {
+    body.pay = [...(editingJob?.pay || []), { date: val("p_date"), gross: +val("p_gross"), net: +val("p_net") || 0, federal: +val("p_federal") || 0, state: +val("p_state") || 0 }];
+  }
+  try {
+    if (editingJob) await api(`/api/fin/income/jobs/${editingJob.id}`, { method: "PATCH", body: JSON.stringify(body) });
+    else await api("/api/fin/income/jobs", { method: "POST", body: JSON.stringify(body) });
+    $("jobDialog").close(); toast("Saved"); render();
+  } catch (err) { toast(err.message); }
+};
+
+// ---- Taxes
+async function loadFinTaxes(t) {
+  t = t || await api(`/api/fin/taxes?year=${new Date().getFullYear()}`);
+  const F = t.federal, IL = t.illinois, DC = t.dc, E = t.estimated, S = t.settings, TR = t.trust, CH = t.charitable;
+  const owe = t.settle < 0;
+  const box = (title, x, extra = "") => `<div class="tax-box"><h4>${title}</h4>
+      <div class="mini-row"><span>Tax</span><strong>${m2(x.tax)}</strong></div><div class="mini-row"><span>Paid so far</span><span>${m2(x.paid)}</span></div>
+      <div class="mini-row total"><span>${x.balance < 0 ? "Owe" : "Back to you"}</span><strong class="${x.balance < 0 ? "neg" : "pos"}">${m2(Math.abs(x.balance))}</strong></div>${extra}</div>`;
+  $("taxPage").innerHTML = `
+    <div class="pay-head"><div><p class="eyebrow">Tax year ${t.year} · estimate</p><h2 class="title">${owe ? `About ${m0(-t.settle)} still to pay` : `About ${m0(t.settle)} back`}</h2>
+      <p class="lede-sm">${m0(t.income_tax)} in income tax on ${m0(t.income)} of income${t.fica.ss ? `, plus ${m0(t.fica.ss + t.fica.medicare)} Social Security & Medicare (already withheld)` : ""}.</p></div></div>
+    <div class="card"><div class="card-head"><h3>Income</h3><span class="card-meta">Each line links to where it came from</span></div>
+      ${t.sources.map((x) => `<a class="mini-row" href="${x.link}"><span>${esc(x.label)}${x.note ? ` <span class="tag">${esc(x.note)}</span>` : ""}</span><strong>${m2(x.amount)}</strong></a>`).join("")}
+      <div class="mini-row total"><span>Adjusted gross income</span><strong>${m2(F.agi)}</strong></div></div>
+    ${E.needs_payment || E.dc_needs_payment ? `<div class="card alert-card"><div class="card-head"><h3>Estimated payment due ${fdate(E.next_due)}</h3></div>
+      ${E.needs_payment ? `<p>Federal: withholding covers ${m0(E.federal_paid)} of the ${m0(E.federal_required)} needed to avoid an underpayment penalty${E.prior_year_known ? "" : " (90% of this year's tax; add last year's tax below to use the 100%-of-last-year safe harbor, which may be lower)"}. Paying about <strong>${m0(E.short_by)}</strong> by ${fdate(E.next_due)} covers it.</p>` : ""}
+      ${E.dc_needs_payment ? `<p>DC: nothing is withheld for DC (your employer withheld Illinois), so about <strong>${m0(E.dc_short_by)}</strong> is due to DC; DC expects estimated payments when you'll owe more than $100.</p>` : ""}
+      ${E.explain ? `<p class="hint">${esc(E.explain)}</p>` : ""}</div>` : ""}
+    <div class="tax-grid">
+      ${box("Federal", F, `<p class="hint">${F.deduction_kind === "itemized" ? "Itemizing" : "Standard deduction"} (${m0(F.deduction)}) · taxable ${m0(F.taxable)} · top bracket ${(F.marginal * 100).toFixed(0)}%${F.niit ? ` · NIIT ${m2(F.niit)}` : ""}</p>`)}
+      ${box("Illinois", IL, `<p class="hint">${esc(IL.note)} Illinois wages ${m0(IL.wages)} at 4.95%, exemption prorated ${IL.ratio_pct}%.</p>`)}
+      ${DC ? box("DC", DC, `<p class="hint">Resident: taxed on all ${m0(DC.agi)}, then a ${m0(DC.credit_for_illinois)} credit for the Illinois tax on your wages. Top bracket ${(DC.marginal * 100).toFixed(2)}%.</p>`) : ""}
+    </div>
+    <div class="grid-2">
+      <div class="card"><div class="card-head"><h3>Deductions</h3><span class="card-meta">${F.deduction_kind === "itemized" ? "Itemizing wins" : "Standard deduction wins"}</span></div>
+        <div class="mini-row"><span>Standard deduction</span><span>${m2(F.std_deduction)}</span></div>
+        <div class="mini-row"><span>+ Charitable deduction for non-itemizers (up to $1,000)</span><span>${m2(F.charity_nonitemizer)}</span></div>
+        <div class="mini-row"><span>vs. itemizing: state & local taxes ${m0(F.salt)} + gifts above 0.5% of income</span><span>${m2(F.itemized)}</span></div>
+        <h4 class="mini-h">Charitable gifts found</h4>
+        ${CH.items.map((c) => `<div class="mini-row"><span>${fdate(c.date)} <span class="tag">${esc(c.merchant)}</span></span><span>${m2(c.amount)} <button class="text-btn" data-notgift="${c.id}">Not a gift</button></span></div>`).join("") || `<p class="hint">None found in the card or bank feed yet. The $1,000 to Big Shoulders will appear once the Chase card statement for that month is imported (or Plaid links the card).</p>`}
+        ${CH.extra ? `<div class="mini-row"><span>Added by you</span><span>${m2(CH.extra)}</span></div>` : ""}</div>
+      <div class="card"><div class="card-head"><h3>Trust money</h3><span class="card-meta">${TR.form_on_file ? "Tax form on file" : "Waiting for the 1099-R / K-1"}</span></div>
+        <div class="mini-row"><span>Received</span><strong>${m2(TR.gross)}</strong></div>
+        <div class="mini-row"><span>Taxable share used</span><span>${TR.taxable_pct}% → ${m2(TR.taxable)}</span></div>
+        <div class="mini-row"><span>Tax withheld by the trust</span><span>${m2(TR.withheld_federal)} federal · ${m2(TR.withheld_state)} state</span></div>
+        <p class="hint">Money from an inherited retirement account is taxed as ordinary income. It's not Illinois income (you weren't an Illinois resident and it isn't Illinois-source), but DC taxes it.</p>
+        <div class="card-head"><h3>Roth IRA income check</h3></div>
+        <p>${esc(t.roth.note)}</p><p class="hint">2026 income for the test ${m0(t.roth.magi)} vs phase-out ${m0(t.roth.phaseout[0])}–${m0(t.roth.phaseout[1])}; contributed ${m0(t.roth.contributed)} of ${m0(t.roth.allowed)} allowed.</p></div>
+    </div>
+    <div class="card"><div class="card-head"><h3>If you took retirement money out</h3><span class="card-meta">Federal + DC now; Illinois later</span></div>
+      <div class="ret-grid">${t.retirement.map((r) => `<div class="ret-acct"><h4>${esc(r.name)} <span class="tag">${m2(r.value)}</span></h4>
+        ${r.pieces.map((p) => `<div class="mini-row"><span>${esc(p.label)} <span class="tag">${esc(p.note)}</span></span><span>${m2(p.amount)} → tax ${m2(p.tax_now)}</span></div>`).join("")}
+        ${r.kind === "roth" ? `<div class="mini-row total"><span>Withdrawn today (under 59½)</span><strong>${m2(r.early_tax)}</strong></div><div class="mini-row"><span>Once qualified (59½ and 5 years)</span><strong class="pos">$0.00</strong></div><p class="hint">${esc(r.assumptions)}</p>`
+          : (r.scenarios || []).map((x) => `<div class="mini-row"><span>${esc(x.label)}${x.note ? ` <span class="tag">${esc(x.note)}</span>` : ""}</span><span>${m2(x.federal + x.state + x.penalty)}</span></div>`).join("")}</div>`).join("")}</div></div>
+    <div class="card"><div class="card-head"><h3>Federal brackets</h3><span class="card-meta">${m0(F.agi)} − ${m0(F.deduction)} = ${m0(F.taxable)} taxable</span></div>
+      <div class="ladder">${F.fill.filter((b, i) => b.amount || (i && F.fill[i - 1].amount)).map((b) => `<div class="ladder-row ${b.amount ? "" : "unused"}"><span class="lr-rate">${(b.rate * 100).toFixed(0)}%</span>
+        <span class="lr-range">${usd0.format(b.from)}${b.to == null ? "+" : ` – ${usd0.format(b.to)}`}</span><span class="lr-bar"><i style="width:${b.to == null ? 100 : Math.min(100, b.amount / (b.to - b.from) * 100)}%"></i></span>
+        <span class="lr-amt">${b.amount ? `${m2(b.amount)} → <b>${m2(b.tax)}</b>` : "not reached"}</span></div>`).join("")}
+        ${F.preferential ? `<div class="ladder-row"><span class="lr-rate">pref.</span><span class="lr-range">Qualified dividends / gains</span><span></span><span class="lr-amt">${m2(F.preferential)} → <b>${m2(F.preferential_tax)}</b></span></div>` : ""}</div></div>
+    <div class="card"><div class="card-head"><h3>Your inputs</h3><span class="card-meta">The documents can't tell us these</span></div>
+      <form id="taxSettings" class="settings-grid">
+        <label>Trust: taxable share %<input class="input" name="trust_taxable_pct" type="number" min="0" max="100" step="1" value="${S.trust_taxable_pct ?? 100}" /></label>
+        <label>Trust: federal tax withheld<input class="input" name="trust_federal_withheld" type="number" step="0.01" value="${S.trust_federal_withheld || 0}" /></label>
+        <label>Trust: state tax withheld<input class="input" name="trust_state_withheld" type="number" step="0.01" value="${S.trust_state_withheld || 0}" /></label>
+        <label>${t.year - 1} total federal tax (Form 1040 line 24)<input class="input" name="prior_year_tax" type="number" step="1" value="${S.prior_year_tax ?? ""}" /></label>
+        <label>${t.year - 1} AGI<input class="input" name="prior_year_agi" type="number" step="1" value="${S.prior_year_agi ?? ""}" /></label>
+        <label>Other charitable gifts not in the feed<input class="input" name="charitable_extra" type="number" step="0.01" value="${S.charitable_extra || 0}" /></label>
+        <label>Birth year<input class="input" name="birth_year" type="number" value="${S.birth_year ?? ""}" /></label>
+        <div class="settings-actions"><button class="btn btn-primary btn-sm">Recalculate</button></div>
+      </form></div>
+    <p class="hint">${esc(t.disclaimer)} 2026 figures: IRS brackets and standard deduction; Illinois 4.95%; DC 2026 brackets; long-term gains 0%/15%/20% at $49,450 / $545,500 (single); charitable deduction up to $1,000 for non-itemizers and a 0.5%-of-income floor for itemizers (OBBBA); Roth phase-out $153,000–$168,000; Illinois subtracts IRA distributions.</p>`;
+  $("taxSettings").onsubmit = async (e) => {
+    e.preventDefault();
+    const body = Object.fromEntries([...new FormData(e.target).entries()].map(([k, x]) => [k, x === "" ? null : +x]));
+    try { loadFinTaxes(await api("/api/fin/tax-settings", { method: "PUT", body: JSON.stringify(body) })); toast("Recalculated"); }
+    catch (err) { toast(err.message); }
+  };
+  $$("[data-notgift]").forEach((b) => (b.onclick = async () => {
+    try { await api(`/api/fin/transactions/${b.dataset.notgift}`, { method: "PATCH", body: JSON.stringify({ charitable: false }) }); loadFinTaxes(); }
+    catch (err) { toast(err.message); }
+  }));
+}
+
+// ---- Accounts & imports
+async function loadImports(v) {
+  v = v || await api("/api/fin/imports");
+  finAccounts = v.accounts.map((a) => ({ ...a, account: a.id }));
+  // coverage timeline
+  const all = v.coverage.flatMap((r) => Object.values(r.sources).flatMap((s) => [s.start, s.end]));
+  const lo = all.length ? all.reduce((a, b) => (a < b ? a : b)) : iso(new Date()), hi = iso(new Date());
+  const span = Math.max(1, (new Date(hi) - new Date(lo)) / 864e5);
+  const pos = (d) => Math.max(0, Math.min(100, (new Date(d) - new Date(lo)) / 864e5 / span * 100));
+  $("covTimeline").innerHTML = all.length ? `<div class="cov-scale"><span>${fdate(lo)}</span><span>Today</span></div>` + v.coverage.map((r) => `<div class="cov-row"><span class="cov-name">${esc(r.name)}</span><span class="cov-track">
+      ${Object.entries(r.sources).flatMap(([src, s]) => (s.periods || [s]).map((p) => `<i class="cov-bar src-${src}" style="left:${pos(p.start)}%;width:${Math.max(0.8, pos(p.end) - pos(p.start))}%" title="${esc(SRC[src] || src)}: ${fdate(p.start)} – ${fdate(p.end)}${p.label ? ` (${p.label})` : ""}"></i>`)).join("")}</span>
+      <span class="cov-meta">${Object.entries(r.sources).map(([src, s]) => `${SRC[src] || src}${s.gaps?.length ? ` <span class="warn">${s.gaps.length} gap${s.gaps.length > 1 ? "s" : ""}</span>` : ""}`).join(" · ") || "Nothing yet"}</span></div>`).join("") +
+    `<div class="cov-legend">${["plaid", "ubs_pdf", "chase_csv", "venmo_csv"].map((k) => `<span><i class="cov-bar src-${k}"></i>${SRC[k]}</span>`).join("")}</div>` : `<div class="empty">Nothing imported yet.</div>`;
+  const R = v.reconciliation;
+  $("recMeta").textContent = R.length ? `${R.filter((r) => r.ok).length} of ${R.length} statement periods match to the cent` : "";
+  $("recTable").innerHTML = R.length ? `<thead><tr><th>Account</th><th>Period</th><th class="num">Start</th><th class="num">Deposits</th><th class="num">Income</th><th class="num">Market</th><th class="num">End</th><th>Checks</th></tr></thead><tbody>` +
+    R.map((r) => `<tr><td>${esc(r.account_name)}</td><td>${esc(r.period)}</td><td class="num">${m2(r.opening)}</td><td class="num">${m2(r.deposits)}</td><td class="num">${m2(r.income)}</td><td class="num">${signed(r.market_change)}</td><td class="num"><strong>${m2(r.closing)}</strong></td>
+      <td>${r.ok ? `<span class="pill pill-met" title="${esc(r.checks.map((c) => c.check).join(" · "))}">${r.checks.length} checks ✓</span>` : r.checks.filter((c) => !c.ok).map((c) => `<span class="pill pill-missing">${esc(c.check)}: ${signed(c.diff)}</span>`).join(" ")}</td></tr>`).join("") + "</tbody>"
+    : `<tbody><tr><td class="empty">Upload statements to reconcile them.</td></tr></tbody>`;
+  const D = v.duplicates;
+  $("dupReport").innerHTML = `<div class="mini-row"><span>Records on file</span><strong>${D.records.toLocaleString()}</strong></div>
+    <div class="mini-row"><span>Kept as copies of another source (not counted)</span><strong>${D.superseded}</strong></div>
+    ${D.examples.slice(0, 6).map((x) => `<div class="mini-row"><span>${fdate(x.date)} <span class="tag">${esc(x.description || "")} · ${SRC[x.src] || x.src}</span></span><span>${m2(x.amount)}</span></div>`).join("")}
+    <p class="hint">The same account, amount and date (within 3 days) from two sources is one transaction. Plaid's copy wins over a statement, which wins over a CSV; the other is kept for the record but never added in.</p>`;
+  $("taxDocs").innerHTML = v.tax_docs.length ? v.tax_docs.map((d) => `<div class="mini-row"><span><strong>${d.year} ${esc(d.form)}</strong> <span class="tag">${esc((v.accounts.find((a) => a.id === d.account) || {}).name || "")}</span></span><span>${d.form === "1099-R" ? `${m2(d.gross_distribution)} · code ${esc(d.distribution_code)}` : d.form === "5498" ? `conversion ${m2(d.roth_conversion)}` : d.form === "1099-DIV" ? `${m2(d.ordinary_dividends)} dividends` : d.form === "1099-INT" ? `${m2(d.interest)} interest` : d.form === "1099-B" ? `${m2((d.short?.gain || 0) + (d.long?.gain || 0))} gains` : ""}</span></div>`).join("") : `<p class="hint">None yet.</p>`;
+  $("acctAdmin").innerHTML = v.accounts.map((a) => `<div class="acct-row"><span class="acct-name"><strong>${esc(a.name)}</strong><span class="tag">${esc(a.type_label)}${a.mask ? ` ··${esc(a.mask)}` : ""} · ${esc(a.institution || "")}</span></span>
+      <span class="acct-src">${(a.aliases || []).map((x) => ({ import: "CSV import", ubs: "UBS statement", plaid: "Plaid", manual: "Entered by you", venmo: "Venmo CSV" })[x.split(":")[0]] || "Other").filter((x, i, arr) => arr.indexOf(x) === i).join(", ") || "—"}</span>
+      <span></span><button class="text-btn" data-bal="${a.id}">Balance</button></div>`).join("");
+  bindBalanceButtons();
+  const S = v.tax_settings, prior = Object.entries(S.roth_prior_contributions || {}).map(([y, x]) => `${y}: ${x}`).join(", ");
+  $("finSettingsForm").innerHTML = `
+    <label>Birth year<input class="input" name="birth_year" type="number" value="${S.birth_year ?? ""}" /></label>
+    <label>Year of your first Roth contribution<input class="input" name="roth_first_year" type="number" value="${S.roth_first_year ?? ""}" placeholder="starts the 5-year clock" /></label>
+    <label class="span-2">Roth contributions before the statements on file<input class="input" name="roth_prior" value="${esc(prior)}" placeholder="2024: 3000, 2025: 0" /></label>
+    <label>Filing status<select class="input" name="filing_status"><option value="single" ${S.filing_status !== "mfj" ? "selected" : ""}>Single</option><option value="mfj" ${S.filing_status === "mfj" ? "selected" : ""}>Married filing jointly</option></select></label>
+    <label>Qualified share of dividends %<input class="input" name="qualified_dividend_pct" type="number" min="0" max="100" value="${S.qualified_dividend_pct ?? ""}" placeholder="from last year's 1099-DIV" /></label>
+    <div class="settings-actions"><button class="btn btn-primary btn-sm">Save</button></div>`;
+  $("finSettingsForm").onsubmit = async (e) => {
+    e.preventDefault();
+    const f = e.target, num = (k) => (f.elements[k].value === "" ? null : +f.elements[k].value);
+    const roth = {};
+    f.elements.roth_prior.value.split(",").forEach((p) => { const m = p.match(/(\d{4})\s*:\s*([\d.]+)/); if (m) roth[m[1]] = +m[2]; });
+    try {
+      await api("/api/fin/tax-settings", { method: "PUT", body: JSON.stringify({ birth_year: num("birth_year"), roth_first_year: num("roth_first_year"),
+        roth_prior_contributions: roth, filing_status: f.elements.filing_status.value, qualified_dividend_pct: num("qualified_dividend_pct") }) });
+      toast("Saved");
+    } catch (err) { toast(err.message); }
+  };
+}
+$("pdf-files").onchange = () => {
+  const fs = $("pdf-files").files;
+  $("pdfLabel").textContent = fs.length ? (fs.length === 1 ? fs[0].name : `${fs.length} PDFs selected`) : "Choose PDFs";
+};
+$("pdf-upload").onclick = async () => {
+  const files = [...$("pdf-files").files];
+  if (!files.length) return toast("Choose at least one PDF");
+  const fd = new FormData(); files.forEach((f) => fd.append("files", f));
+  $("pdf-upload").disabled = true; $("pdf-upload").textContent = "Reading…";
+  try {
+    const r = await api("/api/fin/upload", { method: "POST", body: fd });
+    $("pdfResults").innerHTML = r.results.map((x) => `<div class="mini-row"><span>${esc(x.file)}</span><span class="${x.error ? "neg" : ""}">${x.error ? esc(x.error)
+      : x.kind === "statement" ? x.accounts.map((a) => `${esc((r.imports.accounts.find((c) => c.id === a.account) || {}).name || a.account)} to ${fdate(a.closing_date)}`).join(" · ")
+      : `${x.year} tax forms: ${x.forms.map((f) => f.form).join(", ")}`}</span></div>`).join("");
+    $("pdf-files").value = ""; $("pdfLabel").textContent = "Choose PDFs";
+    loadImports(r.imports);
+    toast("Imported");
+  } catch (e) { toast(e.message); }
+  finally { $("pdf-upload").disabled = false; $("pdf-upload").textContent = "Upload"; }
+};
+$("reconcileBtn").onclick = async () => {
+  try { const r = await api("/api/fin/reconcile", { method: "POST" }); loadImports(r.imports); toast(`Checked: ${r.changed} links updated, ${r.paired} transfers paired`); }
+  catch (e) { toast(e.message); }
+};
+$("addAcctBtn").onclick = () => { $("acctForm").reset(); $("acctForm").elements.date.value = iso(new Date()); $("acctDialog").showModal(); };
+$("acctCancel").onclick = () => $("acctDialog").close();
+$("acctForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(e.target).entries());
+  try { await api("/api/fin/accounts", { method: "POST", body: JSON.stringify(body) }); $("acctDialog").close(); toast("Account added"); render(); }
+  catch (err) { toast(err.message); }
+};
+
+// ---------- Finance assistant: a chat on every tab ----------
 const renderMarkdown = (md) => DOMPurify.sanitize(marked.parse(md || ""));
-
+const chats = {};            // place -> [{role, content}] (kept in this browser tab only)
+let chatPlace = "Net Worth";
+const CHAT_SUGGEST = {
+  networth: ["What changed my net worth in September?", "Which balances are out of date?", "How much is in cash vs invested?"],
+  cash: ["How much did I spend on food last month?", "What are my biggest recurring charges?", "Did anything get counted twice?"],
+  investments: ["What's my unrealized gain in the Roth?", "Which lots go long-term in the next 60 days?", "How am I doing vs the S&P 500 this year?"],
+  income: ["What did I earn in 2026, all sources?", "How much did the trust distribute?", "What were my Kirkland paychecks after tax?"],
+  taxes: ["How much do I owe on the trust money?", "Do I need an estimated payment, and when?", "Itemize or take the standard deduction?"],
+  accounts: ["Did that $10k to UBS get counted twice?", "Which statements are missing?", "Do all the statements reconcile?"],
+};
+function setChatPlace(tab) {
+  const sub = routeQuery.get("acct") || routeQuery.get("sub");
+  const tabLabel = (SECTIONS.finances.tabs.find(([k]) => k === tab) || [, "Finances"])[1];
+  const subLabel = sub && sub !== "all" && sub !== "overview" ? (finAccounts.find((a) => (a.account || a.id) === sub)?.name || sub) : null;
+  chatPlace = subLabel ? `${tabLabel} → ${subLabel}` : tabLabel;
+  $("chatPlace").textContent = chatPlace;
+  $("chatSuggestions").innerHTML = (CHAT_SUGGEST[tab] || []).map((q) => `<button class="chip">${esc(q)}</button>`).join("");
+  $$("#chatSuggestions .chip").forEach((c) => (c.onclick = () => sendChat(c.textContent)));
+  const hist = chats[chatPlace] || [];
+  $("chatMessages").innerHTML = "";
+  hist.forEach((m) => addMessage(m.role, m.role === "user" ? esc(m.content) : renderMarkdown(m.content)));
+  $("chatSuggestions").classList.toggle("hidden", hist.length > 0);
+}
 function addMessage(role, html, meta = "") {
   const el = document.createElement("div");
   el.className = `msg ${role}`;
@@ -272,40 +715,33 @@ function addMessage(role, html, meta = "") {
   el.scrollIntoView({ behavior: "smooth", block: "end" });
   return el;
 }
-
 async function sendChat(text) {
   text = (text || "").trim();
   if (!text || $("chatSend").disabled) return;
-  if (!backendReady) return toast("Backend not connected yet");
+  const hist = (chats[chatPlace] ||= []);
   $("chatInput").value = ""; autosize();
   $("chatSuggestions").classList.add("hidden");
   addMessage("user", esc(text));
-  chatHistory.push({ role: "user", content: text });
+  hist.push({ role: "user", content: text });
   const pending = addMessage("assistant", `<span class="typing"><span></span><span></span><span></span></span>`);
   $("chatSend").disabled = true;
   try {
-    const r = await api("/api/chat", { method: "POST", body: JSON.stringify({ messages: chatHistory }) });
-    chatHistory.push({ role: "assistant", content: r.reply });
+    const r = await api("/api/chat", { method: "POST", body: JSON.stringify({ messages: hist, place: chatPlace }) });
+    hist.push({ role: "assistant", content: r.reply });
     pending.remove();
-    const looked = [...new Set(r.tools_used || [])].map((t) => t.replaceAll("_", " ")).join(", ");
+    const looked = [...new Set(r.tools_used || [])].map((t) => t.replace(/^get_/, "").replaceAll("_", " ")).join(", ");
     addMessage("assistant", renderMarkdown(r.reply), looked ? `Looked up: ${looked}` : "");
   } catch (e) {
-    pending.remove();
-    chatHistory.pop();
+    pending.remove(); hist.pop();
     addMessage("assistant error", esc(e.message));
-  } finally {
-    $("chatSend").disabled = false;
-    $("chatInput").focus();
-  }
+  } finally { $("chatSend").disabled = false; $("chatInput").focus(); }
 }
-
 function autosize() { const t = $("chatInput"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 160) + "px"; }
 $("chatInput").addEventListener("input", autosize);
 $("chatSend").onclick = () => sendChat($("chatInput").value);
-$("chatInput").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat($("chatInput").value); }
-});
-$$(".chip").forEach((c) => (c.onclick = () => sendChat(c.textContent)));
+$("chatInput").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat($("chatInput").value); } });
+$("askBtn").onclick = () => { $("chatDrawer").classList.remove("hidden"); $("askBtn").classList.add("hidden"); setTimeout(() => $("chatInput").focus(), 50); };
+$("chatClose").onclick = () => { $("chatDrawer").classList.add("hidden"); $("askBtn").classList.remove("hidden"); };
 
 // ---------- Plaid Link ----------
 async function connect(kind) {
@@ -1186,49 +1622,6 @@ $("stubForm").onsubmit = async (e) => {
   try { earn = await api("/api/earnings/paychecks", { method: "POST", body: JSON.stringify(body) }); $("stubDialog").close(); renderPaychecks(); toast("Pay stub added"); }
   catch (err) { toast(err.message); }
 };
-
-// ---------- Finances: taxes at a glance ----------
-const TAX_COLORS = { federal: "--exam", ss: "--text-3", medicare: "--line-strong", il: "--warn", dc: "--neg", keep: "--accent" };
-async function loadTaxes() {
-  const t = await api("/api/taxes");
-  $("taxEmpty").classList.toggle("hidden", t.ready);
-  $("taxBody").classList.toggle("hidden", !t.ready);
-  if (!t.ready) return;
-  const fd = (d) => new Date(d + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-  $("taxEyebrow").textContent = `Tax year ${t.year}`;
-  $("taxTitle").textContent = `${money(t.taxes)} in taxes on ${money(t.income)}`;
-  $("taxSub").textContent = `Income: ${t.sources.map((x) => `${x.label} ${money(x.amount)}`).join(" · ")}`;
-  $("taxEff").textContent = `${t.effective_total.toFixed(1)}% of income went to taxes`;
-  const seg = t.breakdown.filter((b) => b.amount > 0);
-  $("taxBar").innerHTML = seg.map((b) => `<span class="db-seg ${b.key === "keep" ? "keep" : ""}" style="flex:${b.pct};background:var(${TAX_COLORS[b.key]})" title="${esc(b.label)}: ${money(b.amount)}">${b.pct >= 6 ? `${Math.round(b.pct)}%` : ""}</span>`).join("");
-  $("taxLegend").innerHTML = t.breakdown.map((b) => `<div class="dl-item ${b.key === "keep" ? "keep" : ""}"><i class="k-dot" style="background:var(${TAX_COLORS[b.key]})"></i><span>${esc(b.label)}</span><strong>${money(b.amount)}</strong><em>${b.amount ? `$${b.pct.toFixed(2)} of every $100` : b.key === "dc" ? "covered by the Illinois credit" : "—"}</em></div>`).join("");
-
-  const m = t.marginal, keep = 100 - m.total;
-  $("taxMarginal").innerHTML = `<div class="marginal-big"><strong>${m.total.toFixed(1)}%</strong><span>of your next $100 goes to taxes; you keep <b>$${keep.toFixed(2)}</b></span></div>
-    <div class="marginal-parts">${[["Federal", m.federal, "--exam"], ["Social Security", m.ss, "--text-3"], ["Medicare", m.medicare, "--line-strong"], ["State", m.state, "--warn"]].filter(([, v]) => v).map(([l, v, c]) => `<span><i class="k-dot" style="background:var(${c})"></i>${l} <b>${v}%</b></span>`).join("")}</div>
-    <p class="hint">Marginal = the rate on one more dollar of pay. Your average (effective) rate is lower, ${t.effective_total.toFixed(1)}%, because the first dollars are taxed at lower rates or not at all.</p>`;
-
-  $("taxDue").textContent = `File by ${fd(t.filing_deadline)}`;
-  $("taxSettle").innerHTML = `<div class="settle">${t.settle.map((r) => `<div class="settle-row"><span>${esc(r.tax)}</span><span class="muted">${money(r.owed)} owed · ${money(r.paid)} paid</span><strong class="${r.balance > 0 ? "pos" : r.balance < 0 ? "neg" : ""}">${r.balance > 0 ? `+${money(r.balance)}` : r.balance < 0 ? `−${money(-r.balance)}` : "Even"}</strong></div>`).join("")}
-    <div class="settle-row total"><span>${t.net_settle >= 0 ? "Back to you" : "You owe"}</span><span></span><strong class="${t.net_settle >= 0 ? "pos" : "neg"}">${money(Math.abs(t.net_settle))}</strong></div></div>`;
-
-  const F = t.federal, top = F.fill.findIndex((b) => b.amount === 0);
-  const rows = F.fill.slice(0, top === -1 ? F.fill.length : top + 1);
-  $("taxFedMeta").textContent = `${money(t.income)} − ${money(F.std_deduction)} standard deduction = ${money(F.taxable)} taxable`;
-  $("taxLadder").innerHTML = `<div class="ladder">${rows.map((b) => {
-    const width = b.to == null ? 100 : Math.min(100, (b.amount / (b.to - b.from)) * 100);
-    return `<div class="ladder-row ${b.amount ? "" : "unused"}"><span class="lr-rate">${(b.rate * 100).toFixed(0)}%</span>
-      <span class="lr-range">${usd0.format(b.from)}${b.to == null ? "+" : ` – ${usd0.format(b.to)}`}</span>
-      <span class="lr-bar"><i style="width:${width}%"></i></span>
-      <span class="lr-amt">${b.amount ? `${money(b.amount)} → <b>${money(b.tax)}</b>` : "not reached"}</span></div>`;
-  }).join("")}<div class="ladder-row total"><span></span><span>Federal tax</span><span></span><span class="lr-amt"><b>${money(F.tax)}</b></span></div></div>
-    <p class="hint">Each bracket only taxes the dollars inside it. ${rows.length < F.fill.length ? `Higher brackets (${F.fill.slice(rows.length).map((b) => (b.rate * 100).toFixed(0) + "%").join(", ")}) start above ${usd0.format(rows[rows.length - 1].to)} of taxable income.` : ""}</p>`;
-
-  $("taxBankCard").classList.toggle("hidden", !t.bank_activity.length);
-  const nice = (b) => /\birs\b|usatax|treas/i.test(b.merchant) ? `IRS ${b.kind}` : /\bill\b|illinois/i.test(b.merchant) ? `Illinois ${b.kind}` : /\bdc\b|district/i.test(b.merchant) ? `DC ${b.kind}` : b.merchant;
-  const forYear = (d) => (+d.slice(5, 7) <= 4 ? ` · likely ${+d.slice(0, 4) - 1} taxes` : "");
-  $("taxBank").innerHTML = t.bank_activity.map((b) => `<div class="mini-row"><span>${esc(nice(b))} <span class="tag">${fd(b.date)}${forYear(b.date)}</span></span><span class="${b.kind === "refund" ? "pos" : ""}">${b.kind === "refund" ? "+" : "−"}${money(Math.abs(b.amount))} ${b.kind}</span></div>`).join("");
-}
 
 // ---------- Training: planner, live session, history ----------
 const DAYS = [["mon", "Mon"], ["tue", "Tue"], ["wed", "Wed"], ["thu", "Thu"], ["fri", "Fri"], ["sat", "Sat"], ["sun", "Sun"]];
