@@ -57,13 +57,28 @@ function render() {
     $("sectionControls").classList.toggle("hidden", !showControls);
     $("range").classList.toggle("hidden", section === "finances" && tab !== "cash");
     $$(`[data-route="${section}"] .panel`).forEach((p) => p.classList.toggle("active", p.dataset.panel === tab));
+    centerActiveTab();
   }
   $("askBtn").classList.toggle("hidden", section !== "finances");
   if (section !== "finances") $("chatDrawer").classList.add("hidden");
   window.scrollTo({ top: 0 });
   document.title = section === "home" ? "LifeTracker" : `${cfg.title} · LifeTracker`;
-  load(section, tab).catch((e) => toast(e.message));
+  load(section, tab).catch(showError);
 }
+
+// On narrow screens the tab row scrolls: keep the current tab in view and fade an edge while tabs are hidden past it.
+function centerActiveTab() {
+  const row = $("subnavTabs"), a = row.querySelector(".active");
+  if (a) row.scrollLeft += a.getBoundingClientRect().left - row.getBoundingClientRect().left - (row.clientWidth - a.offsetWidth) / 2;
+  markTabOverflow();
+}
+function markTabOverflow() {
+  const row = $("subnavTabs");
+  row.classList.toggle("more", row.scrollLeft + row.clientWidth < row.scrollWidth - 2);
+  row.classList.toggle("more-left", row.scrollLeft > 2);
+}
+$("subnavTabs").addEventListener("scroll", markTabOverflow, { passive: true });
+window.addEventListener("resize", markTabOverflow);
 
 async function load(section, tab) {
   if (section === "home") return loadHome();
@@ -91,8 +106,18 @@ async function api(path, opts = {}) {
                ...(opts.body && !(opts.body instanceof FormData) ? { "Content-Type": "application/json" } : {}) },
   });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 403 && data.error === "forbidden") throw new Error("This Google account doesn't have access to LifeTracker. Sign out and sign in with your LifeTracker account.");
+  if (res.status === 401 && /token/.test(data.error || "")) throw new Error("Your sign-in expired. Sign out and sign in again.");
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;
+}
+
+// Errors from page code (not the server) shouldn't surface as raw JavaScript messages.
+function showError(e) {
+  console.error(e);
+  if (e instanceof TypeError) {
+    toast(/fetch|network/i.test(e.message) ? "Can't reach the server. Check your connection and try again." : "Something went wrong loading this page. Try reloading.");
+  } else toast(e.message);
 }
 
 function toast(msg) {
@@ -2097,7 +2122,9 @@ $("planImport").onchange = async (e) => {
 if (loadDraft()) setTimeout(() => toast("You have a workout in progress. Resume it from Health → Planner."), 1500);
 
 // ---------- Wiring ----------
-$("signin").onclick = () => signInWithPopup(auth, new GoogleAuthProvider()).catch((e) => toast(e.message));
+$("signin").onclick = () => signInWithPopup(auth, new GoogleAuthProvider()).catch((e) => {
+  if (!/popup-closed-by-user|cancelled-popup-request/.test(e.code || "")) toast("Sign-in didn't finish. Try again.");
+});
 $("signout").onclick = () => signOut(auth);
 $("sync").onclick = doSync;
 $("range").onchange = () => render();

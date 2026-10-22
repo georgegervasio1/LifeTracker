@@ -114,6 +114,9 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .tabs a { font-size: 13px; color: var(--text-2); white-space: nowrap; padding: 4px 0; transition: color .2s; }
 .tabs a:hover { color: var(--text); }
 .tabs a.active { color: var(--accent); }
+.tabs { --fade-l: 0px; --fade-r: 0px; -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--fade-l), #000 calc(100% - var(--fade-r)), transparent); mask-image: linear-gradient(to right, transparent, #000 var(--fade-l), #000 calc(100% - var(--fade-r)), transparent); }
+.tabs.more { --fade-r: 40px; }
+.tabs.more-left { --fade-l: 40px; }
 .subnav-actions { display: flex; align-items: center; gap: 10px; }
 
 /* ── Routing ────────────────────────────────────────────────────────────── */
