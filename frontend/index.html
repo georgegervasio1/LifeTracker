@@ -675,6 +675,92 @@
       </section>
 
       <section class="route" data-route="education">
+        <!-- Today (My Day): edu-today.js -->
+        <div class="panel wrap" data-panel="today">
+          <div class="myday-layout">
+            <div class="myday" id="myDay">
+              <div class="myday-sky" aria-hidden="true"></div>
+              <header class="myday-head">
+                <div>
+                  <p class="myday-greet" id="mdGreet"></p>
+                  <h2 class="myday-title">My Day</h2>
+                  <p class="myday-date" id="mdDate"></p>
+                </div>
+                <div class="myday-actions">
+                  <button class="glass-btn" id="mdPlanBtn">Plan my week</button>
+                  <button class="glass-btn myday-sugg-btn" id="mdSuggBtn">Suggestions</button>
+                </div>
+              </header>
+              <div class="myday-stats" id="mdStats"></div>
+              <div class="myday-list" id="mdList"></div>
+              <div class="myday-done hidden" id="mdDoneWrap"><button class="glass-chip" id="mdDoneToggle"></button><div id="mdDone" class="myday-list hidden"></div></div>
+              <form class="myday-add" id="mdAdd" autocomplete="off">
+                <span class="check-ring" aria-hidden="true"></span>
+                <input id="mdAddInput" placeholder="Add a task. Try &lsquo;Read ch. 4 for Con Law by Friday 6pm&rsquo;" aria-label="Add a task" />
+              </form>
+            </div>
+            <aside class="myday-side" id="mdSide">
+              <div class="side-head"><h3>Suggestions</h3><span class="card-meta" id="mdSuggCount"></span></div>
+              <div id="mdMail"></div>
+              <div id="mdSugg"></div>
+            </aside>
+          </div>
+          <div class="grid-2 myday-below">
+            <div class="card" data-enter><div class="card-head"><h3>Today&rsquo;s classes</h3><a class="link-sm" href="#/education/syllabi">Syllabi →</a></div><div id="mdClasses"></div></div>
+            <div class="card" data-enter><div class="card-head"><h3>Next two weeks</h3><a class="link-sm" href="#/education/calendar">Calendar →</a></div><div id="mdUpcoming"></div></div>
+          </div>
+          <div class="card finals-strip" id="mdFinals" data-enter></div>
+        </div>
+
+        <!-- Tasks -->
+        <div class="panel wrap" data-panel="tasks">
+          <div class="tasks-layout">
+            <nav class="tasks-nav" id="tkNav"></nav>
+            <div class="tasks-main">
+              <div class="tasks-head"><div><h2 class="title" id="tkTitle">Tasks</h2><p class="eyebrow" id="tkSub"></p></div>
+                <button class="btn btn-secondary btn-sm" id="tkPlanBtn">Plan my week</button></div>
+              <form class="task-add" id="tkAdd" autocomplete="off"><span class="check-ring" aria-hidden="true"></span>
+                <input id="tkAddInput" placeholder="Add a task" aria-label="Add a task" /></form>
+              <div id="tkList"></div>
+            </div>
+          </div>
+        </div>
+
+        <dialog id="taskDialog" class="dialog">
+          <form method="dialog" id="taskForm" class="dialog-form" autocomplete="off">
+            <h3>Task</h3>
+            <label class="span-2">Title<input class="input" name="title" required /></label>
+            <label>Due date<input class="input" name="due_date" type="date" /></label>
+            <label>Time<input class="input" name="due_time" placeholder="6:00 PM" /></label>
+            <label class="span-2">Course<select class="input" name="course_id" id="taskCourse"></select></label>
+            <label class="span-2">Notes<textarea class="input" name="notes" rows="3"></textarea></label>
+            <label class="check"><input type="checkbox" name="my_day" /> On My Day</label>
+            <label class="check"><input type="checkbox" name="important" /> Important</label>
+            <p class="hint span-2" id="taskSource"></p>
+            <div class="dialog-actions span-2"><button type="button" class="text-btn danger" id="taskDelete">Delete</button><span style="flex:1"></span>
+              <button type="button" class="btn btn-secondary btn-sm" id="taskCancel">Cancel</button><button class="btn btn-primary btn-sm">Save</button></div>
+          </form>
+        </dialog>
+
+        <dialog id="planDialog" class="dialog dialog-wide">
+          <div class="dialog-form plan-sheet">
+            <h3>Plan my week</h3>
+            <p class="hint span-2">Claude drafts a sample schedule from your syllabi, tasks and finals. Nothing is added until you choose blocks.</p>
+            <label class="span-2">Anything to plan around?<textarea class="input" id="planPrefs" rows="2" placeholder="Gym at 7 AM on weekdays, nothing Saturday night"></textarea></label>
+            <label>Length<select class="input" id="planDays"><option value="7">Next 7 days</option><option value="14">Next 14 days</option></select></label>
+            <div class="plan-go"><button class="btn btn-primary" id="planMake">Make a schedule</button></div>
+            <div class="span-2" id="planOut"></div>
+            <div class="dialog-actions span-2"><span class="hint" id="planNote"></span><span style="flex:1"></span>
+              <button type="button" class="btn btn-secondary btn-sm" id="planClose">Close</button>
+              <button type="button" class="btn btn-primary btn-sm hidden" id="planAccept">Add selected to tasks</button></div>
+          </div>
+        </dialog>
+
+        <div class="wrap plan-nav hidden" id="eduPlanNav">
+          <div class="segmented" role="tablist">
+            <a href="#/education/plan?sub=overview" data-sub="overview">Overview</a><a href="#/education/plan?sub=grades" data-sub="grades">Grades &amp; GPA</a><a href="#/education/plan?sub=audit" data-sub="audit">Degree audit</a><a href="#/education/plan?sub=planner" data-sub="planner">Planner</a>
+          </div>
+        </div>
         <!-- Overview -->
         <div class="panel wrap" data-panel="overview">
           <p class="eyebrow edu-school" id="eduSchool">Georgetown University Law Center · J.D.</p>

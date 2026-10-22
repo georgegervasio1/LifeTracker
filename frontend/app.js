@@ -3,6 +3,7 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChang
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { API_BASE, FIREBASE_CONFIG } from "./config.js";
 import { viewSwap, enter, panelIn } from "./motion.js";
+import { mountEduToday, loadToday, loadTasks } from "./edu-today.js";
 
 const auth = getAuth(initializeApp(FIREBASE_CONFIG));
 const $ = (id) => document.getElementById(id);
@@ -23,7 +24,7 @@ const SECTIONS = {
     ["income", "Income"], ["taxes", "Taxes"], ["accounts", "Accounts & Imports"]] },
   health: { title: "Health", tabs: [] },   // dashboard + areas, see HEALTH below
   education: { title: "Education", tabs: [
-    ["overview", "Overview"], ["syllabi", "Syllabi"], ["grades", "Grades & GPA"], ["audit", "Degree Audit"], ["planner", "Planner"], ["calendar", "Calendar"]] },
+    ["today", "Today"], ["tasks", "Tasks"], ["plan", "Academic plan"], ["syllabi", "Syllabi"], ["calendar", "Calendar"]] },
   goals: { title: "Goals", tabs: [] },
 };
 
@@ -55,6 +56,8 @@ function parseHealth(parts) {
 }
 
 let routeQuery = new URLSearchParams();
+const EDU_PLAN_SUBS = ["overview", "grades", "audit", "planner"];     // Education → Academic plan sections
+let lastPanel = "";
 function parseRoute() {
   const [path, query] = location.hash.replace(/^#\/?/, "").split("?");
   const [section, tab] = path.split("/");
@@ -64,6 +67,7 @@ function parseRoute() {
   const tabs = SECTIONS[section].tabs;
   const alias = section === "finances" ? { overview: "networth", transactions: "cash", paychecks: "income", assistant: "networth" }[tab] : null;
   if (alias === "income" && !routeQuery.get("sub")) routeQuery.set("sub", "paychecks");
+  if (section === "education" && EDU_PLAN_SUBS.includes(tab)) { routeQuery.set("sub", tab); return { section, tab: "plan" }; }   // old tab links
   const t = alias || tab;
   return { section, tab: tabs.some(([k]) => k === t) ? t : tabs[0]?.[0] };
 }
@@ -87,7 +91,16 @@ function render() {
     const showControls = section === "finances" || (section === "health" && tab === "overview");
     $("sectionControls").classList.toggle("hidden", !showControls);
     $("range").classList.toggle("hidden", section === "finances" && tab !== "cash");
-    $$(`[data-route="${section}"] .panel`).forEach((p) => p.classList.toggle("active", p.dataset.panel === tab));
+    const sub = EDU_PLAN_SUBS.includes(routeQuery.get("sub")) ? routeQuery.get("sub") : "overview";
+    const panel = section === "education" && tab === "plan" ? sub : tab;
+    $$(`[data-route="${section}"] .panel`).forEach((p) => p.classList.toggle("active", p.dataset.panel === panel));
+    $("eduPlanNav").classList.toggle("hidden", !(section === "education" && tab === "plan"));
+    $$("#eduPlanNav [data-sub]").forEach((a) => a.classList.toggle("active", a.dataset.sub === sub));
+    if (section === "education") {          // slide toward the tab the user moved to
+      const order = ["today", "tasks", ...EDU_PLAN_SUBS, "syllabi", "calendar"], [a, b] = [order.indexOf(lastPanel.split(":")[1]), order.indexOf(panel)];
+      if (lastPanel.startsWith("education:") && a !== b) panelIn($$(`[data-route="education"] .panel.active`)[0], b > a ? 1 : -1);
+    }
+    lastPanel = `${section}:${panel}`;
     centerActiveTab();
   }
   $("askBtn").classList.toggle("hidden", section !== "finances");
@@ -178,6 +191,7 @@ async function load(section, tab) {
 }
 
 window.addEventListener("hashchange", onHashChange);
+mountEduToday({ api, toast });
 
 // Goals live in goals.js, loaded on first use.
 let goalsMod = null;
@@ -1898,6 +1912,9 @@ const fmtGpa = (v) => (v == null ? "—" : v.toFixed(2));
 const r2 = (x) => Math.floor(x * 100 + 0.5 + 1e-9) / 100;
 
 async function loadEducation(tab) {
+  if (tab === "today") return loadToday();
+  if (tab === "tasks") return loadTasks();
+  if (tab === "plan") tab = EDU_PLAN_SUBS.includes(routeQuery.get("sub")) ? routeQuery.get("sub") : "overview";
   edu = await api("/api/edu");
   const p = edu.computed.profile;
   $("eduSchool").textContent = [p.school, p.program, p.grad_term ? `Expected ${p.grad_term}` : ""].filter(Boolean).join(" · ");
