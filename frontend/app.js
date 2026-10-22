@@ -1059,6 +1059,8 @@ function liveGpa() {
            needed: remCr ? (target * (ag + remCr) - aq) / remCr : null, remCr, target };
 }
 
+const pfStatus = (a) => (a.remaining < 0 ? "Over" : a.remaining === 0 ? "All used" : "Available");
+
 function renderEduOverview() {
   const C = edu.computed, n = C.needed;
   $("e-gpa").textContent = fmtGpa(C.gpa_actual);
@@ -1076,9 +1078,10 @@ function renderEduOverview() {
     { tip: (v) => v.toFixed(2), tick: (v) => v.toFixed(1) }, { y: { min: 2.5, max: 4.33 } });
   // dim projected bars
   const ch = charts["chart-gpa"]; const acc = cssVar("--accent");
-  ch.data.datasets[0].backgroundColor = terms.map((t) => (t.gpa_actual != null ? acc : acc + "66")); ch.update("none");
+  ch.data.datasets[0].backgroundColor = terms.map((t) => (t.gpa_actual != null ? acc : acc + "66"));
+  ch.options.scales.x.ticks.autoSkip = false; ch.update("none");          // every term labeled, even at phone width
 
-  $("eduAuditMini").innerHTML = C.audit.map((a) => `<div class="audit-mini"><span class="pill pill-${a.status}">${{ met: "Met", on_track: "On track", missing: "Missing" }[a.status]}</span><span>${esc(a.label)}</span></div>`).join("");
+  $("eduAuditMini").innerHTML = C.audit.map((a) => `<div class="audit-mini"><span class="pill pill-${a.status}">${a.type === "pf" ? pfStatus(a) : { met: "Met", on_track: "On track", missing: "Missing" }[a.status]}</span><span>${esc(a.label)}</span></div>`).join("");
 
   const next = C.terms.find((t) => t.status === "planned") || C.terms.find((t) => t.status === "enrolled");
   if (next) {
@@ -1109,7 +1112,7 @@ function renderGrades() {
       <div class="card-head padded"><h3>${esc(t.term)}</h3><span class="card-meta">${t.credits} credits · GPA <strong>${fmtGpa(live.terms[t.term])}</strong>${t.status !== "completed" ? " projected" : ""}</span></div>
       <table class="table grade-table"><colgroup><col /><col class="c-cr" /><col class="c-gr" /><col class="c-ty" /><col class="c-ed" /></colgroup><thead><tr><th>Course</th><th class="num">Credits</th><th>Grade</th><th>Type</th><th></th></tr></thead><tbody>
       ${rows.map((c) => { const d = gradeDraft[c.id] || {}; const g = d.grade ?? c.grade ?? ""; const gs = d.grade_status ?? c.grade_status ?? "projected";
-        return `<tr class="${gradeDraft[c.id] ? "dirty" : ""}"><td>${esc(c.title)}</td><td class="num">${c.credits ?? "—"}</td>
+        return `<tr class="${gradeDraft[c.id] ? "dirty" : ""}"><td>${esc(c.title)}<button class="gt-type" data-gs="${c.id}">${gs === "actual" ? "Actual" : "Projected"}</button></td><td class="num">${c.credits ?? "—"}</td>
         <td><select class="select grade-select" data-gid="${c.id}">${gradeOptions(g)}</select></td>
         <td><button class="seg ${gs === "actual" ? "seg-on" : ""}" data-gs="${c.id}" title="Toggle actual / projected">${gs === "actual" ? "Actual" : "Projected"}</button></td>
         <td class="num"><button class="text-btn" data-edit="${c.id}">Edit</button></td></tr>`; }).join("")}
@@ -1191,7 +1194,7 @@ function renderAudit() {
         <div class="pf-rows">${a.courses.map((c) => `<div><span>${esc(c.title)} <span class="tag">${esc(c.term)} · ${c.credits} cr</span>${c.inferred ? ` <button class="text-btn" data-pfmand="${c.id}" title="Required pass/fail courses don't use the option">Was a required P/F course</button>` : ""}</span><span>${c.outcome === "planned" ? "planned" : c.outcome === "P" ? "Pass" : esc(c.outcome) + " (above target)"}</span></div>`).join("")}</div>
         <form class="pf-prior" id="pfPriorForm"><label>Used in terms not listed here <input class="input mini" id="pfPrior" type="number" min="0" max="20" step="0.5" value="${a.prior || 0}" /> credits</label><button class="btn btn-secondary btn-sm">Save</button></form>
         <p class="hint">Credits count against the limit whether you get a Pass or keep the letter grade. One P/F course per semester; not for required courses, writing seminars, clinics or supervised research.</p>`;
-      return `<div class="audit-row"><div class="audit-title"><span class="pill pill-${a.status}">${a.remaining < 0 ? "Over" : a.remaining === 0 ? "All used" : "Available"}</span><h3>${esc(a.label)}</h3></div>${body}</div>`;
+      return `<div class="audit-row"><div class="audit-title"><span class="pill pill-${a.status}">${pfStatus(a)}</span><h3>${esc(a.label)}</h3></div>${body}</div>`;
     }
     if (a.courses) body += `<div class="audit-courses">${a.courses.length ? a.courses.map(esc).join(" · ") : "No course tagged yet. Open a course in the Planner and check this requirement."}</div>`;
     return `<div class="audit-row"><div class="audit-title"><span class="pill pill-${a.status}">${{ met: "Met", on_track: "On track", missing: "Missing" }[a.status]}</span><h3>${esc(a.label)}</h3></div>${body}</div>`;
@@ -1502,6 +1505,7 @@ function renderAcadCal() {
   // agenda
   const list = acalDay ? onDay(acalDay) : evs;
   const nextIdx = acalDay ? -1 : list.findIndex((e) => (e.end || e.date) >= today);
+  const nowOn = (e) => e.end && e.date <= today && today <= e.end;     // a range already under way
   $("acalFilter").classList.toggle("hidden", !acalDay);
   if (acalDay) $("acalFilterText").textContent = new Date(acalDay + "T00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
   const groups = {};
@@ -1511,7 +1515,7 @@ function renderAcadCal() {
     ${items.map(([e, i]) => `<div class="acal-item ${(e.end || e.date) < today ? "past" : ""} ${i === nextIdx ? "next" : ""} ${e.kind === "final" ? "is-final" : ""}">
       <div class="acal-date">${fd(e.date, { month: "short", day: "numeric" })}${e.end ? ` – ${fd(e.end, { month: e.end.slice(5, 7) === e.date.slice(5, 7) ? undefined : "short", day: "numeric" })}` : ""}<small>${fd(e.date, { weekday: "long" })}</small></div>
       <div class="acal-label"><i class="k-dot k-${e.kind}"></i><span>${esc(e.label)}${e.conflict ? ` <span class="warn">Same slot as ${esc(e.conflict.join(", "))}</span>` : ""}</span></div>
-      <div class="acal-when">${i === nextIdx ? "Up next" : e.time ? esc(e.time) : KIND_LABEL[e.kind]}</div></div>`).join("")}</div>`).join("") || `<div class="empty">Nothing on this day.</div>`;
+      <div class="acal-when">${i === nextIdx ? (nowOn(e) ? "Now" : "Up next") : e.time ? esc(e.time) : KIND_LABEL[e.kind]}</div></div>`).join("")}</div>`).join("") || `<div class="empty">Nothing on this day.</div>`;
 }
 $("acalPrev").onclick = () => { const [y, m] = acalMonth.split("-").map(Number); acalMonth = dstr(new Date(y, m - 2, 1)).slice(0, 7); renderAcadCal(); };
 $("acalNext").onclick = () => { const [y, m] = acalMonth.split("-").map(Number); acalMonth = dstr(new Date(y, m, 1)).slice(0, 7); renderAcadCal(); };
