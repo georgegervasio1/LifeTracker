@@ -49,6 +49,16 @@ def _parse_ts(s):
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
 
 
+def _local_ts(ts, offset):
+    """Local wall-clock time, ISO without offset (matches Strava's start_date_local)."""
+    dt = _parse_ts(ts)
+    if offset:
+        sign = -1 if offset.startswith("-") else 1
+        hh, mm = offset.lstrip("+-").split(":")
+        dt = dt + sign * timedelta(hours=int(hh), minutes=int(mm))
+    return dt.replace(tzinfo=None).isoformat(timespec="seconds")
+
+
 def _local_date(ts, offset):
     """WHOOP gives UTC timestamps plus the member's offset, e.g. '-05:00'."""
     dt = _parse_ts(ts)
@@ -124,9 +134,12 @@ def _whoop_collection(path, token, start_iso, max_pages=60):
 def sync_whoop(days_back=None):
     token = _access_token()
     ref = _integration()
-    last = (ref.get().to_dict() or {}).get("last_sync")
+    meta = ref.get().to_dict() or {}
+    last = meta.get("last_sync")
     if days_back is None:
         days_back = 3 if last else 180   # first sync pulls ~6 months of history
+        if not meta.get("has_distance"):  # one-time backfill so runs get distance and elevation
+            days_back = max(days_back, (date.today() - date(date.today().year - 1, 1, 1)).days)
     start_iso = (datetime.now(timezone.utc) - timedelta(days=days_back)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     days = {}       # date -> fields to merge into health_days
@@ -180,6 +193,9 @@ def sync_whoop(days_back=None):
             "avg_hr": score.get("average_heart_rate"),
             "max_hr": score.get("max_heart_rate"),
             "calories": round(score["kilojoule"] / 4.184) if score.get("kilojoule") else None,
+            "distance_m": round(score["distance_meter"], 1) if score.get("distance_meter") else None,
+            "elev_m": round(score["altitude_gain_meter"], 1) if score.get("altitude_gain_meter") is not None else None,
+            "start_local": _local_ts(w["start"], w.get("timezone_offset")),
             "exercises": [], "notes": "",
             "start": start.isoformat(), "end": end.isoformat(),
         }, merge=True)   # merge: keep "merged_into" when a logged session already absorbed this workout
@@ -195,7 +211,7 @@ def sync_whoop(days_back=None):
         if n % 400 == 0:
             batch.commit(); batch = db.batch()
     batch.commit()
-    ref.set({"last_sync": firestore.SERVER_TIMESTAMP}, merge=True)
+    ref.set({"last_sync": firestore.SERVER_TIMESTAMP, "has_distance": True}, merge=True)
     return {**counts, "days": len(days)}
 
 

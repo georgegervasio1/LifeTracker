@@ -89,7 +89,9 @@ PAGES = {
                                        "score": {"sleep_performance_percentage": 88, "stage_summary": {"total_in_bed_time_milli": 8 * 3.6e6, "total_awake_time_milli": 0.5 * 3.6e6}}},
                                       {"id": "s2", "nap": True, "score_state": "SCORED", "end": "2026-10-20T19:00:00.000Z", "timezone_offset": "-04:00", "score": {}}], "next_token": None}],
   "/v2/activity/workout": [{"records": [{"id": "w-uuid-1", "sport_name": "weightlifting", "start": "2026-10-20T22:00:00.000Z", "end": "2026-10-20T23:05:00.000Z",
-                                         "timezone_offset": "-04:00", "score": {"strain": 9.81, "average_heart_rate": 121, "max_heart_rate": 165, "kilojoule": 1500}}], "next_token": None}],
+                                         "timezone_offset": "-04:00", "score": {"strain": 9.81, "average_heart_rate": 121, "max_heart_rate": 165, "kilojoule": 1500}},
+                                        {"id": "w-uuid-2", "sport_name": "running", "start": "2026-10-21T11:00:00.000Z", "end": "2026-10-21T11:40:00.000Z",
+                                         "timezone_offset": "-04:00", "score": {"strain": 11.2, "distance_meter": 8046.7, "altitude_gain_meter": 31.4}}], "next_token": None}],
 }
 def fake_get(url, headers=None, params=None, **k):
     path = url.replace(health.WHOOP_API, "")
@@ -118,7 +120,10 @@ print("callback OK ->", "connected / replay rejected / cancel handled")
 
 # 3. sync (pagination, nap skipped, unscored recovery skipped, local dates)
 r = c.post("/api/whoop/sync").get_json(); print("sync:", r)
-assert r == {"cycles": 2, "recoveries": 1, "sleeps": 1, "workouts": 1, "days": 2}
+assert r == {"cycles": 2, "recoveries": 1, "sleeps": 1, "workouts": 2, "days": 2}
+run = DATA["users/dev/workouts/whoop_w-uuid-2"]
+assert run["distance_m"] == 8046.7 and run["elev_m"] == 31.4 and run["start_local"] == "2026-10-21T07:00:00" and run["type"] == "Running"
+assert DATA["users/dev/integrations/whoop"]["has_distance"]
 d20 = DATA["users/dev/health_days/2026-10-20"]; d18 = DATA["users/dev/health_days/2026-10-18"]
 assert d20 == {"date": "2026-10-20", "strain": 12.3, "recovery": 72, "hrv": 61.3, "rhr": 52, "sleep_hours": 7.5, "sleep_performance": 88}, d20
 assert d18["strain"] == 8.0   # 03:30Z on the 19th is the evening of the 18th in UTC-4
@@ -142,7 +147,7 @@ r = c.post("/api/workouts", json={"date": "2026-10-21", "type": "Strength", "dur
 wid = r.get_json()["id"]; saved = DATA[f"users/dev/workouts/{wid}"]
 assert saved["exercises"] == [{"name": "Bench press", "sets": 4.0, "reps": 8.0, "weight": 185.0}] and saved["duration_min"] == 50
 lst = c.get("/api/workouts?start=2026-10-01&end=2026-10-31").get_json()["workouts"]
-assert [x["date"] for x in lst] == ["2026-10-21", "2026-10-20"]
+assert [x["date"] for x in lst] == ["2026-10-21", "2026-10-21", "2026-10-20"]
 assert c.delete("/api/workouts/whoop_w-uuid-1").status_code == 400
 s = c.get("/api/health/summary?start=2026-10-01&end=2026-10-31").get_json()
 assert s["latest"]["recovery"] == 72 and s["whoop"]["connected"] and s["averages"]["strain"] == 10.2

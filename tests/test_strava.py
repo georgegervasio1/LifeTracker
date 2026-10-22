@@ -92,6 +92,24 @@ one = c.get("/api/running/3").get_json(); assert one["polyline_full"] == "full" 
 assert c.get("/api/running/999").status_code == 404
 print("running year OK:", y["totals"])
 
+# 3b. WHOOP runs fill in when Strava doesn't have them (same run on both shows once)
+DATA["users/dev/workouts/whoop_a"] = {"source": "whoop", "type": "Running", "date": d(3), "start_local": f"{d(3)}T18:00:00",
+                                      "duration_min": 30, "distance_m": 5000.0, "avg_hr": 150, "elev_m": 12.0}
+DATA["users/dev/workouts/whoop_b"] = {"source": "whoop", "type": "Running", "date": d(2), "start_local": f"{d(2)}T07:10:00",
+                                      "duration_min": 48, "distance_m": 9600.0}
+DATA["users/dev/workouts/whoop_c"] = {"source": "whoop", "type": "Weightlifting", "date": d(3), "duration_min": 60}
+DATA["users/dev/workouts/whoop_d"] = {"source": "whoop", "type": "Running", "date": d(4), "duration_min": 20}   # no GPS
+y2 = c.get(f"/api/running?year={today.year}").get_json()
+ids = [r["id"] for r in y2["runs"]]
+assert "whoop_a" in ids and "whoop_d" in ids and "whoop_b" not in ids and "whoop_c" not in ids, ids
+assert y2["totals"]["runs"] == y["totals"]["runs"] + 2 and y2["totals"]["no_distance"] == 1
+assert abs(y2["totals"]["miles"] - (y["totals"]["miles"] + 5000 / 1609.344)) < 0.01
+wa = c.get("/api/running/whoop_a").get_json(); assert wa["source"] == "whoop" and wa["moving_s"] == 1800
+assert {r["id"] for r in c.get(f"/api/runs?start={d(5)}&end={d(0)}").get_json()["runs"]} >= {"whoop_a", "1"}
+for k in ("a", "b", "c", "d"):
+    DATA.pop(f"users/dev/workouts/whoop_{k}")
+print("WHOOP runs OK")
+
 # 4. VDOT matches Daniels' published table (VDOT 50 = 19:57 5K, 3:10:49 marathon, T 6:51/mi)
 v = raceplan.vdot(5000, 19 * 60 + 57)
 assert abs(v - 50.0) < 0.1, v

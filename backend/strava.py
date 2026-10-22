@@ -207,23 +207,62 @@ def sync_strava(full=False):
 
 
 # ---------------------------------------------------------------- read helpers
+def whoop_runs(start=None, end=None):
+    """Runs recorded by WHOOP, shaped like Strava activities (no route or splits)."""
+    q = user_ref().collection("workouts")
+    if start:
+        q = q.where("date", ">=", start)
+    if end:
+        q = q.where("date", "<=", end)
+    out = []
+    for s in q.stream():
+        w = s.to_dict()
+        if w.get("source") != "whoop" or "run" not in (w.get("type") or "").lower():
+            continue
+        out.append({"id": s.id, "source": "whoop", "name": w.get("type") or "Run", "sport": "Run",
+                    "date": w.get("date"), "start_local": w.get("start_local"), "distance_m": w.get("distance_m"),
+                    "moving_s": (w.get("duration_min") or 0) * 60 or None, "elev_m": w.get("elev_m"),
+                    "avg_hr": w.get("avg_hr"), "max_hr": w.get("max_hr"), "calories": w.get("calories"),
+                    "strain": w.get("strain"), "polyline": ""})
+    return out
+
+
+def _same_run(a, b):
+    """A WHOOP run and a Strava run on the same day that start within 30 minutes are one run."""
+    if a.get("date") != b.get("date"):
+        return False
+    try:
+        ta, tb = datetime.fromisoformat(a["start_local"]), datetime.fromisoformat(b["start_local"])
+    except (KeyError, TypeError, ValueError):
+        return True
+    return abs((ta - tb).total_seconds()) <= 1800
+
+
 def list_runs(start=None, end=None):
     q = _activities()
     if start:
         q = q.where("date", ">=", start)
     if end:
         q = q.where("date", "<=", end)
-    runs = [s.to_dict() for s in q.stream()]
-    return sorted((r for r in runs if r.get("sport") in RUN_TYPES), key=lambda r: r.get("start_local") or "", reverse=True)
+    runs = [r for r in (s.to_dict() for s in q.stream()) if r.get("sport") in RUN_TYPES]
+    runs += [w for w in whoop_runs(start, end) if not any(_same_run(w, r) for r in runs)]
+    return sorted(runs, key=lambda r: r.get("start_local") or r.get("date") or "", reverse=True)
 
 
-LITE = ("id", "name", "sport", "date", "start_local", "distance_m", "moving_s", "elapsed_s", "elev_m",
+LITE = ("id", "source", "name", "sport", "date", "start_local", "distance_m", "moving_s", "elapsed_s", "elev_m",
         "avg_speed", "avg_hr", "max_hr", "workout_type", "polyline")
 
 
 def _monday(d):
     d = date.fromisoformat(d) if isinstance(d, str) else d
     return d - timedelta(days=d.weekday())
+
+
+def _pace(runs):
+    """Seconds per mile over runs that have both distance and time (WHOOP runs without GPS have no distance)."""
+    timed = [r for r in runs if r.get("distance_m") and r.get("moving_s")]
+    m = sum(r["distance_m"] for r in timed)
+    return round(sum(r["moving_s"] for r in timed) / (m / MILE)) if m else None
 
 
 def running_year(year, today=None):
@@ -258,12 +297,13 @@ def running_year(year, today=None):
         "runs": [{k: r.get(k) for k in LITE} for r in runs],
         "totals": {"runs": len(runs), "miles": round(dist / MILE, 2), "moving_s": secs,
                    "elev_m": round(sum(r.get("elev_m") or 0 for r in runs), 1),
-                   "pace_s_per_mi": round(secs / (dist / MILE)) if dist else None,
+                   "pace_s_per_mi": _pace(runs),
+                   "no_distance": sum(1 for r in runs if not r.get("distance_m")),
                    "longest": {"id": longest["id"], "miles": round(longest["distance_m"] / MILE, 2), "date": longest["date"]}
                    if longest and longest.get("distance_m") else None},
         "weekly": weeks, "monthly": months,
         "bests": [best[k] for k in BEST_EFFORTS if k in best],
-        "details_missing": sum(1 for r in runs if not r.get("has_detail")),
+        "details_missing": sum(1 for r in runs if r.get("source") != "whoop" and not r.get("has_detail")),
     }
 
 
@@ -284,8 +324,11 @@ def _register_routes():
             year = int(request.args.get("year") or date.today().year)
         except ValueError:
             return jsonify(error="year must be a number"), 400
-        years = sorted({(s.to_dict().get("date") or "")[:4] for s in _activities().stream()} - {""}, reverse=True)
-        return jsonify(running_year(year) | {"strava": strava_status(), "years": years or [str(year)]})
+        years = sorted({(r.get("date") or "")[:4] for r in list_runs()} - {""}, reverse=True)
+        wsnap = user_ref().collection("integrations").document("whoop").get()
+        whoop_on = bool(wsnap.exists and (wsnap.to_dict() or {}).get("access_token"))
+        return jsonify(running_year(year) | {"strava": strava_status(), "whoop": {"connected": whoop_on},
+                                             "years": years or [str(year)]})
 
     @bp.get("/api/runs")
     @require_owner
@@ -299,6 +342,9 @@ def _register_routes():
     @bp.get("/api/running/<rid>")
     @require_owner
     def run_detail(rid):
+        if rid.startswith("whoop_"):
+            w = next((r for r in whoop_runs() if r["id"] == rid), None)
+            return jsonify(w) if w else (jsonify(error="run not found"), 404)
         ref = _activities().document(rid)
         snap = ref.get()
         if not snap.exists:

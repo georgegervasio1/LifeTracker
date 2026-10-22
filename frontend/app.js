@@ -1125,19 +1125,20 @@ let runYear = null, runData = null, runSyncing = false;
 async function loadRunning() {
   const y = runYear || new Date().getFullYear();
   const d = runData = await api(`/api/running?year=${y}`);
-  const on = d.strava.connected;
+  const on = d.strava.connected || d.whoop.connected;
   $("runEmpty").classList.toggle("hidden", on || d.runs.length);
   $("runBody").classList.toggle("hidden", !on && !d.runs.length);
   $("runYear").innerHTML = [...new Set([String(new Date().getFullYear()), ...d.years])].sort().reverse()
     .map((v) => `<option ${+v === y ? "selected" : ""}>${v}</option>`).join("");
   $("runSync").classList.toggle("hidden", !on);
-  $("runStatus").textContent = on
-    ? (d.strava.last_sync ? `Synced ${new Date(d.strava.last_sync).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "Not synced yet")
+  $("runStatus").textContent = !d.strava.connected && d.whoop.connected
+    ? "Runs from WHOOP. Route maps and splits need Strava."
+    : on ? (d.strava.last_sync ? `Synced ${new Date(d.strava.last_sync).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "Not synced yet")
       + (d.details_missing ? ` · ${d.details_missing} runs still loading splits` : "")
     : "";
   if (!on && !d.runs.length) return;
   // sync in the background when the data is more than an hour old
-  if (on && !runSyncing && (!d.strava.last_sync || Date.now() - new Date(d.strava.last_sync) > 36e5)) syncStrava(true);
+  if (d.strava.connected && !runSyncing && (!d.strava.last_sync || Date.now() - new Date(d.strava.last_sync) > 36e5)) syncStrava(true);
 
   const T = d.totals;
   $("r-miles").textContent = T.miles ? `${T.miles.toFixed(1)} mi` : "—";
@@ -1179,10 +1180,10 @@ function renderRunList() {
     <button class="run-row" data-run="${esc(r.id)}">
       ${routeSvg(r.polyline)}
       <span class="run-main">
-        <span class="run-name">${esc(r.name)}${r.workout_type === 1 ? '<span class="source-tag">RACE</span>' : ""}</span>
+        <span class="run-name">${esc(r.name)}${r.workout_type === 1 ? '<span class="source-tag">RACE</span>' : ""}${r.source === "whoop" ? '<span class="source-tag">WHOOP</span>' : ""}</span>
         <span class="run-date">${longDay(r.date)}${r.start_local ? ` · ${new Date(r.start_local).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}</span>
       </span>
-      <span class="run-stat"><b>${fmtMi(r.distance_m, 2)}</b> mi</span>
+      <span class="run-stat"><b>${r.distance_m ? fmtMi(r.distance_m, 2) : "—"}</b> mi</span>
       <span class="run-stat"><b>${fmtPace(paceOf(r))}</b> /mi</span>
       <span class="run-stat run-opt"><b>${fmtClock(r.moving_s)}</b> time</span>
       <span class="run-stat run-opt"><b>${r.avg_hr ? Math.round(r.avg_hr) : "—"}</b> bpm</span>
@@ -1207,7 +1208,7 @@ async function openRun(id) {
     </div>
     <div class="run-map run-map-lg" id="runMapOne"></div>
     <div class="run-stats">
-      ${stat(`${fmtMi(r.distance_m, 2)} mi`, "Distance")}${stat(fmtPace(paceOf(r)) + " /mi", "Pace")}${stat(fmtClock(r.moving_s), "Moving time")}
+      ${stat(r.distance_m ? `${fmtMi(r.distance_m, 2)} mi` : "—", "Distance")}${stat(fmtPace(paceOf(r)) + " /mi", "Pace")}${stat(fmtClock(r.moving_s), "Moving time")}
       ${stat(r.elev_m != null ? `${Math.round(r.elev_m * 3.28084)} ft` : "—", "Elevation gain")}
       ${stat(r.avg_hr ? `${Math.round(r.avg_hr)} bpm` : "—", "Avg heart rate")}${stat(r.cadence ? `${Math.round(r.cadence * 2)} spm` : "—", "Cadence")}
       ${r.calories ? stat(Math.round(r.calories), "Calories") : ""}${r.elapsed_s && r.elapsed_s - r.moving_s > 60 ? stat(fmtClock(r.elapsed_s), "Elapsed") : ""}
@@ -1219,9 +1220,9 @@ async function openRun(id) {
       return `<div class="split"><span class="split-n">${partial ? fmtMi(s.distance_m, 2) : s.n}</span>
         <span class="bar-track"><span class="bar-fill" style="display:block;width:${partial ? 20 : w}%"></span></span>
         <span class="split-pace">${fmtPace(p)}</span><span class="split-elev">${s.elev_m != null ? `${s.elev_m > 0 ? "+" : ""}${Math.round(s.elev_m * 3.28084)} ft` : ""}</span>
-        <span class="split-hr">${s.avg_hr ? Math.round(s.avg_hr) : ""}</span></div>`; }).join("")}</div>` : `<p class="hint">Splits load with the next sync.</p>`}
+        <span class="split-hr">${s.avg_hr ? Math.round(s.avg_hr) : ""}</span></div>`; }).join("")}</div>` : `<p class="hint">${r.source === "whoop" ? "WHOOP doesn't record mile splits or the route." : "Splits load with the next sync."}</p>`}
     ${(r.best_efforts || []).length ? `<h4>Best efforts</h4><div class="efforts">${r.best_efforts.map((b) => `<span><b>${fmtClock(b.elapsed_s)}</b> ${esc(b.name.replace("Half-Marathon", "Half marathon"))}${b.pr_rank === 1 ? ' <i class="pr">PR</i>' : ""}</span>`).join("")}</div>` : ""}
-    <p class="hint"><a class="link" href="https://www.strava.com/activities/${esc(r.id)}" target="_blank" rel="noopener">View on Strava</a></p>`;
+    ${r.source === "whoop" ? "" : `<p class="hint"><a class="link" href="https://www.strava.com/activities/${esc(r.id)}" target="_blank" rel="noopener">View on Strava</a></p>`}`;
   $("runClose").onclick = () => $("runDialog").close();
   const line = decodePolyline(r.polyline_full || r.polyline);
   if (line.length > 1) drawMap("runMapOne", [line], { weight: 4 });
@@ -1229,7 +1230,7 @@ async function openRun(id) {
 }
 $("runDialog").addEventListener("click", (e) => { if (e.target === $("runDialog")) $("runDialog").close(); });
 $("runYear").onchange = () => { runYear = +$("runYear").value; runListAll = false; loadRunning().catch((e) => toast(e.message)); };
-$("runSync").onclick = () => syncStrava();
+$("runSync").onclick = () => (runData?.strava.connected ? syncStrava() : syncWhoop());
 
 async function syncStrava(quiet = false) {
   if (runSyncing) return;
