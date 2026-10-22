@@ -312,7 +312,7 @@ async function loadNetWorth() {
     </div>`).join("");
   bindBalanceButtons();
   $("nwMoves").innerHTML = o.changes.length ? `<div class="move-head"><span>Month</span><span>Change</span><span>Investments</span><span>New money</span><span>Everything else</span></div>` +
-    o.changes.map((c) => `<div class="move-row"><span>${fdate(c.month + "-01", { month: "short", year: "numeric" })}</span><strong class="${c.change < 0 ? "neg" : ""}">${signed(c.change - (c.newly_tracked || 0), m0)}</strong><span>${signed(c.investment_returns, m0)}</span><span>${signed(c.new_money, m0)}</span><span>${signed(c.saving_and_spending, m0)}</span></div>${c.newly_tracked ? `<div class="move-note">${signed(c.newly_tracked, m0)} from accounts first tracked this month, not counted as a change</div>` : ""}`).join("") +
+    o.changes.filter((c) => c.change || c.investment_returns || c.new_money || c.saving_and_spending || c.newly_tracked).map((c) => `<div class="move-row"><span>${fdate(c.month + "-01", { month: "short", year: "numeric" })}</span><strong class="${c.change < 0 ? "neg" : ""}">${signed(c.change - (c.newly_tracked || 0), m0)}</strong><span>${signed(c.investment_returns, m0)}</span><span>${signed(c.new_money, m0)}</span><span>${signed(c.saving_and_spending, m0)}</span></div>${c.newly_tracked ? `<div class="move-note">${signed(c.newly_tracked, m0)} from accounts first tracked this month, not counted as a change</div>` : ""}`).join("") +
     `<p class="hint">Investments = market change + dividends from your statements. New money = trust distributions. Everything else = saving, spending and transfers from accounts without a balance yet.</p>`
     : `<div class="empty">Needs two months of balances.</div>`;
   const mv = o.investments.movers;
@@ -364,12 +364,14 @@ async function loadCash() {
   const months = Object.keys(cashData.by_month);
   drawChart("chart-cash", "bar", months.map((m) => new Date(m + "-01T00:00").toLocaleDateString("en-US", { month: "short" })), Object.values(cashData.by_month));
   allTx = cashData.transactions;
+  txShown = 50;
   renderTx();
   $("cashNote").textContent = acct === "p2p"
     ? "Venmo comes from monthly CSV uploads; Zelle payments show up in Chase checking. Each payment counts once even if it appears in both."
     : "A purchase that's in both a CSV and Plaid counts once. Card payments and transfers between your accounts aren't spending.";
 }
 
+let txShown = 50;
 function renderTx() {
   const q = $("tx-search").value.toLowerCase();
   const names = Object.fromEntries((cashData?.accounts || []).map((a) => [a.id, a.name]));
@@ -377,7 +379,9 @@ function renderTx() {
   $("tx-count").textContent = rows.length.toLocaleString();
   const net = rows.reduce((a, t) => a + t.amount, 0);
   $("tx-total").textContent = net >= 0 ? `${usd.format(net)} out` : `+${usd.format(-net)} in`;
-  $("tx-body").innerHTML = rows.slice(0, 500).map((t) => `
+  $("tx-more").classList.toggle("hidden", rows.length <= txShown);
+  $("tx-more").textContent = `Show more (${(rows.length - txShown).toLocaleString()} left)`;
+  $("tx-body").innerHTML = rows.slice(0, txShown).map((t) => `
     <tr><td>${fdate(t.date)}</td>
       <td>${esc(t.merchant)}${t.pending ? '<span class="pending">Pending</span>' : ""}${t.transfer_pair ? '<span class="pending">Matched transfer</span>' : ""}</td>
       <td class="tag">${esc(t.category)}</td><td class="tag">${esc(names[t.account] || t.source || "")}<span class="src-dot" title="${esc(SRC[t.src] || "")}"> · ${esc(SRC[t.src] || "")}</span></td>
@@ -408,7 +412,7 @@ async function loadInv() {
       <div class="kpi"><span class="kpi-label">Unrealized gain</span><span class="kpi-value ${gain < 0 ? "neg" : "pos"}">${signed(gain, m0)}</span><span class="kpi-sub">On ${m0(H.holdings.reduce((s, h) => s + (h.cost_basis || 0), 0))} cost</span></div>
       <div class="kpi"><span class="kpi-label">${single ? "Year to date" : "Cash"}</span><span class="kpi-value ${single && ytd.ytd_pct < 0 ? "neg" : ""}">${single ? pctTxt(ytd.ytd_pct) : m0(H.cash)}</span><span class="kpi-sub">${single ? `S&P 500 ${pctTxt(ytd.sp500_ytd)} · time-weighted, approx.` : `${(H.cash / H.total * 100).toFixed(1)}% of the total`}</span></div>
       <div class="kpi"><span class="kpi-label">Est. annual income</span><span class="kpi-value">${m0(eai)}</span><span class="kpi-sub">${v.dividends.received ? `${m2(v.dividends.received)} received on file` : ""}</span></div>
-      <div class="kpi"><span class="kpi-label">Fund fees / year</span><span class="kpi-value">${m2(v.fees.fund_cost_per_year)}</span><span class="kpi-sub">${v.fees.weighted_expense_ratio != null ? `${v.fees.weighted_expense_ratio.toFixed(3)}% average expense ratio` : ""}</span></div>
+      <div class="kpi"><span class="kpi-label">Fund fees / year</span><span class="kpi-value">${v.fees.funds.length && v.fees.unknown.length === v.fees.funds.length ? "—" : m2(v.fees.fund_cost_per_year)}</span><span class="kpi-sub">${v.fees.weighted_expense_ratio != null ? `${v.fees.weighted_expense_ratio.toFixed(3)}% average expense ratio` : ""}${v.fees.unknown.length ? `${v.fees.weighted_expense_ratio != null ? " · " : ""}${v.fees.unknown.length} fund${v.fees.unknown.length > 1 ? "s" : ""} unknown` : ""}</span></div>
     </div>
     <div class="grid-2">
       <div class="card"><div class="card-head"><h3>${single ? "Return vs S&P 500" : "Value over time"}</h3><span class="card-meta">${single ? "Year to date, at each statement" : "Statements + Plaid"}</span></div><canvas id="chart-inv"></canvas>
@@ -443,7 +447,7 @@ async function loadInv() {
     $("invPerfTable").innerHTML = `<div class="perf-rows">${v.performance.by_account.map((p) => `<a class="perf-row" href="#/finances/investments?acct=${p.account}"><span>${esc(p.name)}</span><span class="${p.ytd_pct < 0 ? "neg" : "pos"}">${pctTxt(p.ytd_pct)}</span><span class="muted">S&P ${pctTxt(p.sp500_ytd)}</span></a>`).join("")}</div><p class="hint">Year-to-date, time-weighted. Open an account for its chart.</p>`;
   }
   const alloc = (rows) => rows.filter((r) => r.value).map((r) => `<div class="bar-row"><span class="bar-label">${esc(r.label)}</span><span class="bar-track"><span class="bar-fill" style="display:block;width:${Math.max(1.5, r.pct)}%"></span></span><span class="bar-value">${r.pct.toFixed(1)}%</span></div>`).join("");
-  $("invAlloc").innerHTML = `<h4 class="mini-h">Asset class</h4>${alloc(v.allocation.by_asset)}<p class="hint">Bonds, international and crypto: ${v.allocation.by_asset.filter((r) => ["Bonds", "International stocks", "Crypto"].includes(r.label) && !r.value).length === 3 ? "none held" : ""}</p><h4 class="mini-h">By fund type</h4>${alloc(v.allocation.by_style)}`;
+  $("invAlloc").innerHTML = `<h4 class="mini-h">Asset class</h4>${alloc(v.allocation.by_asset)}${v.allocation.by_asset.filter((r) => ["Bonds", "International stocks", "Crypto"].includes(r.label) && !r.value).length === 3 && !v.allocation.by_asset.some((r) => r.label === "Unclassified" && r.value) ? `<p class="hint">Bonds, international and crypto: none held</p>` : ""}<h4 class="mini-h">By fund type</h4>${alloc(v.allocation.by_style)}`;
   $("invHoldings").innerHTML = H.holdings.map((h, i) => `
     <tr class="hold-row" data-lots="${i}"><td><strong>${esc(h.symbol)}</strong><span class="hold-name">${esc(h.name)}${!single && h.accounts?.length > 1 ? ` · ${h.accounts.length} accounts` : ""}</span></td>
       <td class="num">${(+h.quantity).toLocaleString()}</td><td class="num">${m2(h.price)}</td><td class="num"><strong>${m2(h.value)}</strong></td>
@@ -459,8 +463,8 @@ async function loadInv() {
       `<p class="hint">${mv.daily ? "From the last two Plaid syncs." : "Statement to statement until Plaid adds daily prices."}</p>` : `<p class="hint">Needs two price snapshots.</p>`;
   const F = v.fees;
   $("invFees").innerHTML = F.funds.map((f) => `<div class="mini-row"><span><strong>${esc(f.symbol)}</strong> <span class="tag">${f.expense_ratio != null ? f.expense_ratio + "%" : "unknown"}</span></span><span>${m2(f.annual_cost)} / yr</span></div>`).join("") +
-    `<div class="mini-row total"><span>All funds</span><strong>${m2(F.fund_cost_per_year)} / yr</strong></div>
-    <p class="hint">${esc(F.note)} ${F.account_fees.length ? `Account fees on file: ${m2(F.account_fees_total)}.` : "No account fees in the activity on file."} Expense ratios from fund pages as of ${fdate(F.funds[0]?.as_of)} (${[...new Set(F.funds.map((f) => f.source).filter(Boolean))].length} sources).</p>`;
+    `<div class="mini-row total"><span>All funds</span><strong>${F.funds.length && F.unknown.length === F.funds.length ? "—" : m2(F.fund_cost_per_year)} / yr</strong></div>
+    <p class="hint">${esc(F.note)} ${F.account_fees.length ? `Account fees on file: ${m2(F.account_fees_total)}.` : "No account fees in the activity on file."} ${F.funds.some((f) => f.as_of) ? `Expense ratios from fund pages as of ${fdate(F.funds.find((f) => f.as_of).as_of)} (${new Set(F.funds.map((f) => f.source).filter(Boolean)).size} sources).` : ""}${F.unknown.length ? ` Not yet known for ${F.unknown.map(esc).join(", ")}, so they aren't in the total.` : ""}</p>`;
   const D = v.dividends, months = Object.entries(D.by_month).slice(-12);
   const topD = Math.max(1, ...months.map(([, x]) => x));
   $("invDivs").innerHTML = `<div class="div-bars">${months.map(([m, x]) => `<div class="div-bar"><i style="height:${Math.max(4, x / topD * 100)}%"></i><span>${new Date(m + "-01T00:00").toLocaleDateString("en-US", { month: "short" })}</span><em>${m0(x)}</em></div>`).join("")}</div>
@@ -572,7 +576,7 @@ async function loadFinTaxes(t) {
       ${E.dc_needs_payment ? `<p>DC: nothing is withheld for DC (your employer withheld Illinois), so about <strong>${m0(E.dc_short_by)}</strong> is due to DC; DC expects estimated payments when you'll owe more than $100.</p>` : ""}
       ${E.explain ? `<p class="hint">${esc(E.explain)}</p>` : ""}</div>` : ""}
     <div class="tax-grid">
-      ${box("Federal", F, `<p class="hint">${F.deduction_kind === "itemized" ? "Itemizing" : "Standard deduction"} (${m0(F.deduction)}) · taxable ${m0(F.taxable)} · top bracket ${(F.marginal * 100).toFixed(0)}%${F.niit ? ` · NIIT ${m2(F.niit)}` : ""}</p>`)}
+      ${box("Federal", F, `<p class="hint">${F.deduction_kind === "itemized" ? "Itemizing" : F.charity_nonitemizer ? "Standard + charitable deduction" : "Standard deduction"} (${m0(F.deduction)}) · taxable ${m0(F.taxable)} · top bracket ${(F.marginal * 100).toFixed(0)}%${F.niit ? ` · NIIT ${m2(F.niit)}` : ""}</p>`)}
       ${box("Illinois", IL, `<p class="hint">${esc(IL.note)} Illinois wages ${m0(IL.wages)} at 4.95%, exemption prorated ${IL.ratio_pct}%.</p>`)}
       ${DC ? box("DC", DC, `<p class="hint">Resident: taxed on all ${m0(DC.agi)}, then a ${m0(DC.credit_for_illinois)} credit for the Illinois tax on your wages. Top bracket ${(DC.marginal * 100).toFixed(2)}%.</p>`) : ""}
     </div>
@@ -2497,7 +2501,8 @@ $("signin").onclick = () => signInWithPopup(auth, new GoogleAuthProvider()).catc
 $("signout").onclick = () => signOut(auth);
 $("sync").onclick = doSync;
 $("range").onchange = () => render();
-$("tx-search").oninput = renderTx;
+$("tx-search").oninput = () => { txShown = 50; renderTx(); };
+$("tx-more").onclick = () => { txShown += 100; renderTx(); };
 $$("[data-link]").forEach((b) => (b.onclick = () => connect(b.dataset.link).catch((e) => toast(e.message))));
 $("bank-files").onchange = () => {
   const fs = $("bank-files").files;

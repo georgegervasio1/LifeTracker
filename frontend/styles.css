@@ -178,6 +178,7 @@ main { padding-bottom: 96px; }
 .toolbar { display: flex; align-items: center; gap: 24px; margin-bottom: 20px; flex-wrap: wrap; }
 .toolbar .input { flex: 1; min-width: 240px; }
 .toolbar-stats { display: flex; gap: 20px; font-size: 13px; color: var(--text-2); }
+.tx-more { display: block; margin: 12px auto 0; }
 .toolbar-stats strong { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .table th { text-align: left; font-size: 12px; font-weight: 500; color: var(--text-3); padding: 14px 24px; border-bottom: 1px solid var(--line); }
@@ -1020,3 +1021,15 @@ a.acct-name:hover strong { color: var(--accent); }
 }
 .k-tempo .day-detail, .k-intervals .day-detail { display: block; font-size: 11px; line-height: 1.35; color: var(--text-3); margin-top: 4px; }
 .run-more { width: 100%; padding: 14px; border-top: 1px solid var(--line); color: var(--accent); font-size: 14px; }
+/* Transactions on phones: merchant and amount on top, date, category and account beneath */
+@media (max-width: 600px) {
+  .tx-table thead { display: none; }
+  .tx-table tbody tr { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 4px 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .tx-table tbody tr:last-child { border-bottom: none; }
+  .tx-table td { padding: 0; border: none; min-width: 0; }
+  .tx-table td:nth-child(2) { grid-row: 1; grid-column: 1 / 4; font-weight: 500; overflow-wrap: anywhere; }
+  .tx-table td:nth-child(5) { grid-row: 1; grid-column: 4; }
+  .tx-table td:nth-child(1), .tx-table td:nth-child(3), .tx-table td:nth-child(4) { grid-row: 2; font-size: 12px; color: var(--text-3); white-space: nowrap; }
+  .tx-table td:nth-child(4) { overflow: hidden; text-overflow: ellipsis; }
+  .tx-table td.empty { grid-column: 1 / -1; }
+}
