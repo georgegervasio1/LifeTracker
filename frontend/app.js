@@ -890,10 +890,21 @@ function renderAcadCal() {
 
   // your finals summary under the grid
   const finals = evs.filter((e) => e.kind === "final");
-  const missingExam = edu.courses.filter((c) => c.term === acalTerm && ["enrolled", "planned"].includes(c.status) && !c.exam_date && c.graded !== false);
+  const hasFinal = new Set(finals.map((e) => e.course_id));
+  const pick = edu.courses.filter((c) => c.term === acalTerm && c.exam_options?.length && !hasFinal.has(c.id));
+  const missingExam = edu.courses.filter((c) => c.term === acalTerm && ["enrolled", "planned"].includes(c.status) && !hasFinal.has(c.id) && !c.exam_options?.length && c.graded !== false);
+  const sd = (d) => new Date(d + "T00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
   $("acalFinals").innerHTML = `<h4>Your finals</h4>` + (finals.length ? finals.map((e) => `<div class="acal-final"><span>${esc(e.label.replace(/^Final: /, ""))}${e.conflict ? ' <span class="neg" title="Same slot as ' + esc(e.conflict.join(", ")) + '">⚠</span>' : ""}</span><span>${new Date(e.date + "T00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}${e.time ? ` · ${esc(e.time)}` : ""}</span></div>`).join("") : `<p class="hint">No exam dates yet.</p>`) +
-    (missingExam.length ? `<p class="hint">No exam date: ${missingExam.map((c) => `<button class="text-btn" data-examfix="${c.id}">${esc(c.title)}</button>`).join(", ")}</p>` : "");
+    pick.map((c) => `<div class="exam-pick"><p class="hint"><strong>${esc(c.title)}</strong> has ${c.exam_options.length} sections on the Registrar's schedule. Which is yours?</p>
+      ${c.exam_options.map((o, i) => `<button class="btn btn-secondary btn-sm" data-pick="${c.id}:${i}">${esc(o.professor)} · ${sd(o.date)}, ${esc(o.time)}</button>`).join("")}</div>`).join("") +
+    (finals.some((e) => e.source === "registrar") ? `<p class="hint">Exam dates come from the Registrar's Fall 2026 schedule. Edit a course to change one.</p>` : "") +
+    (missingExam.length ? `<p class="hint">No exam on the schedule: ${missingExam.map((c) => `<button class="text-btn" data-examfix="${c.id}">${esc(c.title)}</button>`).join(", ")}</p>` : "");
   $$("[data-examfix]").forEach((b) => (b.onclick = () => openCourse(edu.courses.find((c) => c.id === b.dataset.examfix))));
+  $$("[data-pick]").forEach((b) => (b.onclick = async () => {
+    const [id, i] = b.dataset.pick.split(":"), c = edu.courses.find((x) => x.id === id), o = c.exam_options[+i];
+    try { edu = await api(`/api/edu/courses/${id}`, { method: "PATCH", body: JSON.stringify({ exam_date: o.date, exam_time: o.time, professor: o.professor, exam_type: c.exam_type || "In-class exam" }) }); toast(`${c.title}: final set`); renderAcadCal(); }
+    catch (e) { toast(e.message); }
+  }));
 
   // agenda
   const list = acalDay ? onDay(acalDay) : evs;

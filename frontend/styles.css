@@ -644,3 +644,5 @@ button.h-row:hover span:first-child { color: var(--accent); }
 @media (max-width: 760px) {
   .acal-item { grid-template-columns: 1fr; gap: 4px; }
 }
+.exam-pick { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 0 2px; }
+.exam-pick p { width: 100%; margin: 0; }

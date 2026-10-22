@@ -96,6 +96,72 @@ ACADEMIC_CALENDAR = {
 }
 
 
+# Registrar's Fall 2026 in-class final exam schedule (upperclass courses; 1L sections and Legal Practice left out).
+# (course as listed, professor, date, time)
+FINALS_SCHEDULE = {"Fall 2026": [
+    ("Arbitration Practice in China", "Tao", "2026-10-24", "10:00 AM"),
+    ("Preliminary and Parallel Corp Litigation", "LeGrow", "2026-10-24", "10:00 AM"),
+    *[(t, pr, "2026-12-04", "9:00 AM") for t, pr in [("Constitutional Law II", "Seidman"), ("Corporations", "Sale"), ("Intelligence Law", "Donohue"),
+      ("Public Health Law and Ethics", "Gostin"), ("Professional Responsibility", "Coffey")]],
+    *[(t, pr, "2026-12-04", "1:30 PM") for t, pr in [("Bankruptcy Law", "Flax"), ("Commercial Finance Transaction", "Levitin"), ("Environmental Law", "Buzbee"),
+      ("Evidence", "Iscoe"), ("Federal Income Taxation", "Satterthwaite"), ("Innovation, Tech & Intl Fin Reg", "Brummer")]],
+    *[(t, pr, "2026-12-05", "10:00 AM") for t, pr in [("Beyond the IPO", "Lopez"), ("Corp Income Tax Law I", "Decker"), ("Crypto Law Seminar", "McCarty"),
+      ("Law of Public Utilities", "Hempling"), ("Intl Organizations", "Bischoff"), ("Intl Trade Law & Regulation", "Brightbill")]],
+    *[(t, pr, "2026-12-07", "6:00 PM") for t, pr in [("Antitrust", "Pitt"), ("Civil Rights: Section 1983", "Lopez"), ("Employment Discrimination", "Simmons"),
+      ("Evidence", "Fisher"), ("Professional Responsibility", "Gomez")]],
+    *[(t, pr, "2026-12-08", "1:30 PM") for t, pr in [("Corporations", "Diamond"), ("Federal Income Taxation", "Grinberg"), ("Prof Resp Amer Legal Profession", "Rostain"),
+      ("Copyright Law", "Garcia"), ("Corporate Finance", "Flax")]],
+    *[(t, pr, "2026-12-08", "6:00 PM") for t, pr in [("Devel & Finance Infra Projects", "Cohen"), ("Essentials of Fintech Law", "Scopino"),
+      ("Fed Courts and Fed System", "Raab"), ("National Security & Law of the Sea", "Oliver")]],
+    *[(t, pr, "2026-12-09", "9:00 AM") for t, pr in [("Corporations", "Langevoort"), ("Evidence", "Rostain"), ("Lab of Dem: State & Local Gov", "Chertoff"),
+      ("Securities Regulation", "Wishnick")]],
+    *[(t, pr, "2026-12-09", "1:30 PM") for t, pr in [("Corporations", "De Amicis"), ("Criminal Law", "Butler"), ("Intl Tax", "Grinberg"),
+      ("Comparative Law: China in Context", "Jia"), ("Professional Responsibility Law in US", "Cheng")]],
+    *[(t, pr, "2026-12-10", "6:00 PM") for t, pr in [("Corporations", "Goldsmith Romero"), ("Family Law II", "Holloway"), ("Emerging Companies", "Rattigan"),
+      ("Intl Project Finance", "Hansen"), ("Patent Law", "Micallef"), ("Law of Investment", "O'Brien")]],
+    *[(t, pr, "2026-12-11", "9:00 AM") for t, pr in [("Bus Essentials: Mini-MBA", "Hills"), ("Employment Law", "Rogers"), ("Intl Bus Transactions", "DeAmicis"),
+      ("Federal Courts", "Lederman")]],
+    *[(t, pr, "2026-12-11", "1:30 PM") for t, pr in [("Business Torts", "Klass"), ("Election Law", "Smith"), ("Constitutional Law II", "Barnett"),
+      ("Payment Systems", "Levitin")]],
+    *[(t, pr, "2026-12-14", "9:00 AM") for t, pr in [("Corporate Nat'l Security Law", "Carter"), ("Evidence", "Pardo"), ("Mergers and Acquisitions", "Thompson"),
+      ("Information Privacy Law", "Cohen")]],
+    *[(t, pr, "2026-12-14", "1:30 PM") for t, pr in [("Gender and Sexuality", "Mezey"), ("Legislation", "Krishnakumar"), ("Federal White Collar Crime", "O'Sullivan"),
+      ("Advance Criminal Procedure", "Gunja")]],
+    *[(t, pr, "2026-12-14", "6:00 PM") for t, pr in [("Securities Regulation", "Cordisco"), ("Securities Regulation", "Cavanagh")]],
+]}
+_ABBR = {"corp": "corporate", "corporations": "corporation", "intl": "international", "fed": "federal", "bus": "business",
+         "devel": "development", "prof": "professional", "resp": "responsibility", "amer": "american", "natl": "national",
+         "tech": "technology", "fin": "financial", "reg": "regulation", "infra": "infrastructure", "crim": "criminal",
+         "dem": "democracy", "gov": "government", "advance": "advanced"}
+_STOP = {"law", "laws", "the", "of", "and", "for", "in", "to", "a", "an", "lawyer", "lawyers", "us", "on", "seminar"}
+
+
+def _tokens(title):
+    out = set()
+    for w in re.findall(r"[a-z0-9]+", (title or "").lower().replace("'", "").replace("-", " ")):
+        w = _ABBR.get(w, w)
+        if len(w) > 3 and w.endswith("s") and not w.endswith("ss"):
+            w = w[:-1]
+        if w not in _STOP:
+            out.add(w)
+    return out
+
+
+def exam_candidates(course):
+    """Registrar exam slots that could be this course: every meaningful word of the course title appears
+    in the listed name; narrowed by professor when the course has one."""
+    want = _tokens(course.get("title"))
+    if not want:
+        return []
+    found = [{"title": t, "professor": pr, "date": d, "time": tm}
+             for t, pr, d, tm in FINALS_SCHEDULE.get(course.get("term"), []) if want <= _tokens(t)]
+    prof = (course.get("professor") or "").lower()
+    if prof and len(found) > 1:
+        narrowed = [f for f in found if f["professor"].lower() in prof or prof in f["professor"].lower()]
+        found = narrowed or found
+    return found
+
+
 def calendar_for(courses):
     """Key dates per term plus a 'final' event for every current/planned course with an exam date.
     Two finals in the same slot are flagged (GULC lets you reschedule an exam conflict)."""
@@ -104,11 +170,20 @@ def calendar_for(courses):
         out[term] = [{"date": d, "end": e, "label": l, "kind": k} for d, e, l, k in items]
     slots = {}
     for c in courses:
-        if c.get("exam_date") and c.get("status") in ("enrolled", "planned", "completed"):
-            ev = {"date": c["exam_date"], "end": None, "label": f"Final: {c.get('title')}", "kind": "final",
-                  "time": c.get("exam_time"), "course_id": c.get("id"), "exam_type": c.get("exam_type")}
+        if c.get("status") not in ("enrolled", "planned", "completed"):
+            continue
+        date, time, source = c.get("exam_date"), c.get("exam_time"), "you"
+        if not date and c.get("graded", True) is not False and c.get("term") in FINALS_SCHEDULE:
+            cands = exam_candidates(c)
+            if len(cands) == 1:
+                date, time, source = cands[0]["date"], cands[0]["time"], "registrar"
+            elif cands:
+                c["exam_options"] = cands      # several sections: let the student pick
+        if date:
+            ev = {"date": date, "end": None, "label": f"Final: {c.get('title')}", "kind": "final",
+                  "time": time, "course_id": c.get("id"), "exam_type": c.get("exam_type"), "source": source}
             out.setdefault(c.get("term") or "Other", []).append(ev)
-            slots.setdefault((c["exam_date"], (c.get("exam_time") or "").upper()), []).append(ev)
+            slots.setdefault((date, (time or "").upper()), []).append(ev)
     for evs in slots.values():
         if len(evs) > 1:
             for ev in evs:
