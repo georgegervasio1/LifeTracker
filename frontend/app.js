@@ -656,18 +656,32 @@ $("pdf-files").onchange = () => {
 $("pdf-upload").onclick = async () => {
   const files = [...$("pdf-files").files];
   if (!files.length) return toast("Choose at least one PDF");
-  const fd = new FormData(); files.forEach((f) => fd.append("files", f));
-  $("pdf-upload").disabled = true; $("pdf-upload").textContent = "Reading…";
-  try {
-    const r = await api("/api/fin/upload", { method: "POST", body: fd });
-    $("pdfResults").innerHTML = r.results.map((x) => `<div class="mini-row"><span>${esc(x.file)}</span><span class="${x.error ? "neg" : ""}">${x.error ? esc(x.error)
-      : x.kind === "statement" ? x.accounts.map((a) => `${esc((r.imports.accounts.find((c) => c.id === a.account) || {}).name || a.account)} to ${fdate(a.closing_date)}`).join(" · ")
-      : `${x.year} tax forms: ${x.forms.map((f) => f.form).join(", ")}`}</span></div>`).join("");
-    $("pdf-files").value = ""; $("pdfLabel").textContent = "Choose PDFs";
-    loadImports(r.imports);
-    toast("Imported");
-  } catch (e) { toast(e.message); }
-  finally { $("pdf-upload").disabled = false; $("pdf-upload").textContent = "Upload"; }
+  // one file per request: each stays small and quick, and one bad file doesn't stop the rest
+  $("pdf-upload").disabled = true;
+  $("pdfResults").innerHTML = files.map((f, i) => `<div class="mini-row"><span>${esc(f.name)}</span><span id="pdfr-${i}" class="muted">Waiting</span></div>`).join("");
+  let last = null, ok = 0;
+  for (const [i, f] of files.entries()) {
+    $("pdf-upload").textContent = `Reading ${i + 1} of ${files.length}…`;
+    $(`pdfr-${i}`).textContent = "Reading…";
+    const fd = new FormData(); fd.append("files", f);
+    try {
+      const r = await api("/api/fin/upload", { method: "POST", body: fd });
+      last = r.imports;
+      const x = r.results[0] || {};
+      $(`pdfr-${i}`).className = x.error ? "neg" : "";
+      $(`pdfr-${i}`).textContent = x.error ? x.error
+        : x.kind === "statement" ? x.accounts.map((a) => `${(r.imports.accounts.find((c) => c.id === a.account) || {}).name || a.account} to ${fdate(a.closing_date)}`).join(" · ")
+        : `${x.year} tax forms: ${x.forms.map((q) => q.form).join(", ")}`;
+      if (!x.error) ok++;
+    } catch (e) {
+      $(`pdfr-${i}`).className = "neg";
+      $(`pdfr-${i}`).textContent = e.message === "Failed to fetch" ? "The server didn't answer. Try this file again in a minute." : e.message;
+    }
+  }
+  $("pdf-files").value = ""; $("pdfLabel").textContent = "Choose PDFs";
+  $("pdf-upload").disabled = false; $("pdf-upload").textContent = "Upload";
+  if (last) loadImports(last).then(() => { $("pdfResults").scrollIntoView({ block: "nearest" }); });
+  toast(`${ok} of ${files.length} imported`);
 };
 $("reconcileBtn").onclick = async () => {
   try { const r = await api("/api/fin/reconcile", { method: "POST" }); loadImports(r.imports); toast(`Checked: ${r.changed} links updated, ${r.paired} transfers paired`); }

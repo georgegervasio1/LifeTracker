@@ -21,9 +21,15 @@ MON = r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?"
 # ---------------------------------------------------------------- text extraction
 def pdf_pages(data):
     """bytes -> list of pages, each a list of text lines in reading order."""
+    import gc
     import pdfplumber
+    out = []
     with pdfplumber.open(io.BytesIO(data)) as pdf:
-        return [_page_lines(p) for p in pdf.pages]
+        for p in pdf.pages:
+            out.append(_page_lines(p))
+            p.close()              # drop the page's parsed layout right away; keeps memory flat on small servers
+    gc.collect()
+    return out
 
 
 def _page_lines(pg, tol=3):
