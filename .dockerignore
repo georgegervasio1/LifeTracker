@@ -1,0 +1,6 @@
+.git
+.github
+frontend
+**/__pycache__
+**/.env
+**/*.csv
