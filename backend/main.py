@@ -12,6 +12,7 @@ Endpoints (all require a Firebase ID token for ALLOWED_EMAIL):
   POST /api/chat                    -> ask the AI assistant (Claude) about your finances
   Health: /api/health/summary, /api/workouts, /api/whoop/{connect,callback,sync}  (see health.py)
   Education: /api/edu, /api/edu/courses, /api/edu/profile, /api/edu/import  (see education.py)
+  Training: /api/training, /api/training/{template,state,sessions,history,exercise,import}  (see training.py)
 """
 import csv
 import json
@@ -414,6 +415,10 @@ health.init(app, db, firestore, require_owner, user_ref)
 # ---------------------------------------------------------------- Education (grades, audit, planner)
 import education
 education.init(app, db, firestore, require_owner, user_ref)
+
+# ---------------------------------------------------------------- Training (planner, sessions, history)
+import training
+training.init(app, db, firestore, require_owner, user_ref)
 
 
 # ---------------------------------------------------------------- AI assistant

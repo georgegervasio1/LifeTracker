@@ -21,7 +21,7 @@ const SECTIONS = {
     ["overview", "Overview"], ["transactions", "Transactions"], ["investments", "Investments"],
     ["assistant", "Assistant"], ["accounts", "Accounts"]] },
   health: { title: "Health", tabs: [
-    ["overview", "Overview"], ["workouts", "Workouts"], ["calendar", "Calendar"], ["connect", "Connect"]] },
+    ["overview", "Overview"], ["planner", "Planner"], ["history", "History"], ["calendar", "Calendar"], ["connect", "Connect"]] },
   education: { title: "Education", tabs: [
     ["overview", "Overview"], ["grades", "Grades & GPA"], ["audit", "Degree Audit"], ["planner", "Planner"]] },
   goals: { title: "Goals", tabs: [] },
@@ -144,7 +144,7 @@ function drawChart(id, type, labels, data, fmt = { tip: (v) => usd.format(v), ti
                      const a = chartColors().accent; g.addColorStop(0, a + "33"); g.addColorStop(1, a + "00"); return g; }
         : k.accent,
       borderColor: k.accent, borderWidth: type === "line" ? 2 : 0, fill: type === "line",
-      tension: 0.35, borderRadius: 6, maxBarThickness: 48, pointRadius: 0, pointHoverRadius: 4, spanGaps: true,
+      tension: 0.35, borderRadius: 6, maxBarThickness: 48, pointRadius: 0, pointHoverRadius: 4, spanGaps: true, ...(opts.ds || {}),
     }] },
     options: {
       aspectRatio: type === "line" ? 2.8 : 1.8,
@@ -337,7 +337,8 @@ let whoopState = null;
 
 async function loadHealth(tab) {
   if (tab === "overview") return loadHealthOverview();
-  if (tab === "workouts") return loadWorkoutsTab();
+  if (tab === "planner") return loadWeekPlan();
+  if (tab === "history") return loadHistory();
   if (tab === "calendar") return renderCalendar();
   if (tab === "connect") return loadConnect();
 }
@@ -399,12 +400,16 @@ function describeWorkout(w) {
 
 function exerciseText(w) {
   return (w.exercises || []).map((e) => {
+    if (Array.isArray(e.sets)) return `${esc(e.name)} ${e.sets.length}×`;
     const sr = e.sets && e.reps ? ` ${e.sets}×${e.reps}` : e.sets ? ` ${e.sets} sets` : "";
     return `${esc(e.name)}${sr}${e.weight ? ` @ ${e.weight} lb` : ""}`;
   }).join(", ");
 }
 
 async function loadWorkoutsTab() {
+  return loadHistory();
+}
+async function _legacyWorkoutList() {
   if (!$("w-date").value) $("w-date").value = iso(new Date(Date.now() - new Date().getTimezoneOffset() * 6e4));
   if (!$("exerciseRows").children.length) exerciseRow();
   const { workouts } = await api("/api/workouts");
@@ -439,7 +444,7 @@ $("workoutForm").onsubmit = async (e) => {
       notes: $("w-notes").value.trim(), exercises }) });
     toast("Workout saved");
     $("w-type").value = ""; $("w-duration").value = ""; $("w-notes").value = ""; $("exerciseRows").innerHTML = ""; exerciseRow();
-    loadWorkoutsTab();
+    loadHistory();
   } catch (err) { toast(err.message); }
   finally { $("w-save").disabled = false; }
 };
@@ -479,7 +484,7 @@ async function renderCalendar() {
       ${stats ? `<p>${stats}</p>` : ""}
       ${ws.map((w) => `<div class="workout-item"><div class="workout-main"><div class="workout-title">${esc(w.type)}</div>
         <div class="workout-meta">${describeWorkout(w)}</div>${w.exercises?.length ? `<div class="workout-ex">${exerciseText(w)}</div>` : ""}</div></div>`).join("")
-        || `<p>No workouts logged. <a class="link" href="#/health/workouts">Log one →</a></p>`}`;
+        || `<p>No workouts logged. <a class="link" href="#/health/planner">Plan one →</a></p>`}`;
     $("calDetail").classList.remove("hidden");
   }));
 }
@@ -793,6 +798,465 @@ $("eduImportFile").onchange = async () => {
     toast(`Imported ${r.imported} courses`); render();
   } catch (e) { toast(e instanceof SyntaxError ? "That file isn't valid JSON" : e.message); }
 };
+
+// ---------- Training: planner, live session, history ----------
+const DAYS = [["mon", "Mon"], ["tue", "Tue"], ["wed", "Wed"], ["thu", "Thu"], ["fri", "Fri"], ["sat", "Sat"], ["sun", "Sun"]];
+const COMMON_WORKOUTS = [["Push", "strength"], ["Pull", "strength"], ["Legs", "strength"], ["Upper", "strength"], ["Lower", "strength"],
+  ["Full Body", "strength"], ["Core/Yoga", "strength"], ["Run", "cardio"], ["Bike", "cardio"], ["Swim", "cardio"], ["Basketball", "cardio"], ["Cardio", "cardio"]];
+const UNIT_LABEL = { lb: "lb", plates: "plates/side", pin: "pin", plates_side: "lb plates/side" };
+const LIB = {
+  Chest: { Barbell: ["Flat Bench Press", "Incline Bench Press", "Decline Bench Press", "Close-Grip Bench Press"], Dumbbell: ["DB Flat Press", "Incline DB Press", "DB Flat Flyes", "Incline DB Flyes"], Cable: ["Low to High Cable Flyes", "High to Low Cable Flyes", "Cable Crossover"], Machine: ["Chest Press Machine", "Pec Deck"], Bodyweight: ["Push Ups", "Dips"] },
+  Back: { Barbell: ["Deadlift", "Barbell Row", "Smith Machine Rows"], Dumbbell: ["Single-Arm DB Row", "DB Chest-Supported Row"], Cable: ["Mid Grip Lat Pulldowns", "Wide Grip Lat Pulldowns", "Close Grip Lat Pulldowns", "Single-Arm Lat Pulldowns", "Mid-Grip Seated Cable Row", "Close-Grip Seated Cable Row", "Straight Arm Pulldowns", "Face Pull"], Machine: ["Low to High Row Machine", "Assisted Pull Ups"], Bodyweight: ["Pull Ups", "Chin Ups"] },
+  Shoulders: { Barbell: ["Overhead Press"], Dumbbell: ["DB Shoulder Press", "DB Lateral Raises", "Seated DB Lateral Raises", "Rear Delt Flyes", "Front Raises"], Cable: ["Cable Lateral Raises"], Machine: ["Shoulder Press Machine"] },
+  Arms: { Barbell: ["Barbell Curls", "Skullcrushers"], Dumbbell: ["DB Curls", "Seated DB Curls", "Incline DB Curls", "Alternating DB Hammer Curls", "Seated Hammer Curls", "DB Skullcrushers", "Overhead Tricep Extensions"], Cable: ["Cable Curls", "Tricep Pushdowns", "Single-Arm Tricep Pushdowns"], Machine: ["Preacher Curls", "Single-Arm Preacher Curls", "Assisted Dips"], Bodyweight: ["Bench Dips"] },
+  Legs: { Barbell: ["Back Squat", "Front Squat", "Romanian Deadlift", "Hip Thrust"], Machine: ["Smith Machine Squats", "Smith Machine Romanian Deadlift", "Leg Press", "Leg Extensions", "Single-Leg Leg Extensions", "Seated Leg Curls", "Lying Leg Curls", "Calf Raises", "Hip Abductor"], Dumbbell: ["DB Romanian Deadlift", "DB Goblet Squats", "DB Split Squats", "Bulgarian Split Squats", "Step Ups"], Bodyweight: ["Bodyweight Lunges", "Walking Lunges"] },
+  Core: { Bodyweight: ["Plank", "Hanging Leg Raises", "Crunches", "Russian Twists", "Dead Bug"], Cable: ["Cable Crunch", "Torso Rotation"], Other: ["Ab Wheel", "Yoga Flow"] },
+  Cardio: { Other: ["Run", "Bike", "Swim", "Row Erg", "Stair Climber", "Basketball", "Walk"] },
+};
+const MUSCLES = Object.keys(LIB);
+const EQUIP = ["Barbell", "Dumbbell", "Cable", "Machine", "Bodyweight", "Other"];
+const uid = () => Math.random().toString(36).slice(2, 12);
+let tr = null;                 // GET /api/training
+let planWeek = 1;
+let openWorkouts = new Set();  // expanded workout cards
+let saveTimer = null;
+let sortables = [];
+let session = null;            // live session draft
+let sessTick = null, restTick = null;
+let pickerCtx = null;          // where picked exercises go
+let ccMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+let historyData = null, historyDay = null;
+
+const fmtW = (w, unit) => (w == null ? "" : `${+w % 1 ? (+w).toFixed(1) : +w}${unit === "lb" || !unit ? " lb" : unit === "pin" ? " pin" : unit === "plates" ? " pl" : " lb/side"}`);
+const fmtDur = (sec) => { if (sec == null) return null; const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60); return h ? `${h}h ${m}m` : `${m}m`; };
+const roundTo = (x, step) => Math.round(x / step) * step;
+function allExerciseNames() {
+  const names = new Set();
+  Object.values(LIB).forEach((g) => Object.values(g).forEach((l) => l.forEach((n) => names.add(n))));
+  (tr?.state?.custom_exercises || []).forEach((c) => names.add(c.name));
+  (tr?.template?.weeks || []).forEach((wk) => [...Object.values(wk.days).flat(), ...wk.tray].forEach((w) => w.exercises.forEach((e) => names.add(e.name))));
+  return names;
+}
+function muscleOf(name) {
+  for (const [m, g] of Object.entries(LIB)) for (const [eq, l] of Object.entries(g)) if (l.includes(name)) return [m, eq];
+  const c = (tr?.state?.custom_exercises || []).find((x) => x.name === name);
+  return c ? [c.muscle, c.equipment] : ["Other", "Other"];
+}
+function targetWeight(e) {
+  const max = e.max_lift ? tr?.state?.maxes?.[e.max_lift] : null;
+  return e.pct_of_max && max ? roundTo((e.pct_of_max / 100) * max, 5) : null;
+}
+
+async function loadWeekPlan() {
+  tr = await api("/api/training");
+  if (!tr.template?.weeks?.length) tr.template = { weeks: [{ week: 1, days: Object.fromEntries(DAYS.map(([k]) => [k, []])), tray: [] }] };
+  planWeek = Math.min(planWeek || tr.current_week, tr.template.weeks.length);
+  if (!renderWeekPlan.didInit) { planWeek = tr.current_week; renderWeekPlan.didInit = true; }
+  $("maxBench").value = tr.state?.maxes?.bench ?? "";
+  $("maxSquat").value = tr.state?.maxes?.squat ?? "";
+  $("resumeBanner").classList.toggle("hidden", !loadDraft());
+  renderWeekPlan();
+}
+
+function renderWeekPlan() {
+  const T = tr.template, wk = T.weeks[planWeek - 1];
+  $("planProgram").textContent = `${tr.state?.program_name || "Your plan"} · current week ${tr.current_week} of ${T.weeks.length}`;
+  $("planWeeks").innerHTML = T.weeks.map((w) => `<button class="week-tab ${w.week === planWeek ? "active" : ""}" data-week="${w.week}">Week ${w.week}${w.week === tr.current_week ? '<i class="now-dot"></i>' : ""}</button>`).join("");
+  const todayW = wk.days[tr.weekday] || [];
+  $("startToday").disabled = !(planWeek === tr.current_week && todayW.length);
+  $("startToday").textContent = todayW.length && planWeek === tr.current_week ? `Start ${todayW[0].name}` : "Nothing planned today";
+  const card = (w, where) => {
+    const open = openWorkouts.has(w.id);
+    return `<div class="w-card ${w.kind === "cardio" ? "is-cardio" : ""}" data-wid="${w.id}">
+      <div class="w-card-head">
+        <span class="drag" title="Drag to move">⋮⋮</span>
+        <button class="w-name" data-toggle="${w.id}">${esc(w.name)}</button>
+        <span class="w-count">${w.kind === "cardio" ? "Cardio" : `${w.exercises.length} ex`}</span>
+      </div>
+      ${open ? `<div class="w-ex-list" data-exlist="${w.id}">
+        ${w.exercises.map((e) => `<div class="w-ex" data-eid="${e.id}"><span class="drag">⋮⋮</span>
+          <span class="w-ex-name">${esc(e.name)}<small>${[e.sets && `${e.sets}×${e.reps || "—"}`, e.pct_of_max && `${e.pct_of_max}% max${targetWeight(e) ? ` → ${targetWeight(e)} lb` : ""}`, e.unit !== "lb" && UNIT_LABEL[e.unit]].filter(Boolean).join(" · ")}</small></span>
+          <button class="icon-btn sm" data-delex="${w.id}:${e.id}" aria-label="Remove exercise">×</button></div>`).join("")}
+        <div class="w-actions">
+          <button class="text-btn accent" data-addex="${w.id}">+ Exercises</button>
+          <button class="text-btn" data-rename="${w.id}">Rename</button>
+          <button class="text-btn danger" data-delw="${w.id}">Delete</button>
+        </div>
+      </div>` : ""}
+      ${where !== "tray" ? `<button class="btn btn-secondary btn-sm w-start" data-start="${w.id}">Start</button>` : ""}
+    </div>`;
+  };
+  const isToday = (k) => planWeek === tr.current_week && k === tr.weekday;
+  $("planBoard").innerHTML = DAYS.map(([k, label]) => `
+    <div class="day-col ${isToday(k) ? "today" : ""}">
+      <div class="day-head"><span>${label}</span>${isToday(k) ? '<span class="pill pill-on_track">Today</span>' : ""}</div>
+      <div class="day-drop" data-day="${k}">${(wk.days[k] || []).map((w) => card(w, k)).join("")}</div>
+      <button class="add-workout" data-addw="${k}">+ Add workout</button>
+    </div>`).join("");
+  $("planTray").innerHTML = `<div class="day-head"><span>Unscheduled${wk.tray.some((w) => w.program_day) ? " · program days to place" : ""}</span><span class="tag">${wk.tray.length}</span></div>
+    <div class="day-drop tray-drop" data-day="tray">${wk.tray.map((w) => card(w, "tray")).join("") || '<p class="hint">Drag a workout here to park it.</p>'}</div>`;
+  bindPlanner();
+}
+
+function findWorkout(id) {
+  const wk = tr.template.weeks[planWeek - 1];
+  for (const [k, list] of [...Object.entries(wk.days), ["tray", wk.tray]]) {
+    const i = list.findIndex((w) => w.id === id);
+    if (i >= 0) return { list, i, w: list[i], day: k };
+  }
+  return null;
+}
+
+function bindPlanner() {
+  sortables.forEach((s) => s.destroy()); sortables = [];
+  const wk = tr.template.weeks[planWeek - 1];
+  const listFor = (key) => (key === "tray" ? wk.tray : wk.days[key]);
+  $$(".day-drop").forEach((el) => sortables.push(Sortable.create(el, {
+    group: "workouts", handle: ".w-card-head", draggable: ".w-card", animation: 160, ghostClass: "drag-ghost", filter: ".hint, button.w-name", preventOnFilter: false,
+    onEnd: (ev) => {
+      const from = listFor(ev.from.dataset.day), to = listFor(ev.to.dataset.day);
+      const [moved] = from.splice(ev.oldIndex, 1); to.splice(ev.newIndex, 0, moved);
+      renderWeekPlan(); queueSave();
+    },
+  })));
+  $$("[data-exlist]").forEach((el) => sortables.push(Sortable.create(el, {
+    handle: ".drag", draggable: ".w-ex", animation: 140,
+    onEnd: (ev) => { const f = findWorkout(el.dataset.exlist); const [m] = f.w.exercises.splice(ev.oldIndex, 1); f.w.exercises.splice(ev.newIndex, 0, m); queueSave(); },
+  })));
+  $$("[data-week]").forEach((b) => (b.onclick = () => { planWeek = +b.dataset.week; renderWeekPlan(); }));
+  $$("[data-toggle]").forEach((b) => (b.onclick = () => { const id = b.dataset.toggle; openWorkouts.has(id) ? openWorkouts.delete(id) : openWorkouts.add(id); renderWeekPlan(); }));
+  $$("[data-delex]").forEach((b) => (b.onclick = () => { const [wid, eid] = b.dataset.delex.split(":"); const f = findWorkout(wid); f.w.exercises = f.w.exercises.filter((e) => e.id !== eid); renderWeekPlan(); queueSave(); }));
+  $$("[data-delw]").forEach((b) => (b.onclick = () => { const f = findWorkout(b.dataset.delw); if (confirm(`Delete ${f.w.name}?`)) { f.list.splice(f.i, 1); renderWeekPlan(); queueSave(); } }));
+  $$("[data-rename]").forEach((b) => (b.onclick = () => { const f = findWorkout(b.dataset.rename); const n = prompt("Workout name", f.w.name); if (n?.trim()) { f.w.name = n.trim().slice(0, 60); renderWeekPlan(); queueSave(); } }));
+  $$("[data-addex]").forEach((b) => (b.onclick = () => openExercisePicker({ type: "template", wid: b.dataset.addex })));
+  $$("[data-addw]").forEach((b) => (b.onclick = () => openWorkoutPicker(b.dataset.addw)));
+  $$("[data-start]").forEach((b) => (b.onclick = () => startSession(findWorkout(b.dataset.start).w)));
+}
+
+function queueSave() {
+  $("planSaved").textContent = "Saving…";
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    try { await api("/api/training/template", { method: "PUT", body: JSON.stringify(tr.template) }); $("planSaved").textContent = "Saved"; }
+    catch (e) { $("planSaved").textContent = ""; toast(e.message); }
+  }, 600);
+}
+
+$("copyLayout").onclick = () => {
+  if (!confirm("Place the same program days on the same weekdays in every week?")) return;
+  const src = tr.template.weeks[planWeek - 1];
+  const where = {};   // program_day -> [weekday, order]
+  DAYS.forEach(([k]) => (src.days[k] || []).forEach((w, i) => w.program_day && (where[w.program_day] = [k, i])));
+  tr.template.weeks.forEach((wk) => {
+    if (wk === src) return;
+    const pool = [...wk.tray, ...Object.values(wk.days).flat()];
+    wk.days = Object.fromEntries(DAYS.map(([k]) => [k, []])); wk.tray = [];
+    pool.forEach((w) => { const t = where[w.program_day]; t ? wk.days[t[0]].push(w) : wk.tray.push(w); });
+    // carry over custom (non-program) workouts from the source week, e.g. Basketball
+    DAYS.forEach(([k]) => (src.days[k] || []).filter((w) => !w.program_day).forEach((w) => wk.days[k].push({ ...structuredClone(w), id: uid() })));
+  });
+  toast("Layout copied to every week"); queueSave();
+};
+const saveMaxes = async () => {
+  try {
+    const r = await api("/api/training/state", { method: "PUT", body: JSON.stringify({ maxes: { bench: $("maxBench").value, squat: $("maxSquat").value } }) });
+    tr.state = r.state; renderWeekPlan();
+  } catch (e) { toast(e.message); }
+};
+$("maxBench").onchange = saveMaxes; $("maxSquat").onchange = saveMaxes;
+$("startToday").onclick = () => { const w = tr.template.weeks[tr.current_week - 1].days[tr.weekday]?.[0]; if (w) startSession(w); };
+
+// Workout picker
+function openWorkoutPicker(day) {
+  pickerCtx = { day };
+  $("wpDay").textContent = DAYS.find(([k]) => k === day)[1];
+  $("wpCommon").innerHTML = COMMON_WORKOUTS.map(([n, kind]) => `<button type="button" class="pick" data-pick="${n}" data-kind="${kind}">${n}</button>`).join("");
+  const wk = tr.template.weeks[planWeek - 1];
+  const progs = [...wk.tray];
+  $("wpProgramWrap").classList.toggle("hidden", !progs.length);
+  $("wpProgram").innerHTML = progs.map((w) => `<button type="button" class="pick" data-fromtray="${w.id}">${esc(w.name)}${w.program_day ? ` · Day ${w.program_day}` : ""}</button>`).join("");
+  $("wpCustom").value = ""; $("wpCardio").checked = false;
+  $$("#wpCommon [data-pick]").forEach((b) => (b.onclick = () => addWorkout(day, b.dataset.pick, b.dataset.kind)));
+  $$("#wpProgram [data-fromtray]").forEach((b) => (b.onclick = () => {
+    const i = wk.tray.findIndex((w) => w.id === b.dataset.fromtray); const [w] = wk.tray.splice(i, 1);
+    wk.days[day].push(w); $("workoutPicker").close(); renderWeekPlan(); queueSave();
+  }));
+  $("workoutPicker").showModal();
+}
+function addWorkout(day, name, kind) {
+  const w = { id: uid(), name, kind, exercises: [] };
+  tr.template.weeks[planWeek - 1].days[day].push(w);
+  if (kind === "strength") openWorkouts.add(w.id);
+  $("workoutPicker").close(); renderWeekPlan(); queueSave();
+  if (kind === "strength") openExercisePicker({ type: "template", wid: w.id });
+}
+$("wpCancel").onclick = () => $("workoutPicker").close();
+$("workoutPickerForm").onsubmit = (e) => { e.preventDefault(); const n = $("wpCustom").value.trim(); if (!n) return toast("Type a name or pick one above"); addWorkout(pickerCtx.day, n, $("wpCardio").checked ? "cardio" : "strength"); };
+
+// Exercise library picker
+let epSelected = new Set(), epMuscle = "All";
+function openExercisePicker(ctx) {
+  pickerCtx = ctx; epSelected = new Set(); epMuscle = "All"; $("epSearch").value = "";
+  $("epNewMuscle").innerHTML = MUSCLES.map((m) => `<option>${m}</option>`).join("");
+  $("epNewEquip").innerHTML = EQUIP.map((m) => `<option>${m}</option>`).join("");
+  renderExercisePicker(); $("exercisePicker").showModal(); setTimeout(() => $("epSearch").focus(), 50);
+}
+function renderExercisePicker() {
+  const q = $("epSearch").value.toLowerCase();
+  $("epFilters").innerHTML = ["All", ...MUSCLES, "Other"].map((m) => `<button type="button" class="chip ${m === epMuscle ? "chip-on" : ""}" data-m="${m}">${m}</button>`).join("");
+  const groups = {};
+  [...allExerciseNames()].sort().forEach((n) => {
+    const [m, eq] = muscleOf(n);
+    if (epMuscle !== "All" && m !== epMuscle) return;
+    if (q && !n.toLowerCase().includes(q)) return;
+    (groups[m] ||= []).push([n, eq]);
+  });
+  $("epList").innerHTML = Object.entries(groups).map(([m, list]) => `<p class="pick-label">${m}</p>` + list.map(([n, eq]) =>
+    `<label class="ep-row"><input type="checkbox" value="${esc(n)}" ${epSelected.has(n) ? "checked" : ""} /><span>${esc(n)}</span><small>${eq}</small></label>`).join("")).join("") || `<p class="hint">No matches. Create it below.</p>`;
+  $$("#epFilters [data-m]").forEach((b) => (b.onclick = () => { epMuscle = b.dataset.m; renderExercisePicker(); }));
+  $$("#epList input").forEach((c) => (c.onchange = () => { c.checked ? epSelected.add(c.value) : epSelected.delete(c.value); $("epCount").textContent = epSelected.size ? `${epSelected.size} selected` : ""; }));
+  $("epCount").textContent = epSelected.size ? `${epSelected.size} selected` : "";
+}
+$("epSearch").oninput = renderExercisePicker;
+$("epCancel").onclick = () => $("exercisePicker").close();
+$("epCreate").onclick = async () => {
+  const name = $("epNewName").value.trim(); if (!name) return toast("Name the exercise");
+  const custom = [...(tr.state?.custom_exercises || []), { name, muscle: $("epNewMuscle").value, equipment: $("epNewEquip").value }];
+  try { const r = await api("/api/training/state", { method: "PUT", body: JSON.stringify({ custom_exercises: custom }) }); tr.state = r.state; epSelected.add(name); $("epNewName").value = ""; renderExercisePicker(); }
+  catch (e) { toast(e.message); }
+};
+$("epAdd").onclick = () => {
+  const names = [...epSelected]; if (!names.length) return $("exercisePicker").close();
+  const unitFor = (n) => (/Leg Press/.test(n) ? "plates" : /Cable Flyes|Single-Arm Tricep Pushdowns/.test(n) ? "pin" : "lb");
+  if (pickerCtx.type === "template") {
+    const f = findWorkout(pickerCtx.wid);
+    names.forEach((n) => f.w.exercises.push({ id: uid(), name: n, unit: unitFor(n), rest_sec: tr.state?.default_rest_sec || 120, sets: 3, reps: null }));
+    openWorkouts.add(f.w.id); renderWeekPlan(); queueSave();
+  } else if (pickerCtx.type === "session") {
+    names.forEach((n) => session.exercises.push(newSessionExercise({ name: n, unit: unitFor(n), sets: 3 })));
+    renderSession(); saveDraft();
+  } else if (pickerCtx.type === "replace") {
+    const ex = session.exercises[pickerCtx.index]; Object.assign(ex, newSessionExercise({ name: names[0], unit: unitFor(names[0]), sets: ex.sets.length }));
+    renderSession(); saveDraft();
+  }
+  $("exercisePicker").close();
+};
+
+// Live session
+function newSessionExercise(e) {
+  const prev = tr?.last_sets?.[e.name.toLowerCase()];
+  const target = targetWeight(e);
+  const n = Math.max(e.sets || 3, 1);
+  return { name: e.name, unit: e.unit || prev?.unit || "lb", rest_sec: e.rest_sec || tr?.state?.default_rest_sec || 120,
+           reps_target: e.reps || null, pct: e.pct_of_max || null, target, notes: e.notes || null, note: "",
+           sets: Array.from({ length: n }, () => ({ weight: target ?? "", reps: "", done: false })) };
+}
+function startSession(w) {
+  if (loadDraft() && !confirm("A workout is already in progress. Discard it and start this one?")) return;
+  const now = new Date();
+  session = { name: w.name, type: w.name, kind: w.kind, started_at: now.toISOString(), date: iso(new Date(now - now.getTimezoneOffset() * 6e4)),
+              exercises: w.exercises.map(newSessionExercise), notes: "", rest: null };
+  saveDraft(); openSession();
+}
+function saveDraft() { try { localStorage.setItem("lt-session", JSON.stringify(session)); } catch {} }
+function loadDraft() { try { return JSON.parse(localStorage.getItem("lt-session") || "null"); } catch { return null; } }
+function clearDraft() { try { localStorage.removeItem("lt-session"); } catch {} }
+$("resumeSession").onclick = () => { session = loadDraft(); if (session) openSession(); };
+
+function openSession() {
+  $("session").classList.remove("hidden"); document.body.classList.add("no-scroll");
+  $("sessName").value = session.name;
+  const lower = /leg|lower|squat/i.test(session.name);
+  const wu = tr?.state?.warmups; const list = wu ? (lower ? wu.lower : wu.upper) : null;
+  $("sessWarmup").classList.toggle("hidden", !list?.length || session.kind === "cardio");
+  if (list) $("sessWarmupList").innerHTML = list.map((x, i) => `<label class="check"><input type="checkbox" data-wu="${i}" /> ${esc(x)}</label>`).join("");
+  $("sessNotes").value = session.notes || "";
+  clearInterval(sessTick); sessTick = setInterval(tickClock, 1000); tickClock();
+  renderSession();
+}
+function tickClock() {
+  if (!session) return;
+  const s = Math.floor((Date.now() - new Date(session.started_at)) / 1000);
+  $("sessClock").textContent = `${Math.floor(s / 3600) ? Math.floor(s / 3600) + ":" : ""}${String(Math.floor((s % 3600) / 60)).padStart(Math.floor(s / 3600) ? 2 : 1, "0")}:${String(s % 60).padStart(2, "0")}`;
+  $("sessMeta").textContent = new Date(session.started_at).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+  tickRest();
+}
+function tickRest() {
+  const r = session?.rest; const el = r && document.querySelector(`[data-rest="${r.ex}:${r.set}"]`);
+  if (!r) return;
+  const left = Math.max(0, Math.round((r.until - Date.now()) / 1000));
+  if (el) { el.querySelector("span").textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`; el.querySelector("i").style.width = `${(left / r.total) * 100}%`; }
+  if (left === 0) { session.rest = null; saveDraft(); try { navigator.vibrate?.([200, 100, 200]); } catch {} toast("Rest over. Next set"); renderSession(); }
+}
+function prevText(ex, i) {
+  const p = tr?.last_sets?.[ex.name.toLowerCase()]?.sets?.[i];
+  if (!p || (p.weight == null && p.reps == null)) return "—";
+  const u = p.unit || tr.last_sets[ex.name.toLowerCase()].unit;
+  return p.weight == null ? `${p.reps} reps` : `${fmtW(p.weight, u)} × ${p.reps ?? "?"}`;
+}
+function renderSession() {
+  $("sessExercises").innerHTML = session.exercises.map((ex, ei) => `
+    <div class="s-ex">
+      <div class="s-ex-head">
+        <button class="s-ex-name" data-progress="${esc(ex.name)}">${esc(ex.name)}</button>
+        <button class="icon-btn" data-exmenu="${ei}" aria-label="Exercise options">⋯</button>
+      </div>
+      <div class="s-ex-sub">${[ex.reps_target && `${ex.sets.length} × ${ex.reps_target}`, ex.pct && `${ex.pct}% of max${ex.target ? ` → ${ex.target} lb` : " (set a max)"}`, ex.notes, `Rest ${fmtDur(ex.rest_sec) || "0m"}`, ex.unit !== "lb" && UNIT_LABEL[ex.unit]].filter(Boolean).map(esc).join(" · ")}</div>
+      <div class="s-menu hidden" id="exmenu-${ei}">
+        <button class="text-btn" data-act="replace:${ei}">Replace</button><button class="text-btn" data-act="note:${ei}">Note</button>
+        <button class="text-btn" data-act="rest:${ei}">Rest time</button><button class="text-btn" data-act="unit:${ei}">Unit</button>
+        <button class="text-btn danger" data-act="remove:${ei}">Remove</button>
+      </div>
+      ${ex.note ? `<p class="s-note">${esc(ex.note)}</p>` : ""}
+      <div class="s-table">
+        <div class="s-row s-th"><span>Set</span><span>Previous</span><span>${ex.unit === "lb" ? "lb" : UNIT_LABEL[ex.unit]}</span><span>Reps</span><span>✓</span></div>
+        ${ex.sets.map((s, si) => `
+          <div class="s-row ${s.done ? "done" : ""}">
+            <span class="set-no">${si + 1}</span>
+            <span class="prev">${prevText(ex, si)}</span>
+            <input class="s-in" inputmode="decimal" type="number" step="2.5" value="${s.weight ?? ""}" data-w="${ei}:${si}" placeholder="${ex.target ?? ""}" />
+            <input class="s-in" inputmode="numeric" type="number" min="0" max="500" value="${s.reps ?? ""}" data-r="${ei}:${si}" placeholder="${ex.reps_target ?? ""}" />
+            <button class="s-check ${s.done ? "on" : ""}" data-done="${ei}:${si}" aria-label="Mark set done">✓</button>
+          </div>
+          ${session.rest && session.rest.ex === ei && session.rest.set === si ? `<div class="rest-bar" data-rest="${ei}:${si}"><i></i><span></span><button class="text-btn" data-skiprest>Skip</button></div>` : ""}`).join("")}
+      </div>
+      <button class="add-set" data-addset="${ei}">+ Add Set (${fmtDur(ex.rest_sec)} rest)</button>
+    </div>`).join("") || `<p class="hint">${session.kind === "cardio" ? "Cardio session. The timer is running; add notes below or add exercises." : "No exercises yet. Add some below."}</p>`;
+  tickRest();
+  const upd = (sel, key) => $$(sel).forEach((inp) => (inp.oninput = () => { const [e, s] = inp.dataset[key].split(":").map(Number); session.exercises[e].sets[s][key === "w" ? "weight" : "reps"] = inp.value; saveDraft(); }));
+  upd("[data-w]", "w"); upd("[data-r]", "r");
+  $$("[data-done]").forEach((b) => (b.onclick = () => {
+    const [e, s] = b.dataset.done.split(":").map(Number); const set = session.exercises[e].sets[s];
+    if (!set.done && set.weight === "" && session.exercises[e].target) set.weight = session.exercises[e].target;
+    set.done = !set.done;
+    const rest = session.exercises[e].rest_sec;
+    session.rest = set.done && rest ? { ex: e, set: s, until: Date.now() + rest * 1000, total: rest } : (session.rest?.ex === e && session.rest?.set === s ? null : session.rest);
+    saveDraft(); renderSession();
+  }));
+  $$("[data-addset]").forEach((b) => (b.onclick = () => { const ex = session.exercises[+b.dataset.addset]; const last = ex.sets[ex.sets.length - 1]; ex.sets.push({ weight: last?.weight ?? "", reps: "", done: false }); saveDraft(); renderSession(); }));
+  $$("[data-skiprest]").forEach((b) => (b.onclick = () => { session.rest = null; saveDraft(); renderSession(); }));
+  $$("[data-exmenu]").forEach((b) => (b.onclick = () => $(`exmenu-${b.dataset.exmenu}`).classList.toggle("hidden")));
+  $$("[data-progress]").forEach((b) => (b.onclick = () => openProgress(b.dataset.progress)));
+  $$("[data-act]").forEach((b) => (b.onclick = () => {
+    const [act, i] = b.dataset.act.split(":"); const ex = session.exercises[+i];
+    if (act === "remove" && confirm(`Remove ${ex.name}?`)) session.exercises.splice(+i, 1);
+    if (act === "note") { const n = prompt("Note for this exercise", ex.note || ""); if (n != null) ex.note = n.slice(0, 300); }
+    if (act === "rest") { const n = prompt("Rest time in seconds", ex.rest_sec); if (n != null && !isNaN(+n)) ex.rest_sec = Math.min(Math.max(+n, 0), 900); }
+    if (act === "unit") { const order = ["lb", "plates", "pin"]; ex.unit = order[(order.indexOf(ex.unit) + 1) % order.length]; toast(`Unit: ${UNIT_LABEL[ex.unit]}`); }
+    if (act === "replace") return openExercisePicker({ type: "replace", index: +i });
+    saveDraft(); renderSession();
+  }));
+}
+$("sessName").oninput = () => { session.name = $("sessName").value; saveDraft(); };
+$("sessNotes").oninput = () => { session.notes = $("sessNotes").value; saveDraft(); };
+$("sessAddEx").onclick = () => openExercisePicker({ type: "session" });
+function closeSession() { clearInterval(sessTick); session = null; clearDraft(); $("session").classList.add("hidden"); document.body.classList.remove("no-scroll"); }
+$("sessCancel").onclick = () => { if (confirm("Discard this workout? Nothing will be saved.")) { closeSession(); render(); } };
+$("sessFinish").onclick = async () => {
+  const unchecked = session.exercises.reduce((a, e) => a + e.sets.filter((s) => !s.done && (s.weight !== "" || s.reps !== "")).length, 0);
+  if (unchecked && !confirm(`${unchecked} set${unchecked > 1 ? "s have" : " has"} values but no check. Save them anyway?`)) return;
+  const now = new Date();
+  const body = {
+    date: session.date, name: session.name.trim() || "Workout", type: session.type, started_at: session.started_at, finished_at: now.toISOString(),
+    duration_sec: Math.round((now - new Date(session.started_at)) / 1000), notes: session.notes,
+    exercises: session.exercises.map((e) => ({ name: e.name, unit: e.unit, rest_sec: e.rest_sec, note: e.note || null,
+      sets: e.sets.filter((s) => s.done || s.weight !== "" || s.reps !== "").map((s) => ({ weight: s.weight === "" ? null : +s.weight, reps: s.reps === "" ? null : +s.reps, done: s.done })) }))
+      .filter((e) => e.sets.length || session.kind === "cardio"),
+  };
+  $("sessFinish").disabled = true;
+  try {
+    const r = await api("/api/training/sessions", { method: "POST", body: JSON.stringify(body) });
+    closeSession(); toast(r.whoop ? `Saved · merged with WHOOP (strain ${r.whoop.strain ?? "—"})` : "Workout saved");
+    location.hash = "#/health/history";
+  } catch (e) { toast(e.message); }
+  finally { $("sessFinish").disabled = false; }
+};
+
+// History + check calendar
+async function loadHistory() {
+  const [h, wk] = await Promise.all([api("/api/training/history"), api(`/api/workouts?start=${iso(new Date(Date.now() - 400 * 864e5))}&end=${iso(new Date(Date.now() + 864e5))}`)]);
+  historyData = { sessions: h.sessions, other: wk.workouts.filter((w) => w.source !== "session"), days: new Set(h.workout_days) };
+  if (!$("w-date").value) $("w-date").value = iso(new Date(Date.now() - new Date().getTimezoneOffset() * 6e4));
+  if (!$("exerciseRows").children.length) exerciseRow();
+  renderCheckCal(); renderHistory();
+}
+function renderCheckCal() {
+  const y = ccMonth.getFullYear(), m = ccMonth.getMonth(), first = new Date(y, m, 1), last = new Date(y, m + 1, 0);
+  const ds = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  $("checkCalTitle").textContent = first.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  let html = ["M", "T", "W", "T", "F", "S", "S"].map((d) => `<span class="cc-dow">${d}</span>`).join("");
+  for (let i = 0; i < (first.getDay() + 6) % 7; i++) html += "<span></span>";
+  let count = 0; const todayStr = ds(new Date());
+  for (let d = 1; d <= last.getDate(); d++) {
+    const key = ds(new Date(y, m, d)), on = historyData.days.has(key); if (on) count++;
+    html += `<button class="cc-day ${on ? "on" : ""} ${key === todayStr ? "today" : ""} ${key === historyDay ? "sel" : ""}" data-ccday="${key}" ${on ? "" : "disabled"}>${d}${on ? '<i aria-hidden="true">✓</i>' : ""}</button>`;
+  }
+  $("checkCal").innerHTML = html;
+  $("checkCalCount").textContent = `${count} workout day${count === 1 ? "" : "s"} this month`;
+  $$("[data-ccday]").forEach((b) => (b.onclick = () => { historyDay = historyDay === b.dataset.ccday ? null : b.dataset.ccday; renderCheckCal(); renderHistory(); }));
+}
+$("ccPrev").onclick = () => { ccMonth = new Date(ccMonth.getFullYear(), ccMonth.getMonth() - 1, 1); renderCheckCal(); };
+$("ccNext").onclick = () => { ccMonth = new Date(ccMonth.getFullYear(), ccMonth.getMonth() + 1, 1); renderCheckCal(); };
+$("clearFilter").onclick = () => { historyDay = null; renderCheckCal(); renderHistory(); };
+function renderHistory() {
+  const items = [...historyData.sessions.map((s) => ({ ...s, _k: "s" })), ...historyData.other.map((w) => ({ ...w, _k: "o" }))]
+    .filter((x) => !historyDay || x.date === historyDay)
+    .sort((a, b) => (b.date + (b.started_at || "")).localeCompare(a.date + (a.started_at || ""))).slice(0, 60);
+  $("historyFilter").classList.toggle("hidden", !historyDay);
+  if (historyDay) $("historyFilterText").textContent = new Date(historyDay + "T00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  const longDate = (d) => new Date(d + "T00:00").toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric", year: "numeric" });
+  $("historyList").innerHTML = items.map((x) => x._k === "s" ? `
+    <div class="card h-card">
+      <div class="h-head"><div><h3>${esc(x.name)}</h3><p class="h-date">${longDate(x.date)}${x.imported ? " · imported" : ""}</p></div>
+        <button class="text-btn danger" data-delsess="${x.id}">Delete</button></div>
+      <div class="h-stats">${[fmtDur(x.duration_sec) && `<span><b>${fmtDur(x.duration_sec)}</b> duration</span>`, `<span><b>${x.volume.toLocaleString()}</b> lb volume</span>`, `<span><b>${x.prs}</b> PR${x.prs === 1 ? "" : "s"}</span>`, x.whoop && `<span><b>${x.whoop.strain ?? "—"}</b> strain</span>`, x.whoop?.avg_hr && `<span><b>${x.whoop.avg_hr}</b> avg HR</span>`].filter(Boolean).join("")}</div>
+      <div class="h-table"><div class="h-row h-th"><span>Exercise</span><span>Best set</span></div>
+        ${x.summary.map((r) => `<button class="h-row" data-progress="${esc(r.name)}"><span>${r.sets} × ${esc(r.name)}${r.pr ? ' <em class="pr">PR</em>' : ""}</span><span>${r.best ? (r.best.weight == null ? `${r.best.reps ?? "—"} reps` : `${fmtW(r.best.weight, r.best.unit)} × ${r.best.reps ?? "?"}`) : "—"}</span></button>`).join("")}</div>
+    </div>` : `
+    <div class="card h-card h-simple"><div class="h-head"><div><h3>${esc(x.type)}${x.source === "whoop" ? '<span class="source-tag">WHOOP</span>' : ""}</h3><p class="h-date">${longDate(x.date)}</p></div>
+      ${x.source === "manual" ? `<button class="text-btn danger" data-del="${esc(x.id)}">Delete</button>` : ""}</div>
+      <p class="h-date">${describeWorkout(x)}</p>${x.exercises?.length ? `<p class="hint">${exerciseText(x)}</p>` : ""}</div>`).join("")
+    || `<div class="card empty-state"><h3>No workouts yet</h3><p>Start one from the Planner.</p></div>`;
+  $$("[data-delsess]").forEach((b) => (b.onclick = async () => { if (!confirm("Delete this workout session?")) return; await api(`/api/training/sessions/${b.dataset.delsess}`, { method: "DELETE" }); toast("Session deleted"); loadHistory(); }));
+  $$("#historyList [data-del]").forEach((b) => (b.onclick = async () => { if (!confirm("Delete this workout?")) return; await api(`/api/workouts/${encodeURIComponent(b.dataset.del)}`, { method: "DELETE" }); toast("Workout deleted"); loadHistory(); }));
+  $$("#historyList [data-progress]").forEach((b) => (b.onclick = () => openProgress(b.dataset.progress)));
+}
+
+// Exercise progress
+async function openProgress(name) {
+  $("pgTitle").textContent = name; $("pgStats").innerHTML = ""; $("pgList").innerHTML = ""; $("progressDialog").showModal();
+  const { points } = await api(`/api/training/exercise?name=${encodeURIComponent(name)}`);
+  if (!points.length) { $("pgStats").innerHTML = `<p class="hint">No logged sets yet.</p>`; charts["chart-progress"]?.destroy(); return; }
+  const lbPts = points.filter((p) => p.unit === "lb");
+  const bestE = Math.max(...lbPts.map((p) => p.e1rm || 0)), bestW = Math.max(...points.map((p) => p.top_weight || 0));
+  $("pgStats").innerHTML = `<div><span class="kpi-label">Heaviest</span><strong>${fmtW(bestW, points[0].unit)}</strong></div>
+    ${bestE ? `<div><span class="kpi-label">Best est. 1RM</span><strong>${Math.round(bestE)} lb</strong></div>` : ""}
+    <div><span class="kpi-label">Sessions</span><strong>${points.length}</strong></div>`;
+  const useE = lbPts.length && bestE;
+  const multiYear = points[0].date.slice(0, 4) !== points[points.length - 1].date.slice(0, 4);
+  const lbl = (d) => (multiYear ? `${shortDate(d)} '${d.slice(2, 4)}` : shortDate(d));
+  drawChart("chart-progress", "line", points.map((p) => lbl(p.date)), points.map((p) => (useE ? p.e1rm : p.top_weight)),
+    { tip: (v) => (useE ? `${Math.round(v)} lb est. 1RM` : fmtW(v, points[0].unit)), tick: (v) => `${v}` },
+    { ds: { tension: 0, pointRadius: 3 } });
+  $("pgList").innerHTML = [...points].reverse().map((p) => `<div class="mini-row"><span>${lbl(p.date)}${p.pr ? ' <em class="pr">PR</em>' : ""}</span><span class="tag">top ${fmtW(p.top_weight, p.unit)}${p.volume ? ` · ${p.volume.toLocaleString()} lb vol` : ""}</span></div>`).join("");
+}
+$("pgClose").onclick = () => $("progressDialog").close();
+
+$("planImport").onchange = async (e) => {
+  const f = e.target.files[0]; e.target.value = "";
+  if (!f) return;
+  try {
+    const data = JSON.parse(await f.text());
+    if (!data.template || !Array.isArray(data.sessions)) throw new Error("Not a LifeTracker program file");
+    if (!confirm(`Import ${data.state?.program_name || "program"}: ${data.template.weeks?.length || 0} weeks, ${data.sessions.length} past sessions? This replaces your plan and any previously imported history.`)) return;
+    const r = await api("/api/training/import", { method: "POST", body: JSON.stringify(data) });
+    toast(`Imported ${r.imported_sessions ?? data.sessions.length} sessions`);
+    renderWeekPlan.didInit = false; loadWeekPlan();
+  } catch (err) { toast(err.message || "Import failed"); }
+};
+
+// Resume an unfinished workout after a reload
+if (loadDraft()) setTimeout(() => toast("You have a workout in progress. Resume it from Health → Planner."), 1500);
 
 // ---------- Wiring ----------
 $("signin").onclick = () => signInWithPopup(auth, new GoogleAuthProvider()).catch((e) => toast(e.message));

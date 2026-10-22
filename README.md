@@ -74,7 +74,13 @@ Model defaults to `claude-sonnet-5-5`; override with the `CLAUDE_MODEL` env var.
 
 ## 6. Health: workouts + WHOOP
 
-Workouts are logged in **Health → Workouts** and shown on **Health → Calendar**. WHOOP adds daily recovery,
+**Health → Planner** is a Mon–Sun board for a multi-week program (drag workouts and exercises, add from the
+library or custom, %-of-max targets). Starting a workout opens a live session with a workout clock, per-set
+check-offs and rest timers; **Finish** saves it to **Health → History** (cards, PRs, est. 1RM progress, check
+calendar), merges the matching WHOOP workout, and shows it on **Health → Calendar**. Load a program with
+**Planner → Import program file…** (JSON `{state, template, sessions}`; kept out of the repo).
+
+WHOOP adds daily recovery,
 HRV, resting heart rate, strain, sleep, and WHOOP-tracked workouts (API v2, OAuth with refresh tokens).
 
 1. Create an app at the WHOOP Developer Dashboard with redirect URL
@@ -110,6 +116,7 @@ Add a Cloud Scheduler job that calls `POST /api/sync` daily. Easiest path: add a
 - [ ] Net worth over time (cash + investments)
 - [x] "Ask my finances" AI chat (Claude)
 - [x] Health: workout log, calendar, WHOOP sync
+- [x] Health: workout planner, live sessions, history + PRs
 - [x] Education: GPA engine, degree audit, course planner
 - [ ] Education: weekly schedule, finals planner, Canvas feed
 - [ ] Assistant actions: recategorize, set budgets

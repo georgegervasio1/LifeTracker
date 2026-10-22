@@ -19,6 +19,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
   <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
 </head>
 <body>
@@ -215,7 +216,7 @@
             <div class="kpi"><span class="kpi-label">Recovery</span><span class="kpi-value" id="h-recovery">—</span><span class="kpi-sub" id="h-recovery-sub"></span></div>
             <div class="kpi"><span class="kpi-label">HRV</span><span class="kpi-value" id="h-hrv">—</span><span class="kpi-sub" id="h-hrv-sub"></span></div>
             <div class="kpi"><span class="kpi-label">Sleep</span><span class="kpi-value" id="h-sleep">—</span><span class="kpi-sub" id="h-sleep-sub"></span></div>
-            <a class="kpi kpi-link" href="#/health/workouts"><span class="kpi-label">Workouts this week</span><span class="kpi-value" id="h-workouts">—</span><span class="kpi-sub">Log a workout →</span></a>
+            <a class="kpi kpi-link" href="#/health/planner"><span class="kpi-label">Workouts this week</span><span class="kpi-value" id="h-workouts">—</span><span class="kpi-sub">Open planner →</span></a>
           </div>
           <div class="card empty-state hidden" id="whoopEmpty">
             <h3>Connect WHOOP to see recovery, strain and sleep</h3>
@@ -230,28 +231,66 @@
           </div>
         </div>
 
-        <!-- Workouts -->
-        <div class="panel wrap" data-panel="workouts">
-          <div class="grid-workouts">
-            <form class="card workout-form" id="workoutForm" autocomplete="off">
-              <h3>Log a workout</h3>
-              <div class="form-row">
-                <label>Date<input type="date" id="w-date" class="input" required /></label>
-                <label>Duration (min)<input type="number" id="w-duration" class="input" min="1" max="600" placeholder="60" /></label>
+        <!-- Planner -->
+        <div class="panel wrap" data-panel="planner">
+          <div class="plan-head">
+            <div>
+              <p class="eyebrow" id="planProgram">Program</p>
+              <div class="plan-weeks" id="planWeeks"></div>
+            </div>
+            <div class="plan-maxes">
+              <label>Bench max<input class="input" id="maxBench" type="number" step="2.5" placeholder="—" /></label>
+              <label>Squat max<input class="input" id="maxSquat" type="number" step="2.5" placeholder="—" /></label>
+            </div>
+            <button class="btn btn-primary" id="startToday">Start today's workout</button>
+          </div>
+          <div class="resume-banner hidden" id="resumeBanner">
+            <span>Workout in progress</span><button class="btn btn-primary btn-sm" id="resumeSession">Resume</button>
+          </div>
+          <div class="plan-board" id="planBoard"></div>
+          <div class="plan-tray" id="planTray"></div>
+          <div class="plan-foot">
+            <button class="text-btn" id="copyLayout">Copy this week's layout to every week</button>
+            <span class="hint" id="planSaved"></span>
+            <label class="text-btn" style="margin-left:auto;cursor:pointer">Import program file…<input type="file" id="planImport" accept=".json,application/json" hidden /></label>
+          </div>
+        </div>
+
+        <!-- History -->
+        <div class="panel wrap" data-panel="history">
+          <div class="history-grid">
+            <div class="card check-cal-card">
+              <div class="cal-head small">
+                <h3 id="checkCalTitle"></h3>
+                <div class="cal-nav">
+                  <button class="btn btn-secondary btn-sm" id="ccPrev" aria-label="Previous month">‹</button>
+                  <button class="btn btn-secondary btn-sm" id="ccNext" aria-label="Next month">›</button>
+                </div>
               </div>
-              <label>Type<input id="w-type" class="input" list="workoutTypes" placeholder="Strength, Run, Cycling…" required /></label>
-              <datalist id="workoutTypes">
-                <option>Strength</option><option>Run</option><option>Cycling</option><option>Swim</option><option>Walk</option>
-                <option>HIIT</option><option>Yoga</option><option>Pilates</option><option>Golf</option><option>Basketball</option><option>Tennis</option><option>Rowing</option>
-              </datalist>
-              <div class="exercise-head"><span>Exercises</span><button type="button" class="text-btn" id="addExercise">+ Add exercise</button></div>
-              <div id="exerciseRows"></div>
-              <label>Notes<textarea id="w-notes" class="input" rows="2" placeholder="How did it feel?"></textarea></label>
-              <button type="submit" class="btn btn-primary" id="w-save">Save workout</button>
-            </form>
-            <div class="card card-flush">
-              <div class="card-head padded"><h3>Recent workouts</h3><span class="card-meta">Last 60 days</span></div>
-              <div id="workoutList" class="workout-list"></div>
+              <div class="check-cal" id="checkCal"></div>
+              <p class="hint" id="checkCalCount"></p>
+            </div>
+            <div>
+              <div class="history-filter hidden" id="historyFilter"><span id="historyFilterText"></span><button class="text-btn" id="clearFilter">Show all</button></div>
+              <div id="historyList" class="history-list"></div>
+              <details class="card past-log">
+                <summary>Log a past workout without the timer</summary>
+                <form class="workout-form" id="workoutForm" autocomplete="off">
+                  <div class="form-row">
+                    <label>Date<input type="date" id="w-date" class="input" required /></label>
+                    <label>Duration (min)<input type="number" id="w-duration" class="input" min="1" max="600" placeholder="60" /></label>
+                  </div>
+                  <label>Type<input id="w-type" class="input" list="workoutTypes" placeholder="Strength, Run, Cycling…" required /></label>
+                  <datalist id="workoutTypes">
+                    <option>Strength</option><option>Run</option><option>Cycling</option><option>Swim</option><option>Walk</option>
+                    <option>HIIT</option><option>Yoga</option><option>Pilates</option><option>Golf</option><option>Basketball</option><option>Tennis</option><option>Rowing</option>
+                  </datalist>
+                  <div class="exercise-head"><span>Exercises</span><button type="button" class="text-btn" id="addExercise">+ Add exercise</button></div>
+                  <div id="exerciseRows"></div>
+                  <label>Notes<textarea id="w-notes" class="input" rows="2" placeholder="How did it feel?"></textarea></label>
+                  <button type="submit" class="btn btn-primary" id="w-save">Save workout</button>
+                </form>
+              </details>
             </div>
           </div>
         </div>
@@ -357,6 +396,70 @@
           <div class="board" id="plannerBoard"></div>
         </div>
       </section>
+
+      <!-- Live workout session -->
+      <section class="session hidden" id="session" aria-label="Workout in progress">
+        <div class="session-bar">
+          <span class="session-clock" id="sessClock">0:00</span>
+          <span style="flex:1"></span>
+          <button class="text-btn danger" id="sessCancel">Discard</button>
+          <button class="btn btn-finish" id="sessFinish">Finish</button>
+        </div>
+        <div class="session-body">
+          <input class="session-name" id="sessName" aria-label="Workout name" />
+          <p class="session-meta" id="sessMeta"></p>
+          <details class="warmup hidden" id="sessWarmup"><summary>Warm-up</summary><div id="sessWarmupList"></div></details>
+          <div id="sessExercises"></div>
+          <button class="btn btn-secondary session-add" id="sessAddEx">Add exercises</button>
+          <textarea class="input" id="sessNotes" rows="2" placeholder="Workout notes"></textarea>
+        </div>
+      </section>
+
+      <!-- Add workout picker -->
+      <dialog id="workoutPicker" class="dialog">
+        <form method="dialog" class="dialog-form" id="workoutPickerForm">
+          <h3>Add a workout to <span id="wpDay"></span></h3>
+          <div class="span-2 pick-grid" id="wpCommon"></div>
+          <div class="span-2 hidden" id="wpProgramWrap"><p class="pick-label">From your program (this week)</p><div class="pick-grid" id="wpProgram"></div></div>
+          <label class="span-2">Or a custom workout<input class="input" id="wpCustom" placeholder="e.g. Upper Body A" /></label>
+          <label class="check span-2"><input type="checkbox" id="wpCardio" /> Cardio (no sets)</label>
+          <div class="dialog-actions span-2"><span style="flex:1"></span>
+            <button type="button" class="btn btn-secondary" id="wpCancel">Cancel</button>
+            <button type="submit" class="btn btn-primary">Add custom</button></div>
+        </form>
+      </dialog>
+
+      <!-- Exercise library -->
+      <dialog id="exercisePicker" class="dialog dialog-tall">
+        <div class="dialog-form picker">
+          <h3>Add exercises</h3>
+          <input class="input span-2" id="epSearch" placeholder="Search exercises" />
+          <div class="span-2 ep-filters" id="epFilters"></div>
+          <div class="span-2 ep-list" id="epList"></div>
+          <details class="span-2 ep-custom"><summary>Create a custom exercise</summary>
+            <div class="ep-custom-row">
+              <input class="input" id="epNewName" placeholder="Name" />
+              <select class="input" id="epNewMuscle"></select>
+              <select class="input" id="epNewEquip"></select>
+              <button type="button" class="btn btn-secondary btn-sm" id="epCreate">Create</button>
+            </div>
+          </details>
+          <div class="dialog-actions span-2"><span id="epCount" class="hint"></span><span style="flex:1"></span>
+            <button type="button" class="btn btn-secondary" id="epCancel">Cancel</button>
+            <button type="button" class="btn btn-primary" id="epAdd">Add</button></div>
+        </div>
+      </dialog>
+
+      <!-- Exercise progress -->
+      <dialog id="progressDialog" class="dialog">
+        <div class="dialog-form">
+          <h3 id="pgTitle">Progress</h3>
+          <div class="span-2 pg-stats" id="pgStats"></div>
+          <div class="span-2"><canvas id="chart-progress"></canvas></div>
+          <div class="span-2 pg-list" id="pgList"></div>
+          <div class="dialog-actions span-2"><span style="flex:1"></span><button type="button" class="btn btn-secondary" id="pgClose">Close</button></div>
+        </div>
+      </dialog>
 
       <!-- Course editor -->
       <dialog id="courseDialog" class="dialog">

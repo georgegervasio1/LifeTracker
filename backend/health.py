@@ -181,7 +181,8 @@ def sync_whoop(days_back=None):
             "max_hr": score.get("max_heart_rate"),
             "calories": round(score["kilojoule"] / 4.184) if score.get("kilojoule") else None,
             "exercises": [], "notes": "",
-        })
+            "start": start.isoformat(), "end": end.isoformat(),
+        }, merge=True)   # merge: keep "merged_into" when a logged session already absorbed this workout
         counts["workouts"] += 1
         n += 1
         if n % 400 == 0:
@@ -207,6 +208,7 @@ def health_days(start, end):
 def list_workouts(start, end):
     q = user_ref().collection("workouts").where("date", ">=", start).where("date", "<=", end)
     out = [d.to_dict() | {"id": d.id} for d in q.stream()]
+    out = [w for w in out if not w.get("merged_into")]       # shown inside the logged session instead
     return sorted(out, key=lambda w: w["date"], reverse=True)
 
 
@@ -286,6 +288,9 @@ def _register_routes():
     def delete_workout(wid):
         if wid.startswith("whoop_"):
             return jsonify(error="WHOOP workouts are managed in WHOOP"), 400
+        snap = user_ref().collection("workouts").document(wid).get()
+        if snap.exists and snap.to_dict().get("source") == "session":
+            return jsonify(error="Delete logged sessions from Health → History"), 400
         user_ref().collection("workouts").document(wid).delete()
         return jsonify(ok=True)
 
