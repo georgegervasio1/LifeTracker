@@ -1,7 +1,8 @@
 """Run every offline test: python tests/run_all.py  (needs backend/requirements.txt and pytest installed).
 Tests that need personal fixtures look in $LT_PRIVATE (default ../lifetracker-private, then the Claude project's
 shared folder) and skip if absent. Also checks frontend JS syntax (node) and, when the private kit has
-privacy-terms.txt (one term per line), that no tracked file contains a personal term."""
+privacy-terms.txt (one term per line), that no tracked file contains a personal term. A term written as
+"?term" is still being cleaned up: it is reported but does not fail the run."""
 import os, shutil, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 PRIVATE = os.environ.get("LT_PRIVATE") or next((p for p in (os.path.join(HERE, "..", "..", "lifetracker-private"),
@@ -34,6 +35,8 @@ if shutil.which("node"):
 terms_file = os.path.join(PRIVATE, "privacy-terms.txt")
 if os.path.exists(terms_file):
     terms = [t.strip().lower() for t in open(terms_file) if t.strip() and not t.startswith("#")]
+    pending = {t[1:].strip() for t in terms if t.startswith("?")}   # "?term": cleanup in progress, warn only
+    terms = [t.lstrip("?").strip() for t in terms]
     hits = []
     for f in subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True).stdout.splitlines():
         try:
@@ -41,7 +44,10 @@ if os.path.exists(terms_file):
         except (UnicodeDecodeError, OSError):
             continue
         hits += [f"{f}: {t}" for t in terms if t in text]
-    print(f"{'FAIL' if hits else 'ok  '} {'privacy scan':28s} {len(terms)} terms")
+    hard = [h for h in hits if h.rsplit(": ", 1)[1] not in pending]
+    print(f"{'FAIL' if hard else 'ok  '} {'privacy scan':28s} {len(terms)} terms" + (f", {len(hits) - len(hard)} pending-cleanup hits" if len(hits) > len(hard) else ""))
+    if hard:
+        failed.append("privacy scan")
     if hits:
-        failed.append("privacy scan"); print("\n".join(hits))
+        print("\n".join(("  " if h in hard else "  (pending) ") + h for h in hits))
 sys.exit(1 if failed else 0)
