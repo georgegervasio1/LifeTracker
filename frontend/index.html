@@ -390,10 +390,36 @@
           <div class="planner-head">
             <select id="plannerTerm" class="select" aria-label="Term"></select>
             <div class="planner-stats" id="plannerStats"></div>
+            <label class="text-btn" style="cursor:pointer">Import file…<input type="file" id="eduImportFile2" accept=".json" hidden /></label>
             <button class="btn btn-primary btn-sm" id="addCourse">Add course</button>
           </div>
           <div class="planner-alerts" id="plannerAlerts"></div>
           <div class="board" id="plannerBoard"></div>
+        </div>
+
+        <!-- Academic calendar -->
+        <div class="panel wrap" data-panel="calendar">
+          <div class="acal-head">
+            <div class="plan-weeks" id="acalTerms"></div>
+            <div class="acal-legend" id="acalLegend"></div>
+          </div>
+          <div class="history-grid">
+            <div class="card check-cal-card">
+              <div class="cal-head small">
+                <h3 id="acalTitle"></h3>
+                <div class="cal-nav">
+                  <button class="btn btn-secondary btn-sm" id="acalPrev" aria-label="Previous month">‹</button>
+                  <button class="btn btn-secondary btn-sm" id="acalNext" aria-label="Next month">›</button>
+                </div>
+              </div>
+              <div class="check-cal acal" id="acalGrid"></div>
+              <div id="acalFinals" class="acal-finals"></div>
+            </div>
+            <div>
+              <div class="history-filter hidden" id="acalFilter"><span id="acalFilterText"></span><button class="text-btn" id="acalClear">Show all</button></div>
+              <div id="acalList" class="acal-list"></div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -478,8 +504,12 @@
             <option value="3">Must take</option><option value="2">High</option><option value="1">Maybe</option><option value="0">Unranked</option></select></label>
           <label>Grade<select class="input" name="grade" id="courseGradeSelect"></select></label>
           <label>Grade is<select class="input" name="grade_status"><option value="projected">Projected</option><option value="actual">Actual</option></select></label>
-          <label class="check"><input type="checkbox" name="pf" /> Taking pass/fail</label>
-          <label class="check"><input type="checkbox" name="pf_eligible" /> P/F allowed</label>
+          <label class="check"><input type="checkbox" name="pf_elected" /> Used my P/F option (counts toward 7)</label>
+          <label class="check"><input type="checkbox" name="pf" /> Mandatory pass/fail course</label>
+          <label class="check"><input type="checkbox" name="pf_eligible" /> P/F option allowed</label>
+          <span></span>
+          <label>Final exam date<input class="input" name="exam_date" type="date" /></label>
+          <label>Exam time<input class="input" name="exam_time" placeholder="9:00 AM" /></label>
           <label class="span-2">Meeting times<input class="input" name="meetings_text" placeholder="MW 11:10-12:35, T 5:45-7:45pm" /></label>
           <label>Professor<input class="input" name="professor" /></label>
           <label>Exam<select class="input" name="exam_type"><option value="">—</option><option>In-class exam</option><option>Take-home exam</option><option>Paper</option><option>Other</option></select></label>

@@ -23,7 +23,7 @@ const SECTIONS = {
   health: { title: "Health", tabs: [
     ["overview", "Overview"], ["planner", "Planner"], ["history", "History"], ["calendar", "Calendar"], ["connect", "Connect"]] },
   education: { title: "Education", tabs: [
-    ["overview", "Overview"], ["grades", "Grades & GPA"], ["audit", "Degree Audit"], ["planner", "Planner"]] },
+    ["overview", "Overview"], ["grades", "Grades & GPA"], ["audit", "Degree Audit"], ["planner", "Planner"], ["calendar", "Calendar"]] },
   goals: { title: "Goals", tabs: [] },
 };
 
@@ -556,6 +556,7 @@ async function loadEducation(tab) {
   if (tab === "grades") { gradeDraft = {}; renderGrades(); }
   if (tab === "audit") renderAudit();
   if (tab === "planner") renderPlanner();
+  if (tab === "calendar") renderAcadCal();
 }
 
 // Same math as education.compute(), used for instant what-if on the Grades tab.
@@ -566,13 +567,13 @@ function liveGpa() {
   edu.courses.forEach((c) => {
     if (!counts.has(c.status)) return;
     const d = gradeDraft[c.id] || {}; const g = d.grade ?? c.grade, gs = d.grade_status ?? c.grade_status;
-    if (!(g in GP)) return;
+    if (!(g in GP) || (c.pf_elected && gs !== "actual")) return;
     const cr = +c.credits || 0, q = GP[g] * cr;
     pq += q; pg += cr; (terms[c.term] ||= { q: 0, g: 0 }); terms[c.term].q += q; terms[c.term].g += cr;
     if (gs === "actual") { aq += q; ag += cr; }
   });
   const rem = edu.courses.filter((c) => ["enrolled", "planned"].includes(c.status) && (gradeDraft[c.id]?.grade_status ?? c.grade_status) !== "actual"
-    && c.graded !== false && !["P", "H", "CR"].includes(gradeDraft[c.id]?.grade ?? c.grade));
+    && c.graded !== false && !c.pf_elected && !["P", "H", "CR"].includes(gradeDraft[c.id]?.grade ?? c.grade));
   const remCr = rem.reduce((a, c) => a + (+c.credits || 0), 0);
   return { actual: ag ? r2(aq / ag) : null, projected: pg ? r2(pq / pg) : null,
            terms: Object.fromEntries(Object.entries(terms).map(([t, v]) => [t, v.g ? r2(v.q / v.g) : null])),
@@ -701,6 +702,17 @@ function renderAudit() {
         <div class="stack-legend"><span><i class="lg lg-done"></i>${a.done} earned</span><span><i class="lg lg-prog"></i>${a.in_progress} in progress</span><span><i class="lg lg-plan"></i>${a.planned} planned</span>${a.short_by ? `<span class="neg">${a.short_by} short</span>` : ""}</div>`;
     }
     if (a.type === "gpa") body = `<div class="audit-courses">Current GPA ${fmtGpa(a.value)}</div>`;
+    if (a.type === "pf") {
+      const cells = []; const push = (n, cls) => { for (let i = 0; i < n; i++) cells.push(cls); };
+      push(a.used, "used"); push(a.in_progress, "prog"); push(a.planned, "plan");
+      const shown = cells.slice(0, a.cap).concat(Array(Math.max(0, a.cap - cells.length)).fill(""));
+      if (cells.length > a.cap) shown.push(...Array(cells.length - a.cap).fill("over"));
+      body = `<div class="pf-meter">${shown.map((c) => `<i class="${c}"></i>`).join("")}</div>
+        <div class="stack-legend"><span><i class="lg lg-done"></i>${a.used} used</span>${a.in_progress ? `<span><i class="lg lg-prog"></i>${a.in_progress} this term</span>` : ""}<span><i class="lg lg-plan"></i>${a.planned} planned</span><span class="${a.remaining < 0 ? "neg" : ""}"><strong>${a.remaining < 0 ? `${-a.remaining} over the limit` : `${a.remaining} left`}</strong></span></div>
+        <div class="pf-rows">${a.courses.map((c) => `<div><span>${esc(c.title)} <span class="tag">${esc(c.term)} · ${c.credits} cr</span></span><span>${c.outcome === "planned" ? "planned" : c.outcome === "P" ? "Pass" : esc(c.outcome) + " (above target)"}</span></div>`).join("")}</div>
+        <p class="hint">Credits count against the limit whether you get a Pass or keep the letter grade. One P/F course per semester; not for required courses, writing seminars, clinics or supervised research.</p>`;
+      return `<div class="audit-row"><div class="audit-title"><span class="pill pill-${a.status}">${a.remaining < 0 ? "Over" : a.remaining === 0 ? "All used" : "Available"}</span><h3>${esc(a.label)}</h3></div>${body}</div>`;
+    }
     if (a.courses) body += `<div class="audit-courses">${a.courses.length ? a.courses.map(esc).join(" · ") : "No course tagged yet. Open a course in the Planner and check this requirement."}</div>`;
     return `<div class="audit-row"><div class="audit-title"><span class="pill pill-${a.status}">${{ met: "Met", on_track: "On track", missing: "Missing" }[a.status]}</span><h3>${esc(a.label)}</h3></div>${body}</div>`;
   }).join("");
@@ -717,7 +729,24 @@ function renderPlanner() {
   const missing = C.audit.filter((a) => a.status === "missing" && a.key !== "min_gpa");
   $("plannerAlerts").innerHTML =
     pl.conflicts.map((c) => `<div class="alert ${c.both_committed ? "alert-bad" : ""}">Time conflict: ${esc(c.a_title)} and ${esc(c.b_title)}${c.both_committed ? " (both planned)" : ""}</div>`).join("") +
-    (missing.length ? `<div class="alert">Still unmet after this plan: ${missing.map((m) => esc(m.label)).join(", ")}</div>` : "");
+    (missing.length ? `<div class="alert">Still unmet after this plan: ${missing.map((m) => esc(m.label)).join(", ")}</div>` : "") +
+    ((pl.pf_elected || []).length > 1 ? `<div class="alert alert-bad">Only one P/F option course per semester. Checked: ${pl.pf_elected.map(esc).join(", ")}</div>` : "") +
+    (C.pass_fail.remaining < 0 ? `<div class="alert alert-bad">P/F option is ${-C.pass_fail.remaining} credit${C.pass_fail.remaining === -1 ? "" : "s"} over the ${C.pass_fail.cap}-credit limit.</div>` : "");
+  const pfLeft = C.pass_fail.remaining;
+  const pfBox = (c) => {
+    if (c.status === "completed" || c.status === "dropped") return "";
+    if (c.graded === false && !c.pf_elected) return "";                        // mandatory P/F
+    if ((c.tags || []).some((t) => t === "pr" || t === "ulwr")) return "";      // not eligible
+    const cr = +c.credits || 0;
+    if (!cr) return "";
+    let swap = null;
+    if (!c.pf_elected && cr > pfLeft) {   // budget used: offer to move it from another not-yet-taken course
+      swap = edu.courses.find((x) => x.pf_elected && x.id !== c.id && !["completed", "dropped"].includes(x.status) && pfLeft + (+x.credits || 0) >= cr);
+      if (!swap) return "";
+    }
+    const label = c.pf_elected ? "Use P/F credit" : swap ? `Use P/F credit here instead of ${esc(swap.code || swap.title)}` : `Use P/F credit (${pfLeft} left)`;
+    return `<label class="pf-check ${c.pf_elected ? "on" : ""}"><input type="checkbox" data-pf="${c.id}" ${swap ? `data-swap="${swap.id}"` : ""} ${c.pf_elected ? "checked" : ""} /> ${label}</label>`;
+  };
   const conflictIds = new Set(pl.conflicts.flatMap((c) => [c.a, c.b]));
   const cols = [["planned", "Planned"], ["enrolled", "Enrolled"], ["waitlisted", "Waitlisted"], ["considering", "Considering"], ["dropped", "Dropped"]];
   const inTerm = edu.courses.filter((c) => c.term === plannerTerm);
@@ -728,9 +757,11 @@ function renderPlanner() {
       ${list.map((c) => `<div class="course-card ${conflictIds.has(c.id) ? "has-conflict" : ""}" data-course="${c.id}">
         <div class="course-top">${c.priority ? `<span class="prio prio-${c.priority}">${PRIORITY[c.priority]}</span>` : ""}${(c.tags || []).map((t) => `<span class="req-tag">${{ pr: "PR", ulwr: "Writing", experiential: "Experiential", ilo8: "ILO #8" }[t]}</span>`).join("")}</div>
         <div class="course-title">${esc(c.title)}</div>
-        <div class="course-meta">${[c.code, c.credits != null ? `${c.credits} cr` : null, c.graded === false ? "P/F" : null, c.exam_type].filter(Boolean).map(esc).join(" · ")}</div>
+        <div class="course-meta">${[c.code, c.credits != null ? `${c.credits} cr` : null, c.graded === false && !c.pf_elected ? "Mandatory P/F" : null, c.exam_type].filter(Boolean).map(esc).join(" · ")}${c.pf_elected ? ' <span class="pf-badge">P/F option</span>' : ""}</div>
+        ${c.exam_date ? `<div class="course-meta">Final ${esc(fmtExam(c))}</div>` : ""}
         ${c.meetings_text ? `<div class="course-meta">${esc(c.meetings_text)}</div>` : ""}
         ${c.notes ? `<div class="course-note">${esc(c.notes)}</div>` : ""}
+        ${pfBox(c)}
         <select class="select status-select" data-move="${c.id}" aria-label="Move course">${Object.entries(STATUS_LABEL).map(([v, l]) => `<option value="${v}" ${v === c.status ? "selected" : ""}>${l}</option>`).join("")}</select>
       </div>`).join("") || `<div class="empty small">None</div>`}
     </div>`;
@@ -742,8 +773,26 @@ function renderPlanner() {
       catch (e) { toast(e.message); }
     };
   });
+  $$("[data-pf]").forEach((b) => {
+    b.closest("label").onclick = (e) => e.stopPropagation();
+    b.onchange = async () => {
+      const c = edu.courses.find((x) => x.id === b.dataset.pf);
+      const body = { pf_elected: b.checked, graded: true };
+      if (!b.checked && c.grade === "P" && c.grade_status !== "actual") body.grade = null;
+      try {
+        if (b.checked && b.dataset.swap) {
+          const o = edu.courses.find((x) => x.id === b.dataset.swap);
+          await api(`/api/edu/courses/${o.id}`, { method: "PATCH", body: JSON.stringify({ pf_elected: false, ...(o.grade === "P" && o.grade_status !== "actual" ? { grade: null } : {}) }) });
+        }
+        edu = await api(`/api/edu/courses/${c.id}`, { method: "PATCH", body: JSON.stringify(body) }); renderPlanner();
+        toast(b.checked ? (b.dataset.swap ? "P/F credit moved" : "P/F credit applied") : "P/F credit released");
+      }
+      catch (e) { toast(e.message); b.checked = !b.checked; }
+    };
+  });
   $$("[data-course]").forEach((card) => (card.onclick = () => openCourse(edu.courses.find((c) => c.id === card.dataset.course))));
 }
+const fmtExam = (c) => `${new Date(c.exam_date + "T00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}${c.exam_time ? `, ${c.exam_time}` : ""}`;
 $("plannerTerm").onchange = () => { plannerTerm = $("plannerTerm").value; renderPlanner(); };
 $("addCourse").onclick = () => openCourse(null);
 
@@ -755,10 +804,11 @@ function openCourse(c) {
   $("courseTermSelect").innerHTML = edu.computed.profile.terms.map((t) => `<option>${esc(t)}</option>`).join("");
   $("courseGradeSelect").innerHTML = gradeOptions(c?.grade || "");
   const v = c || { term: plannerTerm, status: "considering", priority: 0, grade_status: "projected", tags: [] };
-  ["title", "code", "crn", "term", "credits", "status", "priority", "grade_status", "meetings_text", "professor", "exam_type", "category", "waitlist", "notes", "experiential_credits"]
+  ["title", "code", "crn", "term", "credits", "status", "priority", "grade_status", "meetings_text", "professor", "exam_type", "exam_date", "exam_time", "category", "waitlist", "notes", "experiential_credits"]
     .forEach((k) => { if (f.elements[k]) f.elements[k].value = v[k] ?? (k === "grade_status" ? "projected" : ""); });
   f.elements.grade.value = v.grade || "";
-  f.elements.pf.checked = v.graded === false;
+  f.elements.pf.checked = v.graded === false && !v.pf_elected;
+  f.elements.pf_elected.checked = !!v.pf_elected;
   f.elements.pf_eligible.checked = !!v.pf_eligible;
   ["pr", "ulwr", "ilo8", "experiential"].forEach((t) => (f.elements[`tag_${t}`].checked = (v.tags || []).includes(t)));
   $("courseDelete").classList.toggle("hidden", !c);
@@ -772,6 +822,7 @@ $("courseForm").onsubmit = async (e) => {
     title: val("title"), code: val("code"), crn: val("crn"), term: val("term"), credits: val("credits") || null,
     status: val("status"), priority: +val("priority"), grade: val("grade") || null, grade_status: val("grade") ? val("grade_status") : null,
     graded: !f.elements.pf.checked && !["P", "H", "CR"].includes(val("grade")), pf_eligible: f.elements.pf_eligible.checked,
+    pf_elected: f.elements.pf_elected.checked && !f.elements.pf.checked, exam_date: val("exam_date") || null, exam_time: val("exam_time"),
     meetings_text: val("meetings_text"), professor: val("professor"), exam_type: val("exam_type"), category: val("category"),
     waitlist: val("waitlist"), notes: val("notes"), experiential_credits: val("experiential_credits") || null,
     tags: ["pr", "ulwr", "ilo8", "experiential"].filter((t) => f.elements[`tag_${t}`].checked),
@@ -790,14 +841,77 @@ $("courseDelete").onclick = async () => {
   $("courseDialog").close(); toast("Course deleted"); render();
 };
 
-$("eduImportFile").onchange = async () => {
-  const f = $("eduImportFile").files[0]; if (!f) return;
+const eduImport = (inp) => async () => {
+  const f = inp.files[0]; inp.value = ""; if (!f) return;
   try {
     const payload = JSON.parse(await f.text());
+    if (!payload.merge && edu?.courses?.length && !confirm("This file replaces all your courses. Continue?")) return;
     const r = await api("/api/edu/import", { method: "POST", body: JSON.stringify(payload) });
-    toast(`Imported ${r.imported} courses`); render();
+    toast(payload.merge ? `Updated ${r.updated} courses${r.added ? `, added ${r.added}` : ""}` : `Imported ${r.imported} courses`); render();
   } catch (e) { toast(e instanceof SyntaxError ? "That file isn't valid JSON" : e.message); }
 };
+$("eduImportFile").onchange = eduImport($("eduImportFile"));
+$("eduImportFile2").onchange = eduImport($("eduImportFile2"));
+
+// Academic calendar: GULC key dates + your finals, one semester at a time
+let acalTerm = null, acalMonth = null, acalDay = null;
+const KIND_LABEL = { classes: "Classes", deadline: "Deadline", holiday: "Holiday", break: "Break", exams: "Exam period", final: "Your final", other: "Other" };
+const dstr = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+function acalEvents() { return (edu.computed.calendar || {})[acalTerm] || []; }
+function renderAcadCal() {
+  const cal = edu.computed.calendar || {}, terms = Object.keys(cal).filter((t) => cal[t].length);
+  const today = dstr(new Date());
+  if (!acalTerm || !terms.includes(acalTerm)) acalTerm = terms.find((t) => cal[t].some((e) => (e.end || e.date) >= today)) || terms[terms.length - 1];
+  if (!acalTerm) { $("acalList").innerHTML = `<div class="empty">No academic calendar yet.</div>`; return; }
+  const evs = acalEvents(), first = evs[0].date, lastD = evs.reduce((m, e) => ((e.end || e.date) > m ? e.end || e.date : m), first);
+  const inTerm = (m) => m >= first.slice(0, 7) && m <= lastD.slice(0, 7);
+  if (!acalMonth || !inTerm(acalMonth)) acalMonth = today >= first && today <= lastD ? today.slice(0, 7) : first.slice(0, 7);
+  $("acalTerms").innerHTML = terms.map((t) => `<button class="week-tab ${t === acalTerm ? "active" : ""}" data-aterm="${esc(t)}">${esc(t)}</button>`).join("");
+  $$("[data-aterm]").forEach((b) => (b.onclick = () => { acalTerm = b.dataset.aterm; acalMonth = null; acalDay = null; renderAcadCal(); }));
+  $("acalLegend").innerHTML = ["classes", "deadline", "holiday", "exams", "final"].map((k) => `<span><i class="k-dot k-${k}"></i>${k === "holiday" ? "Holiday / break" : KIND_LABEL[k]}</span>`).join("");
+
+  // month grid
+  const [y, m] = acalMonth.split("-").map(Number), f1 = new Date(y, m - 1, 1), last = new Date(y, m, 0);
+  $("acalTitle").textContent = f1.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  $("acalPrev").disabled = !inTerm(dstr(new Date(y, m - 2, 1)).slice(0, 7));
+  $("acalNext").disabled = !inTerm(dstr(new Date(y, m, 1)).slice(0, 7));
+  const onDay = (key) => evs.filter((e) => e.date === key || (e.end && e.date <= key && key <= e.end));
+  let html = ["M", "T", "W", "T", "F", "S", "S"].map((d) => `<span class="cc-dow">${d}</span>`).join("");
+  for (let i = 0; i < (f1.getDay() + 6) % 7; i++) html += "<span></span>";
+  for (let d = 1; d <= last.getDate(); d++) {
+    const key = dstr(new Date(y, m - 1, d)), here = onDay(key);
+    const starts = here.filter((e) => e.date === key), span = here.find((e) => e.end && e.date !== e.end);
+    const fin = here.some((e) => e.kind === "final");
+    const kinds = [...new Set(starts.map((e) => e.kind))].slice(0, 3);
+    html += `<button class="cc-day ${here.length ? "has" : ""} ${span ? `span span-${span.kind}` : ""} ${fin ? "final" : ""} ${key === today ? "today" : ""} ${key === acalDay ? "sel" : ""}" data-aday="${key}" ${here.length ? "" : "disabled"} title="${esc(here.map((e) => e.label).join(" · "))}">${d}<span class="dots">${kinds.map((k) => `<i class="k-dot k-${k}"></i>`).join("")}</span></button>`;
+  }
+  $("acalGrid").innerHTML = html;
+  $$("[data-aday]").forEach((b) => (b.onclick = () => { acalDay = acalDay === b.dataset.aday ? null : b.dataset.aday; renderAcadCal(); }));
+
+  // your finals summary under the grid
+  const finals = evs.filter((e) => e.kind === "final");
+  const missingExam = edu.courses.filter((c) => c.term === acalTerm && ["enrolled", "planned"].includes(c.status) && !c.exam_date && c.graded !== false);
+  $("acalFinals").innerHTML = `<h4>Your finals</h4>` + (finals.length ? finals.map((e) => `<div class="acal-final"><span>${esc(e.label.replace(/^Final: /, ""))}${e.conflict ? ' <span class="neg" title="Same slot as ' + esc(e.conflict.join(", ")) + '">⚠</span>' : ""}</span><span>${new Date(e.date + "T00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}${e.time ? ` · ${esc(e.time)}` : ""}</span></div>`).join("") : `<p class="hint">No exam dates yet.</p>`) +
+    (missingExam.length ? `<p class="hint">No exam date: ${missingExam.map((c) => `<button class="text-btn" data-examfix="${c.id}">${esc(c.title)}</button>`).join(", ")}</p>` : "");
+  $$("[data-examfix]").forEach((b) => (b.onclick = () => openCourse(edu.courses.find((c) => c.id === b.dataset.examfix))));
+
+  // agenda
+  const list = acalDay ? onDay(acalDay) : evs;
+  const nextIdx = acalDay ? -1 : list.findIndex((e) => (e.end || e.date) >= today);
+  $("acalFilter").classList.toggle("hidden", !acalDay);
+  if (acalDay) $("acalFilterText").textContent = new Date(acalDay + "T00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  const groups = {};
+  list.forEach((e, i) => ((groups[e.date.slice(0, 7)] ||= []).push([e, i])));
+  const fd = (s, o) => new Date(s + "T00:00").toLocaleDateString("en-US", o);
+  $("acalList").innerHTML = Object.entries(groups).map(([mo, items]) => `<div class="acal-month"><h3>${fd(mo + "-01", { month: "long", year: "numeric" })}</h3>
+    ${items.map(([e, i]) => `<div class="acal-item ${(e.end || e.date) < today ? "past" : ""} ${i === nextIdx ? "next" : ""} ${e.kind === "final" ? "is-final" : ""}">
+      <div class="acal-date">${fd(e.date, { month: "short", day: "numeric" })}${e.end ? ` – ${fd(e.end, { month: e.end.slice(5, 7) === e.date.slice(5, 7) ? undefined : "short", day: "numeric" })}` : ""}<small>${fd(e.date, { weekday: "long" })}</small></div>
+      <div class="acal-label"><i class="k-dot k-${e.kind}"></i><span>${esc(e.label)}${e.conflict ? ` <span class="warn">Same slot as ${esc(e.conflict.join(", "))}</span>` : ""}</span></div>
+      <div class="acal-when">${i === nextIdx ? "Up next" : e.time ? esc(e.time) : KIND_LABEL[e.kind]}</div></div>`).join("")}</div>`).join("") || `<div class="empty">Nothing on this day.</div>`;
+}
+$("acalPrev").onclick = () => { const [y, m] = acalMonth.split("-").map(Number); acalMonth = dstr(new Date(y, m - 2, 1)).slice(0, 7); renderAcadCal(); };
+$("acalNext").onclick = () => { const [y, m] = acalMonth.split("-").map(Number); acalMonth = dstr(new Date(y, m, 1)).slice(0, 7); renderAcadCal(); };
+$("acalClear").onclick = () => { acalDay = null; renderAcadCal(); };
 
 // ---------- Training: planner, live session, history ----------
 const DAYS = [["mon", "Mon"], ["tue", "Tue"], ["wed", "Wed"], ["thu", "Thu"], ["fri", "Fri"], ["sat", "Sat"], ["sun", "Sun"]];

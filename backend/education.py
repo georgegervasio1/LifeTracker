@@ -38,6 +38,7 @@ DEFAULT_PROFILE = {
         "require_pr": True,
         "require_ulwr": True,
         "require_ilo8": True,
+        "pf_cap": 7,              # upperclass J.D. pass/fail option: 7 elective credits, one course per semester
     },
     # Published GULC graduation-honors cutoffs, for reference only (honors are class-rank based).
     "honors_reference": [
@@ -52,6 +53,73 @@ def init(app, _db, _firestore, _require_owner, _user_ref):
     db, firestore, require_owner, user_ref = _db, _firestore, _require_owner, _user_ref
     _register_routes()
     app.register_blueprint(bp)
+
+
+# GULC 2026-2027 academic calendar (Registrar, Aug 7 2026). 1L-only items (orientation, Legal Practice) left out.
+# kind: classes | deadline | holiday | exams | break | other
+ACADEMIC_CALENDAR = {
+    "Fall 2026": [
+        ("2026-08-17", None, "Tuition due (continuing & transfer students)", "deadline"),
+        ("2026-08-24", None, "Classes begin", "classes"),
+        ("2026-09-01", None, "Last day to add/drop", "deadline"),
+        ("2026-09-07", None, "Labor Day: no classes", "holiday"),
+        ("2026-10-12", None, "Mid-semester holiday: no classes", "holiday"),
+        ("2026-10-13", None, "Monday classes meet instead of Tuesday", "other"),
+        ("2026-10-20", "2026-10-27", "Minicourse / Bookends exam period", "exams"),
+        ("2026-11-24", None, "Last day of classes", "classes"),
+        ("2026-11-25", "2026-11-29", "Thanksgiving break", "break"),
+        ("2026-11-30", "2026-12-02", "Rescheduled classes & reading days", "other"),
+        ("2026-12-03", "2026-12-14", "Final exam period", "exams"),
+        ("2026-12-14", None, "Papers due (unless professor sets another date)", "deadline"),
+        ("2026-12-15", "2026-12-18", "Exam deferral dates", "exams"),
+    ],
+    "Spring 2027": [
+        ("2027-01-04", None, "Week One minicourses begin", "classes"),
+        ("2027-01-05", None, "Spring tuition due", "deadline"),
+        ("2027-01-11", None, "Classes begin", "classes"),
+        ("2027-01-18", None, "Martin Luther King Jr. Day: no classes", "holiday"),
+        ("2027-01-19", None, "Last day to add/drop", "deadline"),
+        ("2027-01-21", "2027-01-28", "Week One exam period", "exams"),
+        ("2027-02-15", None, "Presidents Day: no classes", "holiday"),
+        ("2027-02-16", None, "Monday classes meet instead of Tuesday", "other"),
+        ("2027-02-28", "2027-03-07", "Spring break", "break"),
+        ("2027-03-16", "2027-03-23", "Minicourse / Bookends exam period", "exams"),
+        ("2027-03-26", "2027-03-28", "Easter break", "break"),
+        ("2027-04-21", None, "Last day of classes (Friday schedule)", "classes"),
+        ("2027-04-22", "2027-04-26", "Rescheduled classes & reading days", "other"),
+        ("2027-04-27", "2027-05-11", "Final exam period", "exams"),
+        ("2027-05-11", None, "Papers due (unless professor sets another date)", "deadline"),
+        ("2027-05-12", "2027-05-14", "Exam deferral dates", "exams"),
+        ("2027-05-20", "2027-05-23", "Commencement", "other"),
+        ("2027-06-02", None, "Degrees conferred", "other"),
+    ],
+}
+
+
+def calendar_for(courses):
+    """Key dates per term plus a 'final' event for every current/planned course with an exam date.
+    Two finals in the same slot are flagged (GULC lets you reschedule an exam conflict)."""
+    out = {}
+    for term, items in ACADEMIC_CALENDAR.items():
+        out[term] = [{"date": d, "end": e, "label": l, "kind": k} for d, e, l, k in items]
+    slots = {}
+    for c in courses:
+        if c.get("exam_date") and c.get("status") in ("enrolled", "planned", "completed"):
+            ev = {"date": c["exam_date"], "end": None, "label": f"Final: {c.get('title')}", "kind": "final",
+                  "time": c.get("exam_time"), "course_id": c.get("id"), "exam_type": c.get("exam_type")}
+            out.setdefault(c.get("term") or "Other", []).append(ev)
+            slots.setdefault((c["exam_date"], (c.get("exam_time") or "").upper()), []).append(ev)
+    for evs in slots.values():
+        if len(evs) > 1:
+            for ev in evs:
+                ev["conflict"] = [x["label"][7:] for x in evs if x is not ev]
+    for evs in out.values():
+        evs.sort(key=lambda x: (x["date"], x["kind"] != "final", _time_key(x.get("time"))))
+    return out
+
+
+def _time_key(t):
+    return _minutes(_to_24h(t)) if t and _to_24h(t) else 0
 
 
 # ---------------------------------------------------------------- parsing helpers
@@ -132,8 +200,11 @@ def compute(profile, courses):
         if c.get("term") and c["term"] not in terms:
             terms.append(c["term"])
 
+    def pf_pending(c):          # elected P/F, no final grade yet -> plan on a P (no GPA effect)
+        return bool(c.get("pf_elected")) and c.get("grade_status") != "actual"
+
     def graded(c):
-        return (c.get("grade") or "") in GRADE_POINTS
+        return (c.get("grade") or "") in GRADE_POINTS and not pf_pending(c)
 
     # ---- per-term and cumulative GPA (actual = official grades only; projected adds expected grades)
     term_rows, cum = [], {"act_qp": 0.0, "act_gc": 0.0, "proj_qp": 0.0, "proj_gc": 0.0}
@@ -164,7 +235,8 @@ def compute(profile, courses):
     # ---- what average do you need on the remaining graded credits to reach the target?
     target = _num(p.get("target_gpa"), 3.7)
     remaining = [c for c in courses if c.get("status") in ("enrolled", "planned")
-                 and c.get("grade_status") != "actual" and (c.get("graded", True) and (c.get("grade") or "") not in NON_GPA_GRADES)]
+                 and c.get("grade_status") != "actual" and not pf_pending(c)
+                 and (c.get("graded", True) and (c.get("grade") or "") not in NON_GPA_GRADES)]
     rem_gc = sum(_num(c.get("credits")) for c in remaining)
     needed = None
     if rem_gc:
@@ -212,6 +284,24 @@ def compute(profile, courses):
             audit.append({"key": key, "label": TAGS[key], "type": "course", "status": status_of(cs),
                           "courses": [f"{c.get('title')} ({c.get('term')})" for c in cs]})
 
+    # ---- pass/fail option budget (credits count whether you end up with a P or keep the letter grade)
+    cap = _num(req.get("pf_cap"), 7)
+    pf = [c for c in courses if c.get("pf_elected") and c.get("status") not in ("dropped", "waitlisted")]
+    pf_used = sum(_num(c.get("credits")) for c in pf if c.get("status") == "completed")
+    pf_prog = sum(_num(c.get("credits")) for c in pf if c.get("status") == "enrolled")
+    pf_plan = sum(_num(c.get("credits")) for c in pf if c.get("status") in ("planned", "considering"))
+    pf_total = pf_used + pf_prog + pf_plan
+
+    def pf_label(c):
+        g = c.get("grade") if c.get("grade_status") == "actual" else None
+        outcome = ("kept " + g) if g in GRADE_POINTS else ("P" if g == "P" else "planned")
+        return {"id": c.get("id"), "title": c.get("title"), "term": c.get("term"), "credits": _num(c.get("credits")),
+                "status": c.get("status"), "outcome": outcome}
+    pass_fail = {"cap": cap, "used": pf_used, "in_progress": pf_prog, "planned": pf_plan,
+                 "remaining": cap - pf_total, "courses": [pf_label(c) for c in pf]}
+    audit.append({"key": "pf", "label": f"Pass/fail option ({int(cap)} credits max)", "type": "pf",
+                  "status": "missing" if pf_total > cap else "met", **pass_fail})
+
     min_gpa = _num(req["min_gpa"], 2.0)
     audit.append({"key": "min_gpa", "label": f"Minimum GPA ({min_gpa:.2f})", "type": "gpa",
                   "status": "met" if (gpa_actual or 0) >= min_gpa else "missing", "value": gpa_actual})
@@ -234,6 +324,7 @@ def compute(profile, courses):
             "pf_credits": sum(_num(c.get("credits")) for c in committed if not c.get("graded", True) or (c.get("grade") or "") in NON_GPA_GRADES),
             "considering": sum(1 for c in tc if c.get("status") == "considering"),
             "conflicts": conflicts,
+            "pf_elected": [c.get("title") for c in committed + [x for x in tc if x.get("status") == "considering"] if c.get("pf_elected")],
         }
 
     credits_after_plan = earned + transfer + in_prog + planned
@@ -241,7 +332,8 @@ def compute(profile, courses):
         "profile": p, "grade_points": GRADE_POINTS, "terms": term_rows,
         "gpa_actual": gpa_actual, "gpa_projected": gpa_projected,
         "graded_credits_actual": cum["act_gc"], "quality_points_actual": round(cum["act_qp"], 2),
-        "needed": needed, "audit": audit, "planner": planner,
+        "needed": needed, "audit": audit, "planner": planner, "pass_fail": pass_fail,
+        "calendar": calendar_for(courses),
         "credits": {"earned": earned + transfer, "in_progress": in_prog, "planned": planned,
                     "required": total_req, "remaining_after_plan": max(0.0, total_req - credits_after_plan)},
     }
@@ -275,7 +367,7 @@ def _grade_plan(remaining, avg):
 # ---------------------------------------------------------------- storage helpers
 COURSE_FIELDS = {"term", "title", "code", "crn", "credits", "grade", "grade_status", "graded", "status", "tags",
                  "experiential_credits", "priority", "professor", "meetings_text", "exam_type", "category",
-                 "seats", "waitlist", "notes", "pf_eligible"}
+                 "seats", "waitlist", "notes", "pf_eligible", "pf_elected", "exam_date", "exam_time"}
 
 
 def clean_course(b, partial=False):
@@ -302,8 +394,12 @@ def clean_course(b, partial=False):
                 raise ValueError(f"status must be one of {STATUSES}")
         elif k == "tags":
             v = [t for t in (v or []) if t in TAGS]
-        elif k in ("graded", "pf_eligible"):
+        elif k in ("graded", "pf_eligible", "pf_elected"):
             v = bool(v)
+        elif k == "exam_date":
+            v = (str(v).strip() or None) if v else None
+            if v and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+                raise ValueError("exam_date must be YYYY-MM-DD")
         else:
             v = None if v is None else str(v).strip()[:500]
         out[k] = v
@@ -403,6 +499,8 @@ def _register_routes():
     def import_education():
         """Bulk load {profile, courses}. replace=true clears existing courses first."""
         b = request.get_json(force=True) or {}
+        if b.get("merge"):
+            return _merge_import(b)
         try:
             courses = [clean_course(c) for c in (b.get("courses") or [])][:300]
         except ValueError as e:
@@ -419,3 +517,27 @@ def _register_routes():
             prof = {k: v for k, v in b["profile"].items() if k in DEFAULT_PROFILE or k == "grad_term"}
             _profile_ref().set(prof, merge=True)
         return jsonify(education_state() | {"imported": len(courses)})
+
+
+def _merge_import(b):
+    """Update courses in place, matched by term + title (case-insensitive); add any that don't exist.
+    Only the fields present in the file change, so edits made in the app are kept."""
+    col = user_ref().collection("edu_courses")
+    existing = {((d.to_dict().get("term") or "").lower(), (d.to_dict().get("title") or "").strip().lower()): d.id
+                for d in col.stream()}
+    updated = added = 0
+    try:
+        for c in (b.get("courses") or [])[:300]:
+            key = ((c.get("term") or "").lower(), (c.get("title") or "").strip().lower())
+            if key in existing:
+                col.document(existing[key]).set(clean_course(c, partial=True), merge=True); updated += 1
+            else:
+                col.document().set(clean_course(c)); added += 1
+    except ValueError as e:
+        return jsonify(error=f"Import failed: {e}"), 400
+    if isinstance(b.get("profile"), dict):
+        prof = {k: v for k, v in b["profile"].items() if k in DEFAULT_PROFILE or k == "grad_term"}
+        if isinstance(prof.get("requirements"), dict):
+            prof["requirements"] = {k: v for k, v in prof["requirements"].items() if k in DEFAULT_PROFILE["requirements"]}
+        _profile_ref().set(prof, merge=True)
+    return jsonify(education_state() | {"imported": updated + added, "updated": updated, "added": added})

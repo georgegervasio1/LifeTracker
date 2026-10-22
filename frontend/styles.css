@@ -15,6 +15,8 @@
   --accent-hover: #0077ed;
   --accent-soft: rgba(0,113,227,.08);
   --pos: #1d8a4e;
+  --warn: #c76b00;
+  --exam: #7d3cd8;
   --neg: #d70015;
   --track: #ececf0;
   --nav-bg: rgba(255,255,255,.78);
@@ -33,7 +35,7 @@
     --text: #f5f5f7; --text-2: #a1a1a6; --text-3: #6e6e73;
     --line: #232326; --line-strong: #333337;
     --accent: #2997ff; --accent-hover: #47a6ff; --accent-soft: rgba(41,151,255,.12);
-    --pos: #30d158; --neg: #ff453a; --track: #232326;
+    --pos: #30d158; --neg: #ff453a; --track: #232326; --warn: #ff9f0a; --exam: #bf5af2;
     --nav-bg: rgba(0,0,0,.72); --shadow: none;
     color-scheme: dark;
   }
@@ -43,7 +45,7 @@
   --text: #f5f5f7; --text-2: #a1a1a6; --text-3: #6e6e73;
   --line: #232326; --line-strong: #333337;
   --accent: #2997ff; --accent-hover: #47a6ff; --accent-soft: rgba(41,151,255,.12);
-  --pos: #30d158; --neg: #ff453a; --track: #232326;
+  --pos: #30d158; --neg: #ff453a; --track: #232326; --warn: #ff9f0a; --exam: #bf5af2;
   --nav-bg: rgba(0,0,0,.72); --shadow: none;
   color-scheme: dark;
 }
@@ -594,4 +596,51 @@ button.h-row:hover span:first-child { color: var(--accent); }
   .prev { font-size: 12px; }
   .ep-custom-row { grid-template-columns: 1fr 1fr; }
   .session-name { font-size: 28px; }
+}
+
+/* ---------- Education: academic calendar + P/F ---------- */
+.acal-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+.acal-legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--text-2); }
+.acal-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.k-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--text-3); flex: none; }
+.k-classes { background: var(--accent); } .k-deadline { background: var(--warn); } .k-holiday, .k-break { background: var(--pos); }
+.k-exams { background: var(--exam); } .k-final { background: var(--neg); } .k-other { background: var(--text-3); }
+.acal .cc-day { cursor: default; }
+.acal .cc-day.has { color: var(--text); font-weight: 600; cursor: pointer; }
+.acal .cc-day.span { background: var(--bg-alt); border-radius: 10px; }
+.acal .cc-day.span-exams { background: color-mix(in srgb, var(--exam) 12%, transparent); }
+.acal .cc-day.span-break, .acal .cc-day.span-holiday { background: color-mix(in srgb, var(--pos) 10%, transparent); }
+.acal .cc-day.final { background: var(--neg); color: #fff; border-radius: 50%; }
+.acal .cc-day .dots { position: absolute; bottom: 3px; left: 0; right: 0; display: flex; justify-content: center; gap: 2px; }
+.acal .cc-day .dots .k-dot { width: 5px; height: 5px; }
+.acal .cc-day.final .dots { display: none; }
+.acal .cc-day.sel { box-shadow: inset 0 0 0 2px var(--text); }
+.acal-finals { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 8px; }
+.acal-finals h4 { font-size: 13px; font-weight: 600; color: var(--text-2); margin: 0; }
+.acal-final { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; }
+.acal-final span:last-child { color: var(--text-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.acal-list { display: grid; gap: 22px; }
+.acal-month h3 { font-size: 15px; font-weight: 600; margin: 0 0 8px; color: var(--text-2); }
+.acal-item { display: grid; grid-template-columns: 112px 1fr auto; gap: 14px; align-items: center; padding: 12px 16px; border-radius: var(--radius-sm); background: var(--surface); border: 1px solid var(--line); margin-bottom: 8px; }
+.acal-item.past { opacity: .5; }
+.acal-item.next { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.acal-item.is-final { border-color: color-mix(in srgb, var(--neg) 45%, var(--line)); }
+.acal-date { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.acal-date small { display: block; font-weight: 400; color: var(--text-3); }
+.acal-label { display: flex; align-items: center; gap: 10px; font-size: 15px; }
+.acal-label .warn { color: var(--neg); font-size: 13px; }
+.acal-when { font-size: 13px; color: var(--text-2); white-space: nowrap; }
+.pf-check { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); margin-top: 8px; cursor: pointer; }
+.pf-check input { accent-color: var(--accent); }
+.pf-check.on { color: var(--accent); font-weight: 600; }
+.pf-badge { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 980px; background: var(--accent-soft); color: var(--accent); }
+.pf-meter { display: flex; gap: 4px; max-width: 720px; }
+.pf-meter i { flex: 1; height: 8px; border-radius: 3px; background: var(--track); }
+.pf-meter i.used { background: var(--accent); } .pf-meter i.prog { background: color-mix(in srgb, var(--accent) 55%, transparent); } .pf-meter i.plan { background: color-mix(in srgb, var(--accent) 25%, transparent); }
+.pf-meter i.over { background: var(--neg); }
+.pf-rows { display: grid; gap: 6px; font-size: 14px; max-width: 720px; margin-top: 14px; }
+.pf-rows div { display: flex; justify-content: space-between; gap: 12px; }
+.pf-rows span:last-child { color: var(--text-2); }
+@media (max-width: 760px) {
+  .acal-item { grid-template-columns: 1fr; gap: 4px; }
 }
