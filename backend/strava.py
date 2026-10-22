@@ -183,7 +183,7 @@ def sync_strava(full=False):
     if full and note is None:   # activities deleted on Strava disappear from a full re-read
         cutoff = after.date().isoformat()
         for aid, d in list(stored.items()):
-            if aid not in seen and (d.get("date") or "") >= cutoff:
+            if aid not in seen and (d.get("date") or "") >= cutoff and d.get("source") != "strava_export":
                 col.document(aid).delete(); stored.pop(aid); removed += 1
 
     details = 0
@@ -204,6 +204,46 @@ def sync_strava(full=False):
     ref.set({"last_sync": firestore.SERVER_TIMESTAMP, "synced_through": newest or after.timestamp()}, merge=True)
     runs = sum(1 for d in stored.values() if d.get("sport") in RUN_TYPES)
     return {"activities": len(seen), "runs": runs, "details": details, "removed": removed, "note": note}
+
+
+# ---------------------------------------------------------------- export import
+def _num(v, lo=0, hi=1e7):
+    if v in (None, ""):
+        return None
+    v = float(v)
+    if not lo <= v <= hi or v != v:
+        raise ValueError("number out of range")
+    return v
+
+
+def clean_export(a):
+    """Validate one run from the browser's export parser -> stored activity doc."""
+    aid = str(a["id"])
+    if not aid.isdigit() or len(aid) > 20:
+        raise ValueError("bad id")
+    day = date.fromisoformat(str(a["date"])).isoformat()
+    sport = str(a.get("sport") or "Run")
+    if sport not in RUN_TYPES:
+        raise ValueError("only runs are imported")
+    start = str(a.get("start_local") or "")[:19]
+    if start:
+        datetime.fromisoformat(start)
+    splits = [{"n": int(x["n"]), "distance_m": _num(x.get("distance_m"), 0, 5000), "moving_s": _num(x.get("moving_s"), 0, 36000),
+               "elev_m": _num(x.get("elev_m"), -2000, 2000), "avg_hr": _num(x.get("avg_hr"), 0, 260)}
+              for x in (a.get("splits") or [])[:120]]
+    efforts = [{"name": x["name"], "elapsed_s": _num(x.get("elapsed_s"), 1, 400000), "distance_m": _num(x.get("distance_m"), 1, 1e6), "pr_rank": None}
+               for x in (a.get("best_efforts") or []) if x.get("name") in BEST_EFFORTS]
+    poly = str(a.get("polyline") or "")
+    if len(poly) > 60000:
+        raise ValueError("route too long")
+    return {"id": aid, "source": "strava_export", "name": str(a.get("name") or "Run")[:120], "sport": sport,
+            "date": day, "start_local": start or None, "distance_m": _num(a.get("distance_m"), 0, 1e6),
+            "moving_s": _num(a.get("moving_s"), 0, 400000), "elapsed_s": _num(a.get("elapsed_s"), 0, 400000),
+            "elev_m": _num(a.get("elev_m"), 0, 20000), "avg_hr": _num(a.get("avg_hr"), 0, 260),
+            "max_hr": _num(a.get("max_hr"), 0, 260), "calories": _num(a.get("calories"), 0, 20000),
+            "description": str(a.get("description") or "")[:2000], "workout_type": 1 if a.get("race") else None,
+            "polyline": poly, "polyline_full": poly, "splits": splits, "best_efforts": efforts,
+            "has_detail": True}
 
 
 # ---------------------------------------------------------------- read helpers
@@ -327,7 +367,10 @@ def _register_routes():
         years = sorted({(r.get("date") or "")[:4] for r in list_runs()} - {""}, reverse=True)
         wsnap = user_ref().collection("integrations").document("whoop").get()
         whoop_on = bool(wsnap.exists and (wsnap.to_dict() or {}).get("access_token"))
+        esnap = user_ref().collection("integrations").document("strava_export").get()
+        li = (esnap.to_dict() or {}).get("last_import") if esnap.exists else None
         return jsonify(running_year(year) | {"strava": strava_status(), "whoop": {"connected": whoop_on},
+                                             "export": {"last_import": li.isoformat() if hasattr(li, "isoformat") else None},
                                              "years": years or [str(year)]})
 
     @bp.get("/api/runs")
@@ -357,6 +400,29 @@ def _register_routes():
             except (LookupError, PermissionError, RateLimited, requests.RequestException):
                 pass   # show the summary; details arrive with a later sync
         return jsonify(d)
+
+    @bp.post("/api/strava/import")
+    @require_owner
+    def strava_import():
+        """Runs parsed in the browser from Strava's account export (Settings > My Account > Download your data).
+        The zip can be hundreds of MB, so it never comes to the server; the page sends runs in batches."""
+        body = request.get_json(force=True) or {}
+        acts = body.get("activities") or []
+        if not isinstance(acts, list) or len(acts) > 60:
+            return jsonify(error="send at most 60 activities per request"), 400
+        col = _activities()
+        batch, saved = db.batch(), 0
+        for a in acts:
+            try:
+                doc = clean_export(a)
+            except (TypeError, ValueError, KeyError) as e:
+                return jsonify(error=f"activity {a.get('id') if isinstance(a, dict) else '?'}: {e}"), 400
+            batch.set(col.document(doc["id"]), doc, merge=True)
+            saved += 1
+        batch.commit()
+        meta = user_ref().collection("integrations").document("strava_export")
+        meta.set({"last_import": firestore.SERVER_TIMESTAMP}, merge=True)
+        return jsonify(ok=True, saved=saved)
 
     @bp.post("/api/strava/connect")
     @require_owner

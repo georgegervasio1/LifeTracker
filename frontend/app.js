@@ -1021,7 +1021,7 @@ async function loadConnect() {
   const st = run?.strava;
   $("stravaStatus").textContent = st?.connected
     ? `Connected${st.athlete ? ` as ${st.athlete}` : ""}${st.last_sync ? ` · last synced ${new Date(st.last_sync).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : " · not synced yet"}`
-    : "Runs with routes, mileage, pace, splits and best efforts. Feeds Running and Race Training.";
+    : "Runs with routes, mileage, pace, splits and best efforts. Feeds Running and Race Training. Live sync needs a Strava subscription.";
   $("stravaConnect").classList.toggle("hidden", !!st?.connected);
   $("stravaSync").classList.toggle("hidden", !st?.connected);
   $("stravaDisconnect").classList.toggle("hidden", !st?.connected);
@@ -1125,14 +1125,16 @@ let runYear = null, runData = null, runSyncing = false;
 async function loadRunning() {
   const y = runYear || new Date().getFullYear();
   const d = runData = await api(`/api/running?year=${y}`);
-  const on = d.strava.connected || d.whoop.connected;
+  const on = d.strava.connected || d.whoop.connected || !!d.export?.last_import;
   $("runEmpty").classList.toggle("hidden", on || d.runs.length);
   $("runBody").classList.toggle("hidden", !on && !d.runs.length);
   $("runYear").innerHTML = [...new Set([String(new Date().getFullYear()), ...d.years])].sort().reverse()
     .map((v) => `<option ${+v === y ? "selected" : ""}>${v}</option>`).join("");
-  $("runSync").classList.toggle("hidden", !on);
-  $("runStatus").textContent = !d.strava.connected && d.whoop.connected
-    ? "Runs from WHOOP. Route maps and splits need Strava."
+  $("runSync").classList.toggle("hidden", !d.strava.connected && !d.whoop.connected);
+  $("runImportBtn").classList.toggle("hidden", d.strava.connected || !d.runs.length);
+  const fromExport = d.export?.last_import ? `Strava export imported ${new Date(d.export.last_import).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : "";
+  $("runStatus").textContent = !d.strava.connected
+    ? [fromExport, d.whoop.connected ? "new runs from WHOOP" : ""].filter(Boolean).join(" · ").replace(/^n/, "N")
     : on ? (d.strava.last_sync ? `Synced ${new Date(d.strava.last_sync).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "Not synced yet")
       + (d.details_missing ? ` · ${d.details_missing} runs still loading splits` : "")
     : "";
@@ -1257,6 +1259,27 @@ $("stravaDisconnect").onclick = async () => {
   if (!confirm("Disconnect Strava? Your synced runs stay in LifeTracker.")) return;
   await api("/api/strava", { method: "DELETE" }); toast("Strava disconnected"); loadConnect();
 };
+
+// Strava data export (zip) → runs, parsed in the browser, sent in batches
+async function importStravaExport(file) {
+  const status = (t) => { $("runStatus").textContent = t; toast(t); };
+  try {
+    status("Reading your Strava export…");
+    const { parseStravaExport } = await import("./stravaexport.js");
+    let shown = 0;
+    const { runs, noMap } = await parseStravaExport(file, (n, total) => {
+      if (n - shown >= 25 || n === total) { shown = n; $("runStatus").textContent = `Reading runs · ${n} of ${total}`; }
+    });
+    if (!runs.length) return toast("No runs found in that export");
+    for (let i = 0; i < runs.length; i += 40) {
+      $("runStatus").textContent = `Saving · ${Math.min(i + 40, runs.length)} of ${runs.length}`;
+      await api("/api/strava/import", { method: "POST", body: JSON.stringify({ activities: runs.slice(i, i + 40) }) });
+    }
+    toast(`Imported ${runs.length} runs${noMap ? ` · ${noMap} without a route file LifeTracker can read` : ""}`);
+    if (parseRoute().tab !== "running") location.hash = "#/health/running"; else loadRunning();
+  } catch (e) { toast(e.message); }
+}
+$$(".strava-zip").forEach((inp) => (inp.onchange = () => { const f = inp.files[0]; inp.value = ""; if (f) importStravaExport(f); }));
 
 // ---------- Race training ----------
 const RACE_KIND = { easy: "Easy", long: "Long", tempo: "Tempo", intervals: "Intervals", race: "Race", rest: "Rest" };

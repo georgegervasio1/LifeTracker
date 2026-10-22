@@ -1033,3 +1033,9 @@ a.acct-name:hover strong { color: var(--accent); }
   .tx-table td:nth-child(4) { overflow: hidden; text-overflow: ellipsis; }
   .tx-table td.empty { grid-column: 1 / -1; }
 }
+.empty-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.empty-state .hint { margin: 18px auto 0; max-width: 480px; }
+@media (max-width: 760px) {
+  .run-head { flex-direction: column; align-items: stretch; }
+  .run-controls { flex-wrap: wrap; }
+}

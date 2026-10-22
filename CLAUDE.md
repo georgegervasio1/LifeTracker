@@ -49,7 +49,11 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
   history with PRs (Epley e1RM; PR = beats all *earlier* sessions on top weight or e1RM), WHOOP merge, import.
 - `strava.py`: Strava OAuth (scope `read,activity:read_all`), sync of activities since Jan 1 last year (list
   200/page, then details for up to 30 runs per sync: splits, best efforts, full route), Running tab data
-  (`/api/running?year=`), `/api/runs` for the calendar. Rate limit 100 reads / 15 min.
+  (`/api/running?year=`), `/api/runs` for the calendar. Rate limit 100 reads / 15 min. **The Strava API needs a paid
+  Strava subscription**, so the main path is `frontend/stravaexport.js`: the owner's account-export zip is parsed in the
+  browser (activities.csv + GPX/TCX tracks → route, mile splits, best efforts; FIT not parsed) and posted in batches to
+  `/api/strava/import` (`source: "strava_export"`). WHOOP runs (`workouts`, type Running, with `distance_m`) fill in
+  runs Strava doesn't have; the same run on both (same day, starts within 30 min) shows once.
 - `raceplan.py`: race training plans (5K, 10K, half, marathon). `build_plan` is pure: Monday-based weeks, base /
   build / peak / taper / race week, ~10%/week ramp with a cutback every 4th week, long run capped by share of the
   week, paces from Daniels' VDOT (current fitness from Strava best efforts or races in the last 10 weeks; goal time

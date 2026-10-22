@@ -408,13 +408,18 @@
             </div>
             <div class="run-controls">
               <select class="select" id="runYear" aria-label="Year"></select>
+              <label class="btn btn-secondary btn-sm" id="runImportBtn">Import Strava export<input type="file" class="strava-zip" accept=".zip,application/zip" hidden /></label>
               <button class="btn btn-secondary btn-sm" id="runSync">Sync</button>
             </div>
           </div>
           <div class="card empty-state hidden" id="runEmpty">
-            <h3>Connect WHOOP or Strava to see your runs</h3>
-            <p>WHOOP adds mileage, pace and heart rate for runs it tracks. Strava adds routes, splits and best efforts.</p>
-            <a class="btn btn-primary" href="#/health/connect">Connect</a>
+            <h3>Bring in your runs</h3>
+            <p>WHOOP adds mileage, pace and heart rate for runs it tracks. Your Strava data export adds routes, splits and best efforts.</p>
+            <div class="empty-actions">
+              <label class="btn btn-primary">Import Strava export<input type="file" class="strava-zip" accept=".zip,application/zip" hidden /></label>
+              <a class="btn btn-secondary" href="#/health/connect">Connect WHOOP</a>
+            </div>
+            <p class="hint">On strava.com: Settings → My Account → Download or Delete Your Account → Request your archive. Strava emails a zip; choose it here.</p>
           </div>
           <div id="runBody">
             <div class="kpis">
@@ -540,9 +545,11 @@
             <div>
               <h3>Strava</h3>
               <p id="stravaStatus">Checking connection…</p>
+              <p class="hint" id="stravaExportNote">No subscription? Import your free data export instead: on strava.com, Settings → My Account → Download or Delete Your Account → Request your archive. Re-import any time for newer runs.</p>
             </div>
             <div class="connect-actions">
-              <button class="btn btn-primary hidden" id="stravaConnect">Connect Strava</button>
+              <label class="btn btn-primary">Import export<input type="file" class="strava-zip" accept=".zip,application/zip" hidden /></label>
+              <button class="btn btn-secondary hidden" id="stravaConnect">Connect (subscribers)</button>
               <button class="btn btn-secondary hidden" id="stravaSync">Sync now</button>
               <button class="text-btn hidden" id="stravaDisconnect">Disconnect</button>
             </div>

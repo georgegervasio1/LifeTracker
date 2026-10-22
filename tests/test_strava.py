@@ -110,6 +110,26 @@ for k in ("a", "b", "c", "d"):
     DATA.pop(f"users/dev/workouts/whoop_{k}")
 print("WHOOP runs OK")
 
+# 3c. Strava data export import (parsed in the browser, validated here)
+exp = {"id": "555", "sport": "Run", "name": "Export run", "date": d(6), "start_local": f"{d(6)}T06:30:00",
+       "distance_m": 8046.7, "moving_s": 2400, "elapsed_s": 2460, "elev_m": 20, "avg_hr": 151, "polyline": "abc",
+       "splits": [{"n": 1, "distance_m": 1609.3, "moving_s": 480, "elev_m": 1.5, "avg_hr": 150}],
+       "best_efforts": [{"name": "5K", "elapsed_s": 1490, "distance_m": 5000}, {"name": "bogus", "elapsed_s": 1}]}
+assert c.post("/api/strava/import", json={"activities": [exp]}).get_json()["saved"] == 1
+e = DATA["users/dev/strava_activities/555"]
+assert e["source"] == "strava_export" and e["has_detail"] and e["polyline_full"] == "abc" and [b["name"] for b in e["best_efforts"]] == ["5K"]
+assert c.post("/api/strava/import", json={"activities": [exp | {"sport": "Ride"}]}).status_code == 400
+assert c.post("/api/strava/import", json={"activities": [exp | {"id": "../x"}]}).status_code == 400
+assert c.post("/api/strava/import", json={"activities": [exp | {"distance_m": -5}]}).status_code == 400
+assert c.post("/api/strava/import", json={"activities": [exp] * 61}).status_code == 400
+y3 = c.get(f"/api/running?year={today.year}").get_json()
+assert "555" in [r["id"] for r in y3["runs"]] and y3["export"]["last_import"]
+assert c.get("/api/running/555").get_json()["splits"][0]["moving_s"] == 480
+calls.clear(); c.post("/api/strava/sync")            # export runs already have detail: no API detail calls for them
+assert not any(x[1] == "/activities/555" for x in calls if x[0] == "GET")
+DATA.pop("users/dev/strava_activities/555")
+print("export import OK")
+
 # 4. VDOT matches Daniels' published table (VDOT 50 = 19:57 5K, 3:10:49 marathon, T 6:51/mi)
 v = raceplan.vdot(5000, 19 * 60 + 57)
 assert abs(v - 50.0) < 0.1, v
