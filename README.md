@@ -1,6 +1,7 @@
 # LifeTracker
 
-Personal finance dashboard: Chase (bank + credit cards) and UBS (investments) via Plaid, plus Venmo CSV imports.
+A personal "life OS": Finances (Plaid, statement PDFs and CSV imports), Health (workouts and WHOOP), Education
+(GPA, degree audit, planner, calendar) and Goals. Technical notes for contributors are in `CLAUDE.md`.
 
 - **Frontend:** static HTML/JS on GitHub Pages (`/frontend`)
 - **Backend:** Flask on Google Cloud Run (`/backend`), Firestore for storage
@@ -60,7 +61,7 @@ Settings → Pages → Source: **GitHub Actions**. Push to `main` → `pages.yml
 
 ## 5. AI assistant (Claude)
 
-The **🤖 AI Assistant** tab sends your question to `POST /api/chat`. The backend calls the Claude API with
+The **Assistant** chat sends your question to `POST /api/chat`. The backend calls the Claude API with
 three read-only tools (`get_spending_summary`, `search_transactions`, `get_investments`) scoped to your own
 data, so Claude looks up real numbers before answering. It cannot change data or move money.
 
