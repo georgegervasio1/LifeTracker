@@ -6,7 +6,7 @@ Personal finance dashboard: Chase (bank + credit cards) and UBS (investments) vi
 - **Backend:** Flask on Google Cloud Run (`/backend`), Firestore for storage
 - **Auth:** Firebase Google Sign-In; the API only answers to `ALLOWED_EMAIL`
 
-> ⚠️ Keep this repo **private**. Never commit `.env`, CSVs, or keys — `.gitignore` blocks them.
+> The repo is public: never commit `.env`, CSVs, keys or personal data. `.gitignore` blocks the common ones.
 
 ---
 
@@ -42,18 +42,16 @@ printf "you@georgetown.edu" | gcloud secrets create allowed-email --data-file=-
 Then in the Firebase console, add Firebase to the same project, enable **Authentication → Google**,
 add `georgegervasio1.github.io` under **Authorized domains**, and paste the web config into `frontend/config.js`.
 
-## 3. GitHub → Cloud Run (keyless)
+## 3. Auto-deploy the backend (Cloud Build)
 
-Create a Workload Identity pool + provider for this repo and a deploy service account
-(roles: Cloud Run Admin, Cloud Build Editor, Service Account User, Artifact Registry Writer,
-Secret Manager Secret Accessor). Add two repo secrets:
+A Cloud Build trigger (region us-east4, push to `main`) runs `/cloudbuild.yaml`: build the root `Dockerfile`,
+push to Artifact Registry, deploy to Cloud Run. The trigger's service account needs `run.admin`,
+`iam.serviceAccountUser`, `artifactregistry.writer` and `logging.logWriter`. Copy the Cloud Run URL into
+`frontend/config.js`.
 
-| Secret | Value |
-|---|---|
-| `GCP_WIF_PROVIDER` | `projects/<NUMBER>/locations/global/workloadIdentityPools/github/providers/github` |
-| `GCP_DEPLOY_SA` | `github-deployer@<PROJECT>.iam.gserviceaccount.com` |
+## Tests
 
-Push to `main` → `deploy-backend.yml` deploys the API. Copy the Cloud Run URL into `frontend/config.js`.
+`python tests/run_all.py` runs the offline suite (in-memory Firestore, no network). See `CLAUDE.md`.
 
 ## 4. GitHub Pages
 
