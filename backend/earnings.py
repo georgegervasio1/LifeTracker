@@ -9,6 +9,7 @@ with a 2020-or-later Form W-4. The year-end estimate uses the 2026 brackets. Eve
 the user's pay stubs and tax return are the source of truth.
 """
 import datetime as dt
+import re
 from flask import Blueprint, jsonify, request
 
 bp = Blueprint("earnings", __name__)
@@ -42,12 +43,18 @@ TAX = {
     },
 }
 PERIODS = {"weekly": 52, "biweekly": 26, "semimonthly": 24, "monthly": 12}
+WORKDAYS_PER_YEAR = 260          # partial periods are paid at salary / 260 per workday
+
+# The owner's past summer job, fixed so there's nothing to enter. The employer's name and the actual
+# deposits come from the bank feed at runtime (payroll deposits in the job's window), not from this file.
+SEED = {"role": "Summer Associate", "annual_salary": 225000, "start": "2026-05-26", "end": "2026-07-31",
+        "frequency": "semimonthly", "work_state": "IL", "resident_state": "DC", "archived": True}
 DEFAULT_SETTINGS = {
     "employer": "", "role": "", "annual_salary": None, "start": None, "end": None,
     "frequency": "weekly", "pay_lag_days": 0,
     "filing_status": "single", "w4_step2": False, "w4_credits": 0, "w4_other_income": 0, "w4_deductions": 0, "w4_extra": 0,
     "work_state": "IL", "resident_state": "DC", "il_allow1": 1, "il_allow2": 0,
-    "dc_withholding": 0, "dc_std_deduction": None, "other_income": 0,
+    "dc_withholding": 0, "dc_std_deduction": None, "other_income": 0, "archived": False,
 }
 
 
@@ -130,7 +137,25 @@ def il_withholding(wages, pp, s, T):
 
 
 # ---------------------------------------------------------------- the engine
-def compute(settings, actuals=()):
+def match_deposits(checks, deposits):
+    """Attach the bank deposit for each paycheck (closest payroll deposit within 4 days)."""
+    pool = sorted(deposits, key=lambda d: d["date"])
+    used = set()
+    for c in checks:
+        pd = _d(c["pay_date"])
+        best = None
+        for i, d in enumerate(pool):
+            gap = abs((_d(d["date"]) - pd).days)
+            if i not in used and gap <= 4 and (best is None or gap < best[1]):
+                best = (i, gap)
+        if best:
+            used.add(best[0]); d = pool[best[0]]
+            c["deposit"] = d["amount"]; c["deposit_date"] = d["date"]
+            c["other_deductions"] = r2(c["net"] - d["amount"])
+    return [d for i, d in enumerate(pool) if i not in used]
+
+
+def compute(settings, actuals=(), deposits=(), reimbursements=()):
     s = {**DEFAULT_SETTINGS, **(settings or {})}
     missing = [k for k in ("annual_salary", "start", "end") if not s.get(k)]
     if missing:
@@ -150,8 +175,11 @@ def compute(settings, actuals=()):
     for ps, pe in pay_periods(start, end, s["frequency"]):
         worked = _workdays(max(ps, start), min(pe, end))
         full = _workdays(ps, pe)
-        gross = r2(per_full * worked / full) if full else 0.0
+        gross = r2(per_full) if worked == full else r2(salary / WORKDAYS_PER_YEAR * worked)
         pay_date = pe + dt.timedelta(days=int(s.get("pay_lag_days") or 0))
+        if s["frequency"] in ("semimonthly", "monthly"):
+            while pay_date.weekday() >= 5:
+                pay_date -= dt.timedelta(days=1)
         fed, fed_math = federal_withholding(gross, pp, s, T)
         il, il_math = il_withholding(gross, pp, s, T) if s.get("work_state") == "IL" else (0.0, None)
         ss_room = max(0.0, T["ss_wage_base"] - ytd["ss_wages"])
@@ -189,10 +217,17 @@ def compute(settings, actuals=()):
     for c in checks:
         cum += c["net"]; c["cum_net"] = r2(cum)
 
+    unmatched = match_deposits(checks, deposits) if deposits else []
     tot = {k: r2(sum(c[k] for c in checks)) for k in ("gross", "federal", "state", "dc", "ss", "medicare", "net")}
+    dep = [c for c in checks if "deposit" in c]
+    tot["deposited"] = r2(sum(c["deposit"] for c in dep)) if dep else None
+    tot["deposit_checks"] = len(dep)
+    tot["other_deductions"] = r2(sum(c["other_deductions"] for c in dep)) if dep else 0.0
+    tot["reimbursements"] = r2(sum(r["amount"] for r in reimbursements))
     tot["checks"] = len(checks)
     tot["actual_checks"] = sum(c["source"] == "actual" for c in checks)
     return {"settings": s, "ready": True, "year": year, "checks": checks, "totals": tot,
+            "reimbursements": list(reimbursements), "unmatched_deposits": unmatched,
             "year_end": year_end(s, tot, T), "tables": {"federal": T["brackets"]["mfj" if s["filing_status"] == "mfj" else "single"],
                                                        "dc": T["dc_brackets"], "il_rate": T["il_rate"]}}
 
@@ -266,7 +301,7 @@ def clean_settings(b):
                 raise ValueError("filing status must be single or mfj")
         elif k in ("work_state", "resident_state"):
             v = str(v or "").upper()[:2]
-        elif k == "w4_step2":
+        elif k in ("w4_step2", "archived"):
             v = bool(v)
         elif k in ("il_allow1", "il_allow2", "pay_lag_days"):
             v = int(v or 0)
@@ -282,11 +317,34 @@ def clean_settings(b):
     return out
 
 
+def bank_payroll(start, end):
+    """Payroll deposits (and the same employer's other deposits, e.g. expense reimbursements) from the
+    bank feed between the first day and three weeks after the last. Money in is negative in the feed."""
+    lo = (_d(start) - dt.timedelta(days=7)).isoformat()
+    hi = (_d(end) + dt.timedelta(days=21)).isoformat()
+    txs = [d.to_dict() for d in user_ref().collection("transactions").where("date", ">=", lo).where("date", "<=", hi).stream()]
+    inflow = [t for t in txs if (t.get("amount") or 0) < 0]
+    pay = [t for t in inflow if "payroll" in (t.get("merchant") or "").lower()]
+    if not pay:
+        return None, [], []
+    employer = re.split(r"\s+payroll\b", pay[0]["merchant"], flags=re.I)[0].strip()
+    key = employer.lower()[:12]
+    other = [t for t in inflow if t not in pay and (t.get("merchant") or "").lower().startswith(key)]
+    as_dep = lambda t: {"date": t["date"], "amount": r2(-t["amount"]), "merchant": t.get("merchant")}
+    return employer, [as_dep(t) for t in pay], [as_dep(t) for t in other]
+
+
 def state():
     snap = _settings_ref().get()
-    settings = snap.to_dict() if snap.exists else {}
+    settings = snap.to_dict() if snap.exists else dict(SEED)
     actuals = [d.to_dict() | {"id": d.id} for d in user_ref().collection("paychecks").stream()]
-    return compute(settings, actuals) | {"actuals": actuals}
+    employer, deposits, reimb = (None, [], [])
+    s = {**DEFAULT_SETTINGS, **settings}
+    if s.get("start") and s.get("end"):
+        employer, deposits, reimb = bank_payroll(s["start"], s["end"])
+    if employer and not settings.get("employer"):
+        settings = {**settings, "employer": employer}
+    return compute(settings, actuals, deposits, reimb) | {"actuals": actuals}
 
 
 def _register_routes():

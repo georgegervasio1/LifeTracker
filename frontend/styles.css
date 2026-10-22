@@ -683,3 +683,4 @@ button.h-row:hover span:first-child { color: var(--accent); }
 .brate { position: relative; display: flex; align-items: center; height: 100%; padding-left: 7px; font-size: 11px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; }
 #payStates .card .math { margin-top: 8px; }
 @media (max-width: 760px) { .pay-math-grid { grid-template-columns: 1fr; gap: 8px; } }
+.pay-caption { caption-side: bottom; text-align: left; font-size: 13px; color: var(--text-2); padding: 12px 20px 16px; }
