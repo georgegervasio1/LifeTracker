@@ -424,6 +424,17 @@
           </div>
         </div>
 
+        <!-- Syllabi -->
+        <div class="panel wrap" data-panel="syllabi">
+          <div class="syl-top">
+            <div><h2 class="title">Syllabi</h2><p class="eyebrow" id="sylTerm"></p></div>
+            <label class="text-btn" style="cursor:pointer">Import file…<input type="file" id="sylImport" accept=".json" hidden /></label>
+          </div>
+          <input type="file" id="sylFile" accept=".pdf,.docx,.txt,.md" hidden />
+          <div class="card syl-week" id="sylWeek"></div>
+          <div id="sylList" class="syl-list"></div>
+        </div>
+
         <!-- Grades -->
         <div class="panel wrap" data-panel="grades">
           <div class="card solver">

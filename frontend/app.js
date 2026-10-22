@@ -23,7 +23,7 @@ const SECTIONS = {
   health: { title: "Health", tabs: [
     ["overview", "Overview"], ["planner", "Planner"], ["history", "History"], ["calendar", "Calendar"], ["connect", "Connect"]] },
   education: { title: "Education", tabs: [
-    ["overview", "Overview"], ["grades", "Grades & GPA"], ["audit", "Degree Audit"], ["planner", "Planner"], ["calendar", "Calendar"]] },
+    ["overview", "Overview"], ["syllabi", "Syllabi"], ["grades", "Grades & GPA"], ["audit", "Degree Audit"], ["planner", "Planner"], ["calendar", "Calendar"]] },
   goals: { title: "Goals", tabs: [] },
 };
 
@@ -560,6 +560,7 @@ async function loadEducation(tab) {
   if (tab === "audit") renderAudit();
   if (tab === "planner") renderPlanner();
   if (tab === "calendar") renderAcadCal();
+  if (tab === "syllabi") renderSyllabi();
 }
 
 // Same math as education.compute(), used for instant what-if on the Grades tab.
@@ -856,9 +857,109 @@ const eduImport = (inp) => async () => {
 $("eduImportFile").onchange = eduImport($("eduImportFile"));
 $("eduImportFile2").onchange = eduImport($("eduImportFile2"));
 
+// Syllabi: one card per current course — what's next, grading, contacts, the full class schedule, the original file
+let sylUploadTarget = null;   // {syllabus_id} or {course_id} for the hidden file input
+const SYL_KIND = { assignment: "Due", paper: "Paper", presentation: "Presentation", exam: "Exam", reading: "Reading", other: "Note" };
+function sylTerm() {
+  const terms = edu.computed.profile.terms || [];
+  return terms.find((t) => edu.courses.some((c) => c.term === t && c.status === "enrolled")) || terms[terms.length - 1];
+}
+function sylItems(s) {   // sessions + deadlines on one dated list
+  const rows = (s.sessions || []).map((r) => ({ ...r, type: r.no_class ? "off" : "class" }))
+    .concat((s.deadlines || []).map((d) => ({ ...d, type: "due" })));
+  return rows.sort((a, b) => (a.date || "9999").localeCompare(b.date || "9999") || (a.type === "due") - (b.type === "due"));
+}
+function renderSyllabi() {
+  const term = sylTerm(), today = dstr(new Date()), syl = edu.syllabi || [];
+  const courses = edu.courses.filter((c) => c.term === term && ["enrolled", "planned"].includes(c.status));
+  const byCourse = Object.fromEntries(syl.filter((s) => s.course_id).map((s) => [s.course_id, s]));
+  const loose = syl.filter((s) => !s.course_id || !courses.some((c) => c.id === s.course_id));
+  $("sylTerm").textContent = term ? `${term} · ${courses.length} course${courses.length === 1 ? "" : "s"}` : "";
+  const fd = (d, o = { weekday: "short", month: "short", day: "numeric" }) => new Date(d + "T00:00").toLocaleDateString("en-US", o);
+
+  // next 7 days across every syllabus
+  const week = dstr(new Date(Date.now() + 7 * 864e5));
+  const soon = syl.flatMap((s) => sylItems(s).filter((r) => r.date && r.date >= today && r.date <= week && (r.type === "due" || r.reading || r.type === "off"))
+    .map((r) => ({ ...r, course: s.short || edu.courses.find((c) => c.id === s.course_id)?.title || s.course_title })))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  $("sylWeek").innerHTML = syl.length ? `<div class="card-head"><h3>Next 7 days</h3><span class="card-meta">From your syllabi</span></div>` +
+    (soon.length ? soon.map((r) => `<div class="syl-row ${r.type}"><span class="syl-date">${fd(r.date)}</span><span><strong>${esc(r.course)}</strong> · ${r.type === "due" ? `<span class="syl-badge">${SYL_KIND[r.kind] || "Due"}</span> ${esc(r.title)}${r.time ? ` · ${esc(r.time)}` : ""}` : r.type === "off" ? "No class" : esc(r.reading)}</span></div>`).join("")
+      : `<p class="hint">Nothing due or assigned this week.</p>`) : "";
+  $("sylWeek").classList.toggle("hidden", !syl.length);
+
+  const card = (c, s) => {
+    const title = c?.title || s?.course_title || "Course";
+    const head = `<div class="syl-head"><div><h3>${esc(title)}</h3><p class="syl-sub">${esc([s?.professor || c?.professor, s?.meets || c?.meetings_text, s?.location].filter(Boolean).join(" · "))}</p></div>
+      <div class="syl-actions">${s?.has_file ? `<button class="btn btn-secondary btn-sm" data-sylfile="${s.id}">Original</button>` : ""}
+        <button class="btn ${s ? "btn-secondary" : "btn-primary"} btn-sm" data-sylup="${s ? `s:${s.id}` : `c:${c.id}`}">${s?.has_file ? "Replace file" : "Upload syllabus"}</button></div></div>`;
+    if (!s) return `<div class="card syl-card">${head}<p class="hint">No syllabus yet. Upload the PDF or Word file and it's read into dates, readings and grading.</p></div>`;
+    const items = sylItems(s), next = items.filter((r) => r.date && r.date >= today);
+    const nextDue = next.find((r) => r.type === "due"), nextClass = next.find((r) => r.type === "class");
+    const link = !c ? `<label class="syl-link">Course <select class="select" data-syllink="${s.id}"><option value="">Not linked</option>${courses.map((x) => `<option value="${x.id}">${esc(x.title)}</option>`).join("")}</select></label>` : "";
+    return `<div class="card syl-card">${head}${link}
+      ${s.summary ? `<p class="syl-summary">${esc(s.summary)}</p>` : ""}
+      <div class="syl-next">
+        <div><span class="kpi-label">Next class</span>${nextClass ? `<strong>${fd(nextClass.date)}</strong><span>${esc(nextClass.title || "")}</span>${nextClass.reading ? `<span class="syl-read">${esc(nextClass.reading)}</span>` : ""}` : `<span class="muted">No more classes listed</span>`}</div>
+        <div><span class="kpi-label">Next due</span>${nextDue ? `<strong>${fd(nextDue.date)}${nextDue.time ? ` · ${esc(nextDue.time)}` : ""}</strong><span>${esc(nextDue.title)}</span>` : `<span class="muted">Nothing else due</span>`}</div>
+      </div>
+      <div class="syl-grid">
+        ${(s.grading || []).length ? `<div><h4>Grading</h4>${s.grading.map((g) => `<div class="syl-kv"><span>${esc(g.item)}</span><span>${esc(g.weight || "")}</span></div>`).join("")}${s.exam ? `<p class="syl-note">${esc(s.exam)}</p>` : ""}</div>` : ""}
+        <div><h4>Contact</h4>${[["Email", s.email], ["Office", s.office], ["Office hours", s.office_hours], ["Materials", s.textbook]].filter(([, v]) => v).map(([k, v]) => `<div class="syl-kv"><span>${k}</span><span>${k === "Email" ? `<a href="mailto:${esc(v)}">${esc(v)}</a>` : esc(v)}</span></div>`).join("") || `<p class="hint">—</p>`}</div>
+      </div>
+      ${(s.policies || []).length ? `<details class="syl-more"><summary>Policies (${s.policies.length})</summary><ul>${s.policies.map((p) => `<li>${esc(p)}</li>`).join("")}</ul></details>` : ""}
+      ${items.length ? `<details class="syl-more"><summary>Full schedule (${items.length})</summary><div class="syl-sched">${items.map((r) => `<div class="syl-row ${r.type} ${r.date && r.date < today ? "past" : ""}"><span class="syl-date">${r.date ? fd(r.date) : "TBA"}</span><span>${r.type === "due" ? `<span class="syl-badge">${SYL_KIND[r.kind] || "Due"}</span> ` : ""}${r.type === "off" ? "<em>No class</em> " : ""}<strong>${esc(r.title || "")}</strong>${r.time ? ` · ${esc(r.time)}` : ""}${r.reading ? `<span class="syl-read">${esc(r.reading)}</span>` : ""}${r.note ? `<span class="syl-note">${esc(r.note)}</span>` : ""}</span></div>`).join("")}</div></details>` : ""}
+      ${s.parse_error ? `<p class="hint neg">Couldn't read the file automatically: ${esc(s.parse_error)}</p>` : ""}
+      <div class="syl-foot">${s.file_name ? `<span class="tag">${esc(s.file_name)}</span>` : ""}<span style="flex:1"></span><button class="text-btn danger" data-syldel="${s.id}">Remove</button></div>
+    </div>`;
+  };
+  $("sylList").innerHTML = courses.map((c) => card(c, byCourse[c.id])).join("") + loose.map((s) => card(null, s)).join("")
+    || `<div class="card empty-state"><h3>No courses this term</h3><p>Add your courses in the Planner, then upload each syllabus here.</p></div>`;
+
+  $$("[data-sylup]").forEach((b) => (b.onclick = () => {
+    const [k, id] = b.dataset.sylup.split(":");
+    sylUploadTarget = k === "s" ? { syllabus_id: id } : { course_id: id };
+    $("sylFile").click();
+  }));
+  $$("[data-sylfile]").forEach((b) => (b.onclick = async () => {
+    const w = window.open("", "_blank");
+    try {
+      const res = await fetch(`${API_BASE}/api/edu/syllabi/${b.dataset.sylfile}/file`, { headers: { Authorization: `Bearer ${await auth.currentUser.getIdToken()}` } });
+      if (!res.ok) throw new Error("Couldn't open the file");
+      const url = URL.createObjectURL(await res.blob());
+      if (w) w.location = url; else location.href = url;
+    } catch (e) { w?.close(); toast(e.message); }
+  }));
+  $$("[data-syldel]").forEach((b) => (b.onclick = async () => {
+    if (!confirm("Remove this syllabus and its file?")) return;
+    try { edu = await api(`/api/edu/syllabi/${b.dataset.syldel}`, { method: "DELETE" }); renderSyllabi(); } catch (e) { toast(e.message); }
+  }));
+  $$("[data-syllink]").forEach((sel) => (sel.onchange = async () => {
+    if (!sel.value) return;
+    try { edu = await api(`/api/edu/syllabi/${sel.dataset.syllink}`, { method: "PATCH", body: JSON.stringify({ course_id: sel.value }) }); renderSyllabi(); } catch (e) { toast(e.message); }
+  }));
+}
+$("sylFile").onchange = async () => {
+  const f = $("sylFile").files[0]; $("sylFile").value = ""; if (!f || !sylUploadTarget) return;
+  const fdta = new FormData(); fdta.append("file", f);
+  Object.entries(sylUploadTarget).forEach(([k, v]) => fdta.append(k, v));
+  toast("Reading the syllabus…");
+  try {
+    const r = await api("/api/edu/syllabi/upload", { method: "POST", body: fdta });
+    edu = r; toast(r.parsed ? "Syllabus saved and read" : "Syllabus saved"); renderSyllabi();
+  } catch (e) { toast(e.message); }
+};
+$("sylImport").onchange = async () => {
+  const f = $("sylImport").files[0]; $("sylImport").value = ""; if (!f) return;
+  try {
+    const payload = JSON.parse(await f.text());
+    const r = await api("/api/edu/syllabi/import", { method: "POST", body: JSON.stringify(payload) });
+    edu = r; toast(`Imported ${r.imported} syllabi`); renderSyllabi();
+  } catch (e) { toast(e instanceof SyntaxError ? "That file isn't valid JSON" : e.message); }
+};
+
 // Academic calendar: GULC key dates + your finals, one semester at a time
 let acalTerm = null, acalMonth = null, acalDay = null;
-const KIND_LABEL = { classes: "Classes", deadline: "Deadline", holiday: "Holiday", break: "Break", exams: "Exam period", final: "Your final", other: "Other" };
+const KIND_LABEL = { assignment: "Due", classes: "Classes", deadline: "Deadline", holiday: "Holiday", break: "Break", exams: "Exam period", final: "Your final", other: "Other" };
 const dstr = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 function acalEvents() { return (edu.computed.calendar || {})[acalTerm] || []; }
 function renderAcadCal() {
@@ -871,7 +972,7 @@ function renderAcadCal() {
   if (!acalMonth || !inTerm(acalMonth)) acalMonth = today >= first && today <= lastD ? today.slice(0, 7) : first.slice(0, 7);
   $("acalTerms").innerHTML = terms.map((t) => `<button class="week-tab ${t === acalTerm ? "active" : ""}" data-aterm="${esc(t)}">${esc(t)}</button>`).join("");
   $$("[data-aterm]").forEach((b) => (b.onclick = () => { acalTerm = b.dataset.aterm; acalMonth = null; acalDay = null; renderAcadCal(); }));
-  $("acalLegend").innerHTML = ["classes", "deadline", "holiday", "exams", "final"].map((k) => `<span><i class="k-dot k-${k}"></i>${k === "holiday" ? "Holiday / break" : KIND_LABEL[k]}</span>`).join("");
+  $("acalLegend").innerHTML = ["classes", "deadline", "assignment", "holiday", "exams", "final"].map((k) => `<span><i class="k-dot k-${k}"></i>${k === "holiday" ? "Holiday / break" : k === "assignment" ? "Course due date" : KIND_LABEL[k]}</span>`).join("");
 
   // month grid
   const [y, m] = acalMonth.split("-").map(Number), f1 = new Date(y, m - 1, 1), last = new Date(y, m, 0);

@@ -605,6 +605,7 @@ button.h-row:hover span:first-child { color: var(--accent); }
 .k-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--text-3); flex: none; }
 .k-classes { background: var(--accent); } .k-deadline { background: var(--warn); } .k-holiday, .k-break { background: var(--pos); }
 .k-exams { background: var(--exam); } .k-final { background: var(--neg); } .k-other { background: var(--text-3); }
+.k-assignment { background: var(--text); }
 .acal .cc-day { cursor: default; }
 .acal .cc-day.has { color: var(--text); font-weight: 600; cursor: pointer; }
 .acal .cc-day.span { background: var(--bg-alt); border-radius: 10px; }
@@ -727,4 +728,44 @@ button.h-row:hover span:first-child { color: var(--accent); }
   .dollar-legend { grid-template-columns: 1fr 1fr; }
   .settle-row.total { grid-template-columns: 1fr auto; }
   .settle-row.total span:empty { display: none; }
+}
+
+/* ---------- Education: syllabi ---------- */
+.syl-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+.syl-top .eyebrow { margin-top: 4px; }
+.syl-week { margin-bottom: 20px; }
+.syl-list { display: grid; gap: 20px; }
+.syl-list .card + .card { margin-top: 0; }
+.syl-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.syl-sub { margin-top: 4px !important; }
+.syl-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.syl-summary { margin-top: 14px !important; }
+.syl-link { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); margin-top: 12px; }
+.syl-next { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 20px; }
+.syl-next > div { background: var(--bg-alt); border-radius: var(--radius-sm); padding: 14px 16px; display: flex; flex-direction: column; gap: 3px; font-size: 14px; min-width: 0; }
+.syl-next strong { font-weight: 600; font-variant-numeric: tabular-nums; }
+.syl-next .muted { color: var(--text-3); }
+.syl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 22px; }
+.syl-grid h4, .syl-more summary { font-size: 13px; font-weight: 600; color: var(--text-2); margin: 0 0 8px; }
+.syl-kv { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.syl-kv span:first-child { color: var(--text-2); min-width: 0; }
+.syl-kv span:last-child { text-align: right; min-width: 0; max-width: 62%; overflow-wrap: anywhere; flex: none; }
+.syl-kv a { color: var(--accent); }
+.syl-note { display: block; font-size: 13px; color: var(--text-3); margin-top: 4px; }
+.syl-read { display: block; font-size: 13px; color: var(--text-2); margin-top: 2px; }
+.syl-more { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; }
+.syl-more summary { cursor: pointer; margin: 0; }
+.syl-more ul { margin: 10px 0 0 18px; font-size: 14px; color: var(--text-2); display: grid; gap: 6px; }
+.syl-sched { margin-top: 10px; }
+.syl-row { display: grid; grid-template-columns: 112px 1fr; gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.syl-row:last-child { border-bottom: none; }
+.syl-row.past { opacity: .45; }
+.syl-row.off { color: var(--text-3); }
+.syl-date { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.syl-badge { display: inline-block; font-size: 11px; font-weight: 600; border-radius: 980px; padding: 2px 8px; background: var(--text); color: var(--surface); margin-right: 4px; vertical-align: 1px; }
+.syl-foot { display: flex; align-items: center; gap: 10px; margin-top: 16px; }
+@media (max-width: 720px) {
+  .syl-head { flex-direction: column; }
+  .syl-next, .syl-grid { grid-template-columns: 1fr; }
+  .syl-row { grid-template-columns: 1fr; gap: 2px; }
 }

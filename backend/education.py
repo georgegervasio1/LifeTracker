@@ -3,6 +3,7 @@
 Data (per user, under users/{uid}/):
   education/profile       -> school, program, terms, target GPA, transfer credits, requirement config
   edu_courses/{id}        -> one doc per course in any term (taken, current, planned or being considered)
+  edu_syllabi/{id}        -> syllabi and their deadlines (see syllabus.py)
 
 All GPA math lives in compute() so the API, the UI and (later) the AI assistant agree.
 """
@@ -509,7 +510,15 @@ def education_state():
     order = {t: i for i, t in enumerate((profile or {}).get("terms") or DEFAULT_PROFILE["terms"])}
     courses.sort(key=lambda c: (order.get(c.get("term"), 99), STATUSES.index(c.get("status", "considering")),
                                 -int(c.get("priority") or 0), c.get("title", "")))
-    return {"courses": courses, "computed": compute(profile, courses), "has_data": bool(courses or profile)}
+    computed = compute(profile, courses)
+    from syllabus import calendar_events, load_syllabi
+    syllabi = load_syllabi(courses)
+    for term, evs in calendar_events(syllabi, courses).items():
+        cal = computed["calendar"].setdefault(term, [])
+        finals = {(e.get("course_id"), e["date"]) for e in cal if e["kind"] == "final"}
+        cal.extend(e for e in evs if (e.get("course_id"), e["date"]) not in finals)   # don't repeat a final already shown
+        cal.sort(key=lambda x: (x["date"], x["kind"] != "final", _time_key(x.get("time"))))
+    return {"courses": courses, "computed": computed, "syllabi": syllabi, "has_data": bool(courses or profile)}
 
 
 # ---------------------------------------------------------------- routes
