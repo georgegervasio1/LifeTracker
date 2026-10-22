@@ -102,8 +102,8 @@
           </a>
           <a class="home-card" href="#/goals">
             <span class="home-card-label">Goals</span>
-            <span class="home-card-stat muted-stat">In development</span>
-            <span class="home-card-desc">Targets that track themselves</span>
+            <span class="home-card-stat muted-stat" id="homeGoals">—</span>
+            <span class="home-card-desc">SMART goals, step plans and a coach</span>
             <span class="home-card-cta">Open <span aria-hidden="true">→</span></span>
           </a>
         </div>
@@ -830,17 +830,7 @@
       </dialog>
 
       <section class="route" data-route="goals">
-        <div class="placeholder wrap">
-          <p class="eyebrow">Goals · In development</p>
-          <h1 class="display">Set it. Track it.</h1>
-          <p class="lede">Goals that update themselves from your finances, training and coursework.</p>
-          <ul class="feature-list">
-            <li><strong>Any goal</strong><span>Finance, health, education or personal</span></li>
-            <li><strong>Auto-tracking</strong><span>"Save $5,000" reads straight from Finances</span></li>
-            <li><strong>Status</strong><span>On track or behind, at a glance</span></li>
-            <li><strong>Assistant</strong><span>Create and adjust goals by chat</span></li>
-          </ul>
-        </div>
+        <div class="wrap goals" id="goalsRoot"></div>
       </section>
     </main>
   </div>

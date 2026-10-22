@@ -86,6 +86,7 @@ async function load(section, tab) {
   if (!backendReady) return toast("Backend not connected yet");
   if (section === "health") return loadHealth(tab);
   if (section === "education") return loadEducation(tab);
+  if (section === "goals") return (await goalsModule()).loadGoals();
   if (section !== "finances") return;
   setChatPlace(tab);
   if (tab === "networth") return loadNetWorth();
@@ -97,6 +98,16 @@ async function load(section, tab) {
 }
 
 window.addEventListener("hashchange", render);
+
+// Goals live in goals.js, loaded on first use.
+let goalsMod = null;
+async function goalsModule() {
+  if (!goalsMod) {
+    goalsMod = await import("./goals.js");
+    goalsMod.initGoals({ api, $, esc, toast, renderMarkdown, usd0, showError });
+  }
+  return goalsMod;
+}
 
 // ---------- API helper (attaches Firebase ID token) ----------
 async function api(path, opts = {}) {
@@ -240,6 +251,11 @@ async function loadHome() {
       ? `${C.gpa_actual?.toFixed(2) ?? "—"}<small>GPA · projected ${C.gpa_projected?.toFixed(2) ?? "—"} vs ${C.profile.target_gpa.toFixed(2)} target</small>`
       : "Import your courses";
   } catch { $("homeEdu").textContent = "Import your courses"; }
+  try {
+    const stat = await (await goalsModule()).goalsHomeStat();
+    $("homeGoals").classList.toggle("muted-stat", !stat);
+    $("homeGoals").innerHTML = stat || "Set your first goal";
+  } catch { $("homeGoals").textContent = "Set your first goal"; }
 }
 
 // ---------- Finances (net worth, cash & cards, investments, income, taxes, imports) ----------

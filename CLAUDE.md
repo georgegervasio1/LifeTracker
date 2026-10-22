@@ -64,6 +64,11 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
   planner conflicts, **P/F option budget** (7 credits, one course per semester, counted even if the letter grade
   is kept; a completed P course counts unless marked `pf_mandatory`; `pf_prior_credits` for untracked terms), **academic calendar** (GULC 2026–27 key dates) + **finals** (Registrar's Fall 2026 schedule matched to
   enrolled courses; ambiguous sections offer a picker; `exam_type: "Paper"` shows "Paper due"), merge import.
+- `goals.py`: Goals. SMART goals (`measure.kind` number or steps; `metric` links a number goal to Finances, Health or
+  Education, e.g. `fin.net_worth`, `health.lift_top:<Exercise>`, `edu.gpa`), step plans with dates, pace vs a straight
+  line from start to deadline, manual value log, JSON import, and `/api/goals/coach` (Claude proposes a goal through the
+  `propose_goal` tool; nothing is saved until the user presses Save). `goals_library.py`: the 100-goal starter library
+  (generic, no personal data; targets only where the challenge defines one).
 - `earnings.py`: paychecks (feeds Income/Taxes). Pub 15-T (2026) Worksheet 1A withholding, SS/Medicare, Illinois IL-700-T,
   year-end federal / IL nonresident / DC resident with credit for other-state tax. `SEED` holds the owner's past
   summer job (no employer name); payroll deposits are matched from the bank feed. `/api/taxes` builds the
@@ -78,7 +83,8 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
 ### Frontend map (`frontend/app.js`)
 Hash routes `#/section/tab`, `SECTIONS` config at the top. Finances: Net Worth, Cash & Cards, Investments,
 Income, Taxes, Accounts & Imports (chat on every tab). Health: Overview, Planner, History, Running, Race Training, Calendar, Connect.
-Education: Overview, Syllabi, Grades & GPA, Degree Audit, Planner, Calendar. Goals: placeholder.
+Education: Overview, Syllabi, Grades & GPA, Degree Audit, Planner, Calendar. Goals: `goals.js` (loaded on first
+visit; widgets, detail, editor, library, coach drawer).
 Design tokens on `:root` in `styles.css` (`--accent`, `--pos`, `--neg`, `--warn`, `--exam`, `--done`, …).
 
 ### Environment & secrets (Cloud Run)

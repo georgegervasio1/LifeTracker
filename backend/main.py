@@ -12,6 +12,7 @@ Endpoints (all require a Firebase ID token for ALLOWED_EMAIL):
   POST /api/chat                    -> ask the AI assistant (Claude) about your finances
   Health: /api/health/summary, /api/workouts, /api/whoop/{connect,callback,sync}  (see health.py)
   Education: /api/edu, /api/edu/courses, /api/edu/profile, /api/edu/import  (see education.py)
+  Goals: /api/goals, /api/goals/library, /api/goals/metrics, /api/goals/coach  (see goals.py)
   Syllabi: /api/edu/syllabi/{import,upload}, /api/edu/syllabi/<id>[/file]  (see syllabus.py)
   My Day: /api/edu/today, /api/edu/tasks, /api/edu/plan, /api/edu/gmail/scan  (see edutasks.py)
   Finances (ledger): /api/fin/{overview,cash,investments,income,taxes,upload,imports,reconcile,...}  (see finance.py)
@@ -531,6 +532,10 @@ import strava
 strava.init(app, db, firestore, require_owner, user_ref)
 import raceplan
 raceplan.init(app, db, firestore, require_owner, user_ref)
+
+# ---------------------------------------------------------------- Goals (SMART goals linked to the other sections)
+import goals
+goals.init(app, db, firestore, require_owner, user_ref)
 
 # ---------------------------------------------------------------- Earnings (paychecks, withholding, year-end tax)
 import earnings
