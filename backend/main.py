@@ -15,6 +15,8 @@ Endpoints (all require a Firebase ID token for ALLOWED_EMAIL):
   Syllabi: /api/edu/syllabi/{import,upload}, /api/edu/syllabi/<id>[/file]  (see syllabus.py)
   Finances (ledger): /api/fin/{overview,cash,investments,income,taxes,upload,imports,reconcile,...}  (see finance.py)
   Training: /api/training, /api/training/{template,state,sessions,history,exercise,import}  (see training.py)
+  Running: /api/running[/<id>], /api/runs, /api/strava/{connect,callback,sync}  (see strava.py)
+  Race training: /api/raceplans[/<id>], /api/raceplans/preview  (see raceplan.py)
 """
 import csv
 import json
@@ -520,6 +522,12 @@ finance.init(app, db, firestore, require_owner, user_ref)
 # ---------------------------------------------------------------- Training (planner, sessions, history)
 import training
 training.init(app, db, firestore, require_owner, user_ref)
+
+# ---------------------------------------------------------------- Running (Strava) and race training plans
+import strava
+strava.init(app, db, firestore, require_owner, user_ref)
+import raceplan
+raceplan.init(app, db, firestore, require_owner, user_ref)
 
 # ---------------------------------------------------------------- Earnings (paychecks, withholding, year-end tax)
 import earnings

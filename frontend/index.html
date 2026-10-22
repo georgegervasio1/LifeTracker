@@ -20,6 +20,8 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
   <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
 </head>
 <body>
@@ -396,6 +398,76 @@
           </div>
         </div>
 
+        <!-- Running (Strava) -->
+        <div class="panel wrap" data-panel="running">
+          <div class="run-head">
+            <div>
+              <p class="eyebrow">Running</p>
+              <p class="hint run-status" id="runStatus"></p>
+            </div>
+            <div class="run-controls">
+              <select class="select" id="runYear" aria-label="Year"></select>
+              <button class="btn btn-secondary btn-sm" id="runSync">Sync</button>
+            </div>
+          </div>
+          <div class="card empty-state hidden" id="runEmpty">
+            <h3>Connect Strava to see your runs</h3>
+            <p>Every run this year with its route, mileage, pace, splits and best efforts.</p>
+            <a class="btn btn-primary" href="#/health/connect">Connect Strava</a>
+          </div>
+          <div id="runBody">
+            <div class="kpis">
+              <div class="kpi"><span class="kpi-label">Distance</span><span class="kpi-value" id="r-miles">—</span><span class="kpi-sub" id="r-miles-sub"></span></div>
+              <div class="kpi"><span class="kpi-label">Runs</span><span class="kpi-value" id="r-runs">—</span><span class="kpi-sub" id="r-runs-sub"></span></div>
+              <div class="kpi"><span class="kpi-label">Average pace</span><span class="kpi-value" id="r-pace">—</span><span class="kpi-sub" id="r-pace-sub"></span></div>
+              <div class="kpi"><span class="kpi-label">Longest run</span><span class="kpi-value" id="r-long">—</span><span class="kpi-sub" id="r-long-sub"></span></div>
+            </div>
+            <div class="grid-2">
+              <div class="card"><div class="card-head"><h3>Weekly mileage</h3><span class="card-meta" id="r-week-meta"></span></div><canvas id="chart-run-weekly"></canvas></div>
+              <div class="card"><div class="card-head"><h3>Best efforts</h3><span class="card-meta" id="r-best-meta"></span></div><div id="runBests"></div></div>
+            </div>
+            <div class="card run-map-card"><div class="card-head"><h3>Routes</h3><span class="card-meta" id="r-map-meta"></span></div><div class="run-map" id="runMapAll"></div></div>
+            <div class="card card-flush"><div class="card-head padded"><h3>Runs</h3><span class="card-meta" id="r-list-meta"></span></div><div class="run-list" id="runList"></div></div>
+            <p class="hint">Data from Strava.</p>
+          </div>
+        </div>
+
+        <!-- Race training -->
+        <div class="panel wrap" data-panel="race">
+          <div class="race-top">
+            <div class="race-picker hidden" id="racePicker">
+              <select class="select" id="racePlanSel" aria-label="Training plan"></select>
+              <button class="btn btn-secondary btn-sm" id="raceNew">New plan</button>
+            </div>
+          </div>
+          <form class="card race-form hidden" id="raceForm" autocomplete="off">
+            <div class="card-head"><h3>Plan a race</h3><button type="button" class="text-btn hidden" id="raceCancel">Cancel</button></div>
+            <div class="race-dist" id="raceDist" role="radiogroup" aria-label="Distance">
+              <button type="button" class="seg" data-race="5k">5K</button>
+              <button type="button" class="seg" data-race="10k">10K</button>
+              <button type="button" class="seg seg-on" data-race="half">Half marathon</button>
+              <button type="button" class="seg" data-race="marathon">Marathon</button>
+            </div>
+            <div class="race-fields">
+              <label>Race name<input class="input" name="name" placeholder="Optional" maxlength="80" /></label>
+              <label>Race date<input class="input" type="date" name="race_date" required /></label>
+              <label>Goal time<input class="input" name="goal" placeholder="h:mm:ss, optional" /></label>
+              <label>Runs per week
+                <select class="input" name="runs_per_week"><option>3</option><option selected>4</option><option>5</option><option>6</option></select></label>
+              <label>Long run day
+                <select class="input" name="long_day"><option value="5">Saturday</option><option value="6" selected>Sunday</option></select></label>
+              <label>Current miles per week<input class="input" type="number" name="current_weekly_mi" min="0" max="150" step="0.5" /></label>
+              <label>Current long run (mi)<input class="input" type="number" name="current_long_mi" min="0" max="30" step="0.5" /></label>
+            </div>
+            <p class="hint" id="raceFitness"></p>
+            <div class="dialog-actions">
+              <button type="submit" class="btn btn-secondary" id="racePreview">Preview</button>
+              <button type="button" class="btn btn-primary" id="raceSave">Save plan</button>
+            </div>
+          </form>
+          <div id="racePlan"></div>
+        </div>
+
         <!-- History -->
         <div class="panel wrap" data-panel="history">
           <div class="history-grid">
@@ -461,6 +533,17 @@
               <button class="btn btn-primary hidden" id="whoopConnect">Connect WHOOP</button>
               <button class="btn btn-secondary hidden" id="whoopSync">Sync now</button>
               <button class="text-btn hidden" id="whoopDisconnect">Disconnect</button>
+            </div>
+          </div>
+          <div class="card connect-card">
+            <div>
+              <h3>Strava</h3>
+              <p id="stravaStatus">Checking connection…</p>
+            </div>
+            <div class="connect-actions">
+              <button class="btn btn-primary hidden" id="stravaConnect">Connect Strava</button>
+              <button class="btn btn-secondary hidden" id="stravaSync">Sync now</button>
+              <button class="text-btn hidden" id="stravaDisconnect">Disconnect</button>
             </div>
           </div>
           <div class="card connect-card muted-card">
@@ -628,6 +711,9 @@
       </dialog>
 
       <!-- Exercise progress -->
+      <dialog id="runDialog" class="dialog dialog-wide">
+        <div class="run-detail" id="runDetail"></div>
+      </dialog>
       <dialog id="progressDialog" class="dialog">
         <div class="dialog-form">
           <h3 id="pgTitle">Progress</h3>

@@ -26,7 +26,7 @@ handoff doc in the Claude project, not here: **this repo is public**.
 | Data | Firestore, `users/{uid}/...` | See collections below. |
 | Auth | Firebase Google sign-in (modular SDK 10.12.0) | Backend `require_owner` checks the ID token + `ALLOWED_EMAIL`. |
 
-Libraries (cdnjs, pinned): Chart.js 4.4.1, marked, DOMPurify, Sortable 1.15.2; Plaid Link script.
+Libraries (cdnjs, pinned): Chart.js 4.4.1, marked, DOMPurify, Sortable 1.15.2, Leaflet 1.9.4 (CARTO basemap tiles); Plaid Link script.
 
 ### Backend modules (`backend/`)
 Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` and is registered in `main.py`.
@@ -47,6 +47,13 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
   calendar. WHOOP workouts merged into a training session are hidden (`merged_into`).
 - `training.py`: workout planner (multi-week template, Mon–Sun board + tray, %-of-max targets), live sessions,
   history with PRs (Epley e1RM; PR = beats all *earlier* sessions on top weight or e1RM), WHOOP merge, import.
+- `strava.py`: Strava OAuth (scope `read,activity:read_all`), sync of activities since Jan 1 last year (list
+  200/page, then details for up to 30 runs per sync: splits, best efforts, full route), Running tab data
+  (`/api/running?year=`), `/api/runs` for the calendar. Rate limit 100 reads / 15 min.
+- `raceplan.py`: race training plans (5K, 10K, half, marathon). `build_plan` is pure: Monday-based weeks, base /
+  build / peak / taper / race week, ~10%/week ramp with a cutback every 4th week, long run capped by share of the
+  week, paces from Daniels' VDOT (current fitness from Strava best efforts or races in the last 10 weeks; goal time
+  sets goal pace; neither = effort words, no paces). Planned vs done matched to Strava runs by date.
 - `syllabus.py`: Education → Syllabi: upload a syllabus (Claude extracts sessions/deadlines) or import JSON;
   deadlines feed the calendar. Originals kept in `edu_syllabus_files`.
 - `education.py`: GULC grade points, GPA engine (half-up `r2`), needed-average solver + grade plan, degree audit,
@@ -62,18 +69,18 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
 ### Firestore (`users/{uid}/…`)
 `transactions` (ledger), `items` (Plaid), `inv_snapshots`, `inv_activity`, `holdings` (legacy), `health_days`, `workouts`, `integrations/whoop`, `oauth_states`,
 `training` (state/template/sessions), `education/profile`, `edu_courses`, `edu_syllabi`, `edu_syllabus_files`,
-`earnings/settings`, `paychecks`.
+`earnings/settings`, `paychecks`, `integrations/strava`, `strava_activities`, `race_plans`.
 
 ### Frontend map (`frontend/app.js`)
 Hash routes `#/section/tab`, `SECTIONS` config at the top. Finances: Net Worth, Cash & Cards, Investments,
-Income, Taxes, Accounts & Imports (chat on every tab). Health: Overview, Planner, History, Calendar, Connect.
+Income, Taxes, Accounts & Imports (chat on every tab). Health: Overview, Planner, History, Running, Race Training, Calendar, Connect.
 Education: Overview, Syllabi, Grades & GPA, Degree Audit, Planner, Calendar. Goals: placeholder.
 Design tokens on `:root` in `styles.css` (`--accent`, `--pos`, `--neg`, `--warn`, `--exam`, `--done`, …).
 
 ### Environment & secrets (Cloud Run)
 Secrets: `plaid-client-id`, `plaid-secret`, `allowed-email`, `anthropic-api-key`, `whoop-client-id`,
-`whoop-client-secret`. Env: `PLAID_ENV` (sandbox until Plaid production is approved), `CLAUDE_MODEL`,
-`WHOOP_REDIRECT_URI`, `FRONTEND_URL`, `FRONTEND_ORIGIN`. Local dev: `DEV_SKIP_AUTH=1`.
+`whoop-client-secret`, `strava-client-id`, `strava-client-secret`. Env: `PLAID_ENV` (sandbox until Plaid production is approved), `CLAUDE_MODEL`,
+`WHOOP_REDIRECT_URI`, `STRAVA_REDIRECT_URI`, `FRONTEND_URL`, `FRONTEND_ORIGIN`. Local dev: `DEV_SKIP_AUTH=1`.
 
 ## Testing
 `pip install -r backend/requirements.txt pytest` then `python tests/run_all.py`. It runs `tests/` (scripts) and

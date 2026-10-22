@@ -903,3 +903,120 @@ a.acct-name:hover strong { color: var(--accent); }
 }
 .move-note { font-size: 12px; color: var(--text-3); padding: 0 0 8px; border-bottom: 1px solid var(--line); }
 .grid-2 + .toolbar { margin-top: 24px; }
+
+/* ── Running (Strava) ───────────────────────────────────────────────────── */
+.run-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 8px; }
+.run-head .eyebrow { margin-bottom: 2px; }
+.run-status { margin: 0; }
+.run-controls { display: flex; gap: 8px; align-items: center; }
+.run-map { height: 360px; border-radius: var(--radius-sm); overflow: hidden; background: var(--bg-alt); z-index: 0; }
+.run-map-lg { height: 300px; margin: 16px 0 4px; }
+.run-map-card { margin-top: 20px; }
+.leaflet-container { font: inherit; font-size: 11px; background: var(--bg-alt); }
+.leaflet-control-attribution { background: color-mix(in srgb, var(--surface) 80%, transparent) !important; color: var(--text-3); }
+.leaflet-control-attribution a { color: var(--text-2); }
+.leaflet-bar a { background: var(--surface); color: var(--text); border-color: var(--line); }
+.run-list { display: flex; flex-direction: column; }
+.run-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) repeat(4, 84px); align-items: center; gap: 16px; padding: 12px 24px; border-top: 1px solid var(--line); text-align: left; transition: background .2s; }
+.run-row:hover { background: var(--surface-hover); }
+.route-thumb { display: block; }
+.route-thumb path { fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
+.route-none { border-radius: 8px; background: var(--bg-alt); }
+.run-main { display: flex; flex-direction: column; min-width: 0; }
+.run-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.run-date { font-size: 12px; color: var(--text-3); }
+.run-stat { font-size: 12px; color: var(--text-3); text-align: right; white-space: nowrap; }
+.run-stat b { font-size: 15px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; margin-right: 3px; }
+.best-row { display: grid; grid-template-columns: 1fr auto 64px; gap: 12px; width: 100%; padding: 10px 0; border-top: 1px solid var(--line); text-align: left; align-items: baseline; }
+.best-row:first-child { border-top: none; padding-top: 0; }
+.best-row:hover .best-time { color: var(--accent); }
+.best-name { color: var(--text-2); font-size: 14px; }
+.best-time { font-weight: 600; font-variant-numeric: tabular-nums; }
+.best-date { font-size: 12px; color: var(--text-3); text-align: right; }
+.dialog-wide { width: min(760px, calc(100% - 32px)); }
+.run-detail { padding: 28px; max-height: calc(100vh - 64px); overflow-y: auto; }
+.run-detail-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.run-detail-head h3 { font-size: 21px; letter-spacing: -0.02em; }
+.run-detail-head .hint { margin: 4px 0 0; }
+.run-detail h4 { font-size: 13px; font-weight: 600; color: var(--text-2); margin: 22px 0 8px; }
+.run-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px 12px; margin-top: 18px; }
+.run-stats div { display: flex; flex-direction: column; }
+.run-stats b { font-family: var(--font-display); font-size: 20px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.run-stats span { font-size: 12px; color: var(--text-3); }
+.run-desc { color: var(--text-2); font-size: 14px; margin-top: 16px; white-space: pre-wrap; }
+.splits { display: flex; flex-direction: column; gap: 6px; }
+.split { display: grid; grid-template-columns: 36px 1fr 48px 56px 32px; gap: 10px; align-items: center; font-size: 13px; font-variant-numeric: tabular-nums; }
+.split-n, .split-elev, .split-hr { color: var(--text-3); font-size: 12px; }
+.split-pace { font-weight: 600; text-align: right; }
+.split-elev, .split-hr { text-align: right; }
+.efforts { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 13px; color: var(--text-2); }
+.efforts b { color: var(--text); font-variant-numeric: tabular-nums; }
+.pr { font-style: normal; font-size: 10px; font-weight: 600; letter-spacing: .06em; color: var(--accent); }
+@media (max-width: 760px) {
+  .run-row { grid-template-columns: 48px minmax(0, 1fr) auto auto; gap: 12px; padding: 12px 16px; }
+  .run-row .route-thumb { width: 48px; height: 36px; }
+  .run-opt { display: none; }
+  .run-stats { grid-template-columns: repeat(2, 1fr); }
+  .run-map { height: 260px; }
+  .run-detail { padding: 20px; }
+}
+
+/* ── Race training ──────────────────────────────────────────────────────── */
+.race-top { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+.race-picker { display: flex; gap: 8px; align-items: center; }
+.race-form { margin-bottom: 28px; }
+.race-dist { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+.race-dist .seg { font-size: 14px; padding: 7px 16px; }
+.race-fields { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.race-fields label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--text-2); }
+.race-hero { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin: 12px 0 24px; }
+.race-hero .eyebrow { margin-bottom: 6px; }
+.kpis-3 { grid-template-columns: repeat(3, 1fr); }
+.race-notes p { margin-top: 0; } .race-notes p + p { margin-top: 6px; }
+.pace-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; }
+.pace-grid div { display: flex; flex-direction: column; gap: 2px; }
+.pace-grid span { font-size: 12px; color: var(--text-3); }
+.pace-grid b { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.weeks { display: flex; flex-direction: column; gap: 12px; margin-top: 20px; }
+.week-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; background: var(--surface); }
+.week-now { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.week-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 14px; }
+.week-head b { font-size: 15px; }
+.week-phase { font-size: 13px; color: var(--text-3); margin-left: 10px; }
+.week-miles { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.week-miles .bar-track { width: 96px; }
+.week-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
+.day { display: flex; flex-direction: column; gap: 2px; padding: 10px; border-radius: var(--radius-sm); background: var(--bg-alt); min-height: 84px; font-size: 13px; }
+.day-dow { font-size: 11px; color: var(--text-3); }
+.day-title { font-weight: 600; line-height: 1.25; }
+.day-mi { color: var(--text-2); font-variant-numeric: tabular-nums; }
+.day-detail { display: none; }
+.day-actual { font-size: 11px; color: var(--pos); font-weight: 500; }
+.k-rest { background: transparent; border: 1px dashed var(--line); }
+.k-rest .day-title { font-weight: 400; color: var(--text-3); }
+.k-tempo, .k-intervals { box-shadow: inset 3px 0 0 var(--accent); }
+.k-long { box-shadow: inset 3px 0 0 var(--text); }
+.k-race { background: var(--accent); color: #fff; }
+.k-race .day-dow, .k-race .day-mi { color: rgba(255,255,255,.85); }
+.day-done { outline: 1px solid color-mix(in srgb, var(--pos) 55%, transparent); }
+.day-missed .day-title, .day-missed .day-mi { color: var(--text-3); }
+.day-today { outline: 2px solid var(--accent); }
+.week-past:not(.week-now) { opacity: .8; }
+@media (max-width: 900px) {
+  .race-fields { grid-template-columns: repeat(2, 1fr); }
+  .pace-grid { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 760px) {
+  .kpis-3 { grid-template-columns: 1fr 1fr; }
+  .week-days { grid-template-columns: 1fr; gap: 6px; }
+  .day { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; min-height: 0; padding: 10px 12px; }
+  .day-dow { width: 56px; }
+  .day-mi { margin-left: auto; }
+  .day-actual { width: 100%; padding-left: 66px; }
+  .day-detail { display: block; width: 100%; padding-left: 66px; font-size: 12px; color: var(--text-3); }
+  .k-race .day-detail { color: rgba(255,255,255,.85); }
+  .k-rest .day-mi { display: none; }
+  .race-hero { flex-direction: column; align-items: flex-start; }
+}
+.k-tempo .day-detail, .k-intervals .day-detail { display: block; font-size: 11px; line-height: 1.35; color: var(--text-3); margin-top: 4px; }
+.run-more { width: 100%; padding: 14px; border-top: 1px solid var(--line); color: var(--accent); font-size: 14px; }

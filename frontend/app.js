@@ -21,7 +21,8 @@ const SECTIONS = {
     ["networth", "Net Worth"], ["cash", "Cash & Cards"], ["investments", "Investments"],
     ["income", "Income"], ["taxes", "Taxes"], ["accounts", "Accounts & Imports"]] },
   health: { title: "Health", tabs: [
-    ["overview", "Overview"], ["planner", "Planner"], ["history", "History"], ["calendar", "Calendar"], ["connect", "Connect"]] },
+    ["overview", "Overview"], ["planner", "Planner"], ["history", "History"], ["running", "Running"], ["race", "Race Training"],
+    ["calendar", "Calendar"], ["connect", "Connect"]] },
   education: { title: "Education", tabs: [
     ["overview", "Overview"], ["syllabi", "Syllabi"], ["grades", "Grades & GPA"], ["audit", "Degree Audit"], ["planner", "Planner"], ["calendar", "Calendar"]] },
   goals: { title: "Goals", tabs: [] },
@@ -829,6 +830,8 @@ async function loadHealth(tab) {
   if (tab === "overview") return loadHealthOverview();
   if (tab === "planner") return loadWeekPlan();
   if (tab === "history") return loadHistory();
+  if (tab === "running") return loadRunning();
+  if (tab === "race") return loadRace();
   if (tab === "calendar") return renderCalendar();
   if (tab === "connect") return loadConnect();
 }
@@ -881,6 +884,8 @@ function exerciseRow(e = {}) {
 
 function describeWorkout(w) {
   const bits = [];
+  if (w.name) bits.push(w.name);
+  if (w.pace) bits.push(`${fmtPace(w.pace)} /mi`);
   if (w.duration_min) bits.push(`${w.duration_min} min`);
   if (w.strain != null) bits.push(`Strain ${w.strain}`);
   if (w.avg_hr) bits.push(`Avg HR ${w.avg_hr}`);
@@ -945,12 +950,19 @@ async function renderCalendar() {
   const first = new Date(y, m, 1), last = new Date(y, m + 1, 0);
   $("calTitle").textContent = first.toLocaleDateString("en-US", { month: "long", year: "numeric" });
   const ds = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  const [h, wk] = await Promise.all([
+  const [h, wk, rn] = await Promise.all([
     api(`/api/health/summary?start=${ds(first)}&end=${ds(last)}`),
-    api(`/api/workouts?start=${ds(first)}&end=${ds(last)}`)]);
+    api(`/api/workouts?start=${ds(first)}&end=${ds(last)}`),
+    api(`/api/runs?start=${ds(first)}&end=${ds(last)}`).catch(() => ({ runs: [] }))]);
   const byDay = Object.fromEntries(h.days.map((d) => [d.date, d]));
   const workoutsByDay = {};
-  wk.workouts.forEach((w) => (workoutsByDay[w.date] ||= []).push(w));
+  const runDays = new Set(rn.runs.map((r) => r.date));
+  // a run recorded by both WHOOP and Strava shows once, with Strava's distance and pace
+  wk.workouts.filter((w) => !(w.source === "whoop" && /run/i.test(w.type) && runDays.has(w.date)))
+    .forEach((w) => (workoutsByDay[w.date] ||= []).push(w));
+  rn.runs.forEach((r) => (workoutsByDay[r.date] ||= []).push({ type: `Run ${fmtMi(r.distance_m)} mi`, source: "strava",
+    duration_min: r.moving_s ? Math.round(r.moving_s / 60) : null, avg_hr: r.avg_hr ? Math.round(r.avg_hr) : null,
+    notes: "", exercises: [], pace: paceOf(r), name: r.name }));
   const lead = (first.getDay() + 6) % 7;          // weeks start Monday
   const todayStr = ds(new Date());
   let html = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => `<div class="cal-dow">${d}</div>`).join("");
@@ -991,7 +1003,25 @@ async function loadConnect() {
                   expired: "That link expired. Try connecting again.", failed: "WHOOP couldn't finish connecting. Try again." }[result];
     if (msg) toast(msg);
   }
-  const h = await api(`/api/health/summary?start=${iso(new Date())}&end=${iso(new Date())}`);
+  const sres = routeQuery.get("strava");
+  if (sres) {
+    history.replaceState(null, "", "#/health/connect");
+    const msg = { connected: "Strava connected. Pulling your runs…", cancelled: "Strava connection cancelled",
+                  expired: "That link expired. Try connecting again.", failed: "Strava couldn't finish connecting. Try again.",
+                  scope: "LifeTracker needs access to your activities. Connect again and leave that box ticked." }[sres];
+    if (msg) toast(msg);
+  }
+  const [h, run] = await Promise.all([
+    api(`/api/health/summary?start=${iso(new Date())}&end=${iso(new Date())}`),
+    api(`/api/running?year=${new Date().getFullYear()}`).catch(() => null)]);
+  const st = run?.strava;
+  $("stravaStatus").textContent = st?.connected
+    ? `Connected${st.athlete ? ` as ${st.athlete}` : ""}${st.last_sync ? ` · last synced ${new Date(st.last_sync).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : " · not synced yet"}`
+    : "Runs with routes, mileage, pace, splits and best efforts. Feeds Running and Race Training.";
+  $("stravaConnect").classList.toggle("hidden", !!st?.connected);
+  $("stravaSync").classList.toggle("hidden", !st?.connected);
+  $("stravaDisconnect").classList.toggle("hidden", !st?.connected);
+  if (sres === "connected") syncStrava();
   whoopState = h.whoop;
   const on = h.whoop.connected;
   $("whoopStatus").textContent = on
@@ -1024,6 +1054,329 @@ $("whoopDisconnect").onclick = async () => {
   if (!confirm("Disconnect WHOOP? Your synced history stays in LifeTracker.")) return;
   await api("/api/whoop", { method: "DELETE" }); toast("WHOOP disconnected"); loadConnect();
 };
+
+// ---------- Running (Strava) ----------
+const MI = 1609.344;
+const miles = (m) => (m || 0) / MI;
+const fmtMi = (m, d = 1) => miles(m).toFixed(d);
+const fmtPace = (s) => (s == null || !isFinite(s) ? "—" : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`);
+const paceOf = (r) => (r.distance_m ? r.moving_s / miles(r.distance_m) : null);
+function fmtClock(s) {
+  if (s == null) return "—";
+  s = Math.round(s);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = String(s % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
+}
+const fmtHrs = (s) => `${Math.floor(s / 3600)}h ${String(Math.round((s % 3600) / 60)).padStart(2, "0")}m`;
+const longDay = (d) => new Date(d + "T00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+
+// Google encoded polyline -> [[lat, lng], ...]
+function decodePolyline(str) {
+  const out = []; let i = 0, lat = 0, lng = 0;
+  while (str && i < str.length) {
+    for (const k of [0, 1]) {
+      let b, shift = 0, res = 0;
+      do { b = str.charCodeAt(i++) - 63; res |= (b & 31) << shift; shift += 5; } while (b >= 32);
+      const v = res & 1 ? ~(res >> 1) : res >> 1;
+      if (k === 0) lat += v; else lng += v;
+    }
+    out.push([lat / 1e5, lng / 1e5]);
+  }
+  return out;
+}
+
+function routeSvg(poly, w = 64, h = 48) {
+  const pts = decodePolyline(poly);
+  if (pts.length < 2) return `<span class="route-thumb route-none" style="width:${w}px;height:${h}px"></span>`;
+  const k = Math.cos((pts[0][0] * Math.PI) / 180);
+  const xs = pts.map((p) => p[1] * k), ys = pts.map((p) => -p[0]);
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const s = Math.min((w - 8) / (x1 - x0 || 1e-9), (h - 8) / (y1 - y0 || 1e-9));
+  const ox = (w - (x1 - x0) * s) / 2, oy = (h - (y1 - y0) * s) / 2;
+  const d = xs.map((x, j) => `${j ? "L" : "M"}${(ox + (x - x0) * s).toFixed(1)},${(oy + (ys[j] - y0) * s).toFixed(1)}`).join("");
+  return `<svg class="route-thumb" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><path d="${d}"/></svg>`;
+}
+
+const maps = {};
+function tileLayer() {
+  const dark = isDark();
+  return L.tileLayer(`https://{s}.basemaps.cartocdn.com/${dark ? "dark_all" : "light_all"}/{z}/{x}/{y}{r}.png`, {
+    maxZoom: 19, subdomains: "abcd",
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>' });
+}
+function drawMap(id, lines, { weight = 3, opacity = 0.9 } = {}) {
+  if (typeof L === "undefined") { $(id).innerHTML = `<div class="empty">Map unavailable</div>`; return; }
+  maps[id]?.remove();
+  const m = maps[id] = L.map(id, { zoomControl: true, scrollWheelZoom: false, attributionControl: false });
+  L.control.attribution({ prefix: false }).addTo(m);
+  tileLayer().addTo(m);
+  const color = cssVar("--accent");
+  const group = L.featureGroup(lines.filter((l) => l.length > 1).map((l) => L.polyline(l, { color, weight, opacity }))).addTo(m);
+  if (group.getLayers().length) m.fitBounds(group.getBounds(), { padding: [16, 16] });
+  else m.setView([38.9, -77.03], 11);
+  setTimeout(() => m.invalidateSize(), 50);
+}
+
+let runYear = null, runData = null, runSyncing = false;
+async function loadRunning() {
+  const y = runYear || new Date().getFullYear();
+  const d = runData = await api(`/api/running?year=${y}`);
+  const on = d.strava.connected;
+  $("runEmpty").classList.toggle("hidden", on || d.runs.length);
+  $("runBody").classList.toggle("hidden", !on && !d.runs.length);
+  $("runYear").innerHTML = [...new Set([String(new Date().getFullYear()), ...d.years])].sort().reverse()
+    .map((v) => `<option ${+v === y ? "selected" : ""}>${v}</option>`).join("");
+  $("runSync").classList.toggle("hidden", !on);
+  $("runStatus").textContent = on
+    ? (d.strava.last_sync ? `Synced ${new Date(d.strava.last_sync).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "Not synced yet")
+      + (d.details_missing ? ` · ${d.details_missing} runs still loading splits` : "")
+    : "";
+  if (!on && !d.runs.length) return;
+  // sync in the background when the data is more than an hour old
+  if (on && !runSyncing && (!d.strava.last_sync || Date.now() - new Date(d.strava.last_sync) > 36e5)) syncStrava(true);
+
+  const T = d.totals;
+  $("r-miles").textContent = T.miles ? `${T.miles.toFixed(1)} mi` : "—";
+  $("r-miles-sub").textContent = T.moving_s ? `${fmtHrs(T.moving_s)} moving · ${Math.round(T.elev_m * 3.28084).toLocaleString()} ft climbed` : "";
+  $("r-runs").textContent = T.runs || "—";
+  const wks = d.weekly.length || 1;
+  $("r-runs-sub").textContent = T.runs ? `${(T.miles / wks).toFixed(1)} mi a week on average` : "";
+  $("r-pace").textContent = T.pace_s_per_mi ? fmtPace(T.pace_s_per_mi) : "—";
+  $("r-pace-sub").textContent = T.pace_s_per_mi ? "per mile, moving time" : "";
+  $("r-long").textContent = T.longest ? `${T.longest.miles.toFixed(1)} mi` : "—";
+  $("r-long-sub").textContent = T.longest ? shortDate(T.longest.date) : "";
+
+  const last12 = d.weekly.slice(-26);
+  drawChart("chart-run-weekly", "bar", last12.map((w) => shortDate(w.week)), last12.map((w) => w.miles),
+    { tip: (v) => `${v.toFixed(1)} mi`, tick: (v) => `${v}` }, { y: { min: 0 } });
+  $("r-week-meta").textContent = last12.length < d.weekly.length ? "Last 26 weeks" : "";
+
+  $("runBests").innerHTML = d.bests.length ? d.bests.map((b) => `
+    <button class="best-row" data-run="${esc(b.run_id)}">
+      <span class="best-name">${esc(b.name.replace("Half-Marathon", "Half marathon"))}</span>
+      <span class="best-time">${fmtClock(b.elapsed_s)}</span>
+      <span class="best-date">${shortDate(b.date)}</span>
+    </button>`).join("") : `<div class="empty">Best efforts appear once runs have their splits loaded.</div>`;
+  $("r-best-meta").textContent = d.bests.length ? `Fastest in ${y}` : "";
+
+  $("r-map-meta").textContent = d.runs.filter((r) => r.polyline).length ? `${d.runs.filter((r) => r.polyline).length} routes` : "";
+  $("runMapAll").parentElement.classList.toggle("hidden", !d.runs.some((r) => r.polyline));
+  if (d.runs.some((r) => r.polyline)) drawMap("runMapAll", d.runs.map((r) => decodePolyline(r.polyline)), { weight: 2, opacity: 0.45 });
+
+  $("r-list-meta").textContent = `${d.runs.length} in ${y}`;
+  renderRunList();
+}
+
+let runListAll = false;
+function renderRunList() {
+  const d = runData, y = d.year;
+  const shown = runListAll ? d.runs : d.runs.slice(0, 20);
+  $("runList").innerHTML = shown.map((r) => `
+    <button class="run-row" data-run="${esc(r.id)}">
+      ${routeSvg(r.polyline)}
+      <span class="run-main">
+        <span class="run-name">${esc(r.name)}${r.workout_type === 1 ? '<span class="source-tag">RACE</span>' : ""}</span>
+        <span class="run-date">${longDay(r.date)}${r.start_local ? ` · ${new Date(r.start_local).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}</span>
+      </span>
+      <span class="run-stat"><b>${fmtMi(r.distance_m, 2)}</b> mi</span>
+      <span class="run-stat"><b>${fmtPace(paceOf(r))}</b> /mi</span>
+      <span class="run-stat run-opt"><b>${fmtClock(r.moving_s)}</b> time</span>
+      <span class="run-stat run-opt"><b>${r.avg_hr ? Math.round(r.avg_hr) : "—"}</b> bpm</span>
+    </button>`).join("") + (shown.length < d.runs.length ? `<button class="run-more" id="runMore">Show all ${d.runs.length} runs</button>` : "")
+    || `<div class="empty">No runs in ${y}.</div>`;
+  if ($("runMore")) $("runMore").onclick = () => { runListAll = true; renderRunList(); };
+  $$("[data-panel='running'] [data-run]").forEach((b) => (b.onclick = () => openRun(b.dataset.run)));
+}
+
+async function openRun(id) {
+  $("runDetail").innerHTML = `<div class="empty">Loading…</div>`;
+  $("runDialog").showModal();
+  const r = await api(`/api/running/${encodeURIComponent(id)}`);
+  const splits = r.splits || [];
+  const paces = splits.filter((s) => s.distance_m > 400).map((s) => s.moving_s / miles(s.distance_m));
+  const [fast, slow] = [Math.min(...paces), Math.max(...paces)];
+  const stat = (v, l) => `<div><b>${v}</b><span>${l}</span></div>`;
+  $("runDetail").innerHTML = `
+    <div class="run-detail-head">
+      <div><h3>${esc(r.name)}</h3><p class="hint">${new Date(r.start_local || r.date).toLocaleString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}</p></div>
+      <button class="btn btn-secondary btn-sm" id="runClose">Close</button>
+    </div>
+    <div class="run-map run-map-lg" id="runMapOne"></div>
+    <div class="run-stats">
+      ${stat(`${fmtMi(r.distance_m, 2)} mi`, "Distance")}${stat(fmtPace(paceOf(r)) + " /mi", "Pace")}${stat(fmtClock(r.moving_s), "Moving time")}
+      ${stat(r.elev_m != null ? `${Math.round(r.elev_m * 3.28084)} ft` : "—", "Elevation gain")}
+      ${stat(r.avg_hr ? `${Math.round(r.avg_hr)} bpm` : "—", "Avg heart rate")}${stat(r.cadence ? `${Math.round(r.cadence * 2)} spm` : "—", "Cadence")}
+      ${r.calories ? stat(Math.round(r.calories), "Calories") : ""}${r.elapsed_s && r.elapsed_s - r.moving_s > 60 ? stat(fmtClock(r.elapsed_s), "Elapsed") : ""}
+    </div>
+    ${r.description ? `<p class="run-desc">${esc(r.description)}</p>` : ""}
+    ${splits.length ? `<h4>Splits</h4><div class="splits">${splits.map((s) => {
+      const p = s.moving_s / miles(s.distance_m), partial = s.distance_m < 1500;
+      const w = paces.length && slow > fast ? 35 + 65 * (1 - (p - fast) / (slow - fast)) : 70;
+      return `<div class="split"><span class="split-n">${partial ? fmtMi(s.distance_m, 2) : s.n}</span>
+        <span class="bar-track"><span class="bar-fill" style="display:block;width:${partial ? 20 : w}%"></span></span>
+        <span class="split-pace">${fmtPace(p)}</span><span class="split-elev">${s.elev_m != null ? `${s.elev_m > 0 ? "+" : ""}${Math.round(s.elev_m * 3.28084)} ft` : ""}</span>
+        <span class="split-hr">${s.avg_hr ? Math.round(s.avg_hr) : ""}</span></div>`; }).join("")}</div>` : `<p class="hint">Splits load with the next sync.</p>`}
+    ${(r.best_efforts || []).length ? `<h4>Best efforts</h4><div class="efforts">${r.best_efforts.map((b) => `<span><b>${fmtClock(b.elapsed_s)}</b> ${esc(b.name.replace("Half-Marathon", "Half marathon"))}${b.pr_rank === 1 ? ' <i class="pr">PR</i>' : ""}</span>`).join("")}</div>` : ""}
+    <p class="hint"><a class="link" href="https://www.strava.com/activities/${esc(r.id)}" target="_blank" rel="noopener">View on Strava</a></p>`;
+  $("runClose").onclick = () => $("runDialog").close();
+  const line = decodePolyline(r.polyline_full || r.polyline);
+  if (line.length > 1) drawMap("runMapOne", [line], { weight: 4 });
+  else $("runMapOne").classList.add("hidden");
+}
+$("runDialog").addEventListener("click", (e) => { if (e.target === $("runDialog")) $("runDialog").close(); });
+$("runYear").onchange = () => { runYear = +$("runYear").value; runListAll = false; loadRunning().catch((e) => toast(e.message)); };
+$("runSync").onclick = () => syncStrava();
+
+async function syncStrava(quiet = false) {
+  if (runSyncing) return;
+  runSyncing = true;
+  const btns = [$("runSync"), $("stravaSync")];
+  btns.forEach((b) => { b.disabled = true; });
+  $("runSync").textContent = "Syncing…";
+  try {
+    const r = await api("/api/strava/sync", { method: "POST" });
+    if (!quiet || r.note) toast(r.note || `Strava synced · ${r.runs} runs`);
+    const { tab } = parseRoute();
+    if (tab === "running") await loadRunning();
+    if (tab === "connect") await loadConnect();
+  } catch (e) { toast(e.message); }
+  finally { runSyncing = false; btns.forEach((b) => { b.disabled = false; }); $("runSync").textContent = "Sync"; }
+}
+
+$("stravaConnect").onclick = async () => {
+  try { const { url } = await api("/api/strava/connect", { method: "POST" }); location.href = url; }
+  catch (e) { toast(e.message); }
+};
+$("stravaSync").onclick = () => syncStrava();
+$("stravaDisconnect").onclick = async () => {
+  if (!confirm("Disconnect Strava? Your synced runs stay in LifeTracker.")) return;
+  await api("/api/strava", { method: "DELETE" }); toast("Strava disconnected"); loadConnect();
+};
+
+// ---------- Race training ----------
+const RACE_KIND = { easy: "Easy", long: "Long", tempo: "Tempo", intervals: "Intervals", race: "Race", rest: "Rest" };
+const PACE_NAMES = { E: "Easy", M: "Marathon", T: "Threshold", I: "Interval", R: "Repetition", G: "Goal race" };
+let raceState = { plans: [], fitness: null, current: null, preview: null, race: "half" };
+
+function parseClock(v) {
+  v = String(v || "").trim();
+  if (!v) return null;
+  const parts = v.split(":").map(Number);
+  if (parts.some((x) => !isFinite(x)) || parts.length > 3) throw new Error("Goal time must look like 1:45:00 or 24:30");
+  return parts.reduce((a, b) => a * 60 + b, 0);
+}
+
+async function loadRace() {
+  const d = await api("/api/raceplans");
+  raceState.plans = d.plans; raceState.fitness = d.fitness;
+  const F = d.fitness;
+  $("raceFitness").textContent = F.runs_4wk
+    ? `From Strava, last 4 weeks: ${F.weekly_mi} mi a week, longest run ${F.long_mi} mi.` +
+      (F.vdot ? ` Paces use your ${F.source} (VDOT ${F.vdot}).` : " No recent race or best effort yet, so paces come from your goal time if you add one.")
+    : "No recent Strava runs found. Enter your current mileage, and add a goal time to get paces.";
+  const f = $("raceForm");
+  if (!f.elements.current_weekly_mi.value && F.runs_4wk) f.elements.current_weekly_mi.value = F.weekly_mi;
+  if (!f.elements.current_long_mi.value && F.runs_4wk) f.elements.current_long_mi.value = F.long_mi;
+  $("racePicker").classList.toggle("hidden", !d.plans.length);
+  if (!d.plans.length) { showRaceForm(true); return; }
+  const pick = raceState.current && d.plans.some((p) => p.id === raceState.current) ? raceState.current
+    : (d.plans.find((p) => p.race_date >= iso(new Date())) || d.plans[d.plans.length - 1]).id;
+  $("racePlanSel").innerHTML = d.plans.map((p) => `<option value="${esc(p.id)}" ${p.id === pick ? "selected" : ""}>${esc(p.name)} · ${shortDate(p.race_date)}</option>`).join("");
+  if (!raceState.preview) { showRaceForm(false); await showPlan(pick); }
+}
+
+function showRaceForm(on) {
+  $("raceForm").classList.toggle("hidden", !on);
+  $("raceCancel").classList.toggle("hidden", !raceState.plans.length);
+  if (on) { raceState.preview = null; $("racePlan").innerHTML = ""; }
+}
+
+async function showPlan(id) {
+  raceState.current = id;
+  const p = await api(`/api/raceplans/${encodeURIComponent(id)}`);
+  renderPlan(p, true);
+}
+
+function renderPlan(p, saved) {
+  const today = iso(new Date());
+  const days = Math.ceil((new Date(p.race_date + "T00:00") - new Date(today + "T00:00")) / 864e5);
+  const fit = p.fitness || {};
+  const paces = p.paces ? Object.entries(PACE_NAMES).filter(([k]) => p.paces[k] != null).map(([k, n]) => {
+    const v = p.paces[k];
+    return `<div><span>${n}</span><b>${Array.isArray(v) ? `${fmtPace(v[0])}–${fmtPace(v[1])}` : fmtPace(v)}</b></div>`; }).join("") : "";
+  const weeks = p.weeks.map((w) => {
+    const cur = today >= w.start && today < iso(new Date(new Date(w.start + "T00:00").getTime() + 7 * 864e5));
+    const done = w.done_miles ?? null;
+    const pct = w.miles ? Math.min(100, ((done || 0) / w.miles) * 100) : 0;
+    return `<div class="week-card${cur ? " week-now" : ""}${w.start > today ? "" : " week-past"}" ${cur ? 'id="weekNow"' : ""}>
+      <div class="week-head">
+        <div><b>Week ${w.n}</b><span class="week-phase">${w.phase === "race" ? "Race week" : w.phase[0].toUpperCase() + w.phase.slice(1)}${w.cutback ? " · recovery week" : ""}</span></div>
+        <div class="week-miles">${saved && w.start <= today ? `<span class="bar-track"><span class="bar-fill" style="display:block;width:${pct}%"></span></span><span>${(done || 0).toFixed(1)} of ${w.miles} mi</span>` : `<span>${w.miles} mi</span>`}</div>
+      </div>
+      <div class="week-days">${w.days.map((d) => {
+        const a = d.actual, past = d.date < today;
+        const state = d.kind === "rest" ? "" : a ? " day-done" : past ? " day-missed" : "";
+        return `<div class="day k-${d.kind}${state}${d.date === today ? " day-today" : ""}" title="${esc(d.detail)}">
+          <span class="day-dow">${new Date(d.date + "T00:00").toLocaleDateString("en-US", { weekday: "short", day: "numeric" })}</span>
+          <span class="day-title">${esc(d.title)}</span>
+          ${d.miles ? `<span class="day-mi">${d.miles} mi</span>` : ""}
+          ${a ? `<span class="day-actual">Ran ${a.miles.toFixed(1)} mi · ${fmtPace(a.pace_s_per_mi)}</span>` : ""}
+          ${d.detail ? `<span class="day-detail">${esc(d.detail)}</span>` : ""}
+        </div>`; }).join("")}</div>
+    </div>`; }).join("");
+  $("racePlan").innerHTML = `
+    <div class="race-hero">
+      <div>
+        <p class="eyebrow">${esc(p.label)} · ${new Date(p.race_date + "T00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</p>
+        <h2 class="title">${esc(p.name)}</h2>
+        <p class="lede-sm">${days > 0 ? `${days} days to go · ` : days === 0 ? "Race day · " : ""}${p.weeks.length} weeks from ${shortDate(p.start)} · peak ${p.peak_miles} mi a week</p>
+      </div>
+      <div class="race-actions">${saved ? `<button class="text-btn" id="raceDelete">Delete plan</button>` : `<button class="btn btn-primary" id="raceSave2">Save plan</button>`}</div>
+    </div>
+    <div class="kpis kpis-3">
+      <div class="kpi"><span class="kpi-label">Goal</span><span class="kpi-value">${p.goal_seconds ? fmtClock(p.goal_seconds) : "—"}</span><span class="kpi-sub">${p.goal_seconds ? `${fmtPace(p.paces?.G)} per mile` : "No goal time set"}</span></div>
+      <div class="kpi"><span class="kpi-label">Current fitness predicts</span><span class="kpi-value">${fit.predicted_seconds && fit.source !== "your goal time" ? fmtClock(fit.predicted_seconds) : "—"}</span><span class="kpi-sub">${fit.source && fit.source !== "your goal time" ? `From your ${esc(fit.source)}` : "Needs a recent race or best effort on Strava"}</span></div>
+      <div class="kpi"><span class="kpi-label">Weeks</span><span class="kpi-value">${p.weeks.length}</span><span class="kpi-sub">${p.weeks.filter((w) => w.start <= today).length} started</span></div>
+    </div>
+    ${p.notes?.length ? `<div class="card race-notes">${p.notes.map((n) => `<p>${esc(n)}</p>`).join("")}</div>` : ""}
+    ${paces ? `<div class="card"><div class="card-head"><h3>Training paces</h3><span class="card-meta">Per mile · Daniels' VDOT ${fit.vdot}${fit.source === "your goal time" ? " from your goal time" : ""}</span></div><div class="pace-grid">${paces}</div></div>`
+            : `<div class="card"><p>Workouts are described by effort. Add a goal time, or sync a recent race or hard effort from Strava, to get paces.</p></div>`}
+    <div class="weeks">${weeks}</div>`;
+  if (saved) $("raceDelete").onclick = async () => {
+    if (!confirm(`Delete the plan "${p.name}"?`)) return;
+    await api(`/api/raceplans/${encodeURIComponent(p.id)}`, { method: "DELETE" });
+    raceState.current = null; toast("Plan deleted"); loadRace();
+  };
+  else $("raceSave2").onclick = saveRace;
+  if (saved) $("weekNow")?.scrollIntoView({ block: "center" });
+}
+
+function raceBody() {
+  const f = $("raceForm").elements;
+  return { race: raceState.race, name: f.name.value.trim(), race_date: f.race_date.value, goal_seconds: parseClock(f.goal.value),
+           runs_per_week: +f.runs_per_week.value, long_day: +f.long_day.value,
+           current_weekly_mi: f.current_weekly_mi.value, current_long_mi: f.current_long_mi.value };
+}
+$$("#raceDist [data-race]").forEach((b) => (b.onclick = () => {
+  raceState.race = b.dataset.race;
+  $$("#raceDist [data-race]").forEach((x) => x.classList.toggle("seg-on", x === b));
+}));
+$("raceForm").onsubmit = async (e) => {
+  e.preventDefault();
+  try { raceState.preview = await api("/api/raceplans/preview", { method: "POST", body: JSON.stringify(raceBody()) }); renderPlan(raceState.preview, false); }
+  catch (err) { toast(err.message); }
+};
+async function saveRace() {
+  if (!$("raceForm").reportValidity()) return;
+  try {
+    const { id } = await api("/api/raceplans", { method: "POST", body: JSON.stringify(raceBody()) });
+    raceState.current = id; raceState.preview = null; toast("Plan saved"); await loadRace();
+  } catch (err) { toast(err.message); }
+}
+$("raceSave").onclick = saveRace;
+$("raceNew").onclick = () => showRaceForm(true);
+$("raceCancel").onclick = () => { showRaceForm(false); showPlan($("racePlanSel").value).catch((e) => toast(e.message)); };
+$("racePlanSel").onchange = () => { showRaceForm(false); showPlan($("racePlanSel").value).catch((e) => toast(e.message)); };
 
 // ---------- Education ----------
 let edu = null;            // server state {courses, computed, has_data}
