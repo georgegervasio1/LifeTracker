@@ -1,0 +1,27 @@
+# Cloud Build recipe for automatic backend deploys (used by the Cloud Run trigger on pushes to main).
+# Builds the image from the root Dockerfile, stores it in Artifact Registry, and rolls it out to
+# Cloud Run. The service's environment variables and secrets are kept as they are.
+steps:
+  - id: Build
+    name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "$_IMAGE:$COMMIT_SHA", "-t", "$_IMAGE:latest", "."]
+
+  - id: Push
+    name: gcr.io/cloud-builders/docker
+    args: ["push", "--all-tags", "$_IMAGE"]
+
+  - id: Deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args: ["run", "deploy", "$_SERVICE", "--image", "$_IMAGE:$COMMIT_SHA", "--region", "$_REGION", "--quiet"]
+
+substitutions:
+  _SERVICE: lifetracker-api
+  _REGION: us-east4
+  _IMAGE: us-east4-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/lifetracker-api
+
+options:
+  logging: CLOUD_LOGGING_ONLY      # required when the trigger runs as a specific service account
+  dynamicSubstitutions: true
+
+images: ["$_IMAGE:$COMMIT_SHA"]
