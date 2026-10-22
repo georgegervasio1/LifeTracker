@@ -19,7 +19,7 @@ const chatHistory = []; // [{role, content}] — kept in the browser only
 const SECTIONS = {
   finances: { title: "Finances", tabs: [
     ["overview", "Overview"], ["transactions", "Transactions"], ["investments", "Investments"],
-    ["assistant", "Assistant"], ["accounts", "Accounts"]] },
+    ["paychecks", "Paychecks"], ["assistant", "Assistant"], ["accounts", "Accounts"]] },
   health: { title: "Health", tabs: [
     ["overview", "Overview"], ["planner", "Planner"], ["history", "History"], ["calendar", "Calendar"], ["connect", "Connect"]] },
   education: { title: "Education", tabs: [
@@ -68,6 +68,7 @@ async function load(section, tab) {
   if (section !== "finances") return;
   if (tab === "overview" || tab === "transactions") return loadOverview();
   if (tab === "investments") return loadInvestments();
+  if (tab === "paychecks") return loadPaychecks();
   if (tab === "assistant") setTimeout(() => $("chatInput").focus(), 50);
 }
 
@@ -110,6 +111,7 @@ $("themeBtn").onclick = () => {
   try { localStorage.setItem("lt-theme", next); } catch {}
   paintThemeIcon();
   Object.values(charts).forEach((c) => restyleChart(c));
+  if (earn?.ready && parseRoute().tab === "paychecks") renderPaychecks();
 };
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { paintThemeIcon(); Object.values(charts).forEach(restyleChart); });
 paintThemeIcon();
@@ -923,6 +925,147 @@ function renderAcadCal() {
 $("acalPrev").onclick = () => { const [y, m] = acalMonth.split("-").map(Number); acalMonth = dstr(new Date(y, m - 2, 1)).slice(0, 7); renderAcadCal(); };
 $("acalNext").onclick = () => { const [y, m] = acalMonth.split("-").map(Number); acalMonth = dstr(new Date(y, m, 1)).slice(0, 7); renderAcadCal(); };
 $("acalClear").onclick = () => { acalDay = null; renderAcadCal(); };
+
+// ---------- Finances: paychecks, withholding math, year-end tax ----------
+let earn = null, payChart = null;
+const openPay = new Set();
+const money = (v) => (v == null ? "—" : usd.format(v));
+const pct = (r) => `${+(r * 100).toFixed(2)}%`;
+async function loadPaychecks() { earn = await api("/api/earnings"); renderPaychecks(); }
+function renderPaychecks() {
+  const s = earn.settings;
+  $("payEmpty").classList.toggle("hidden", earn.ready);
+  $("payBody").classList.toggle("hidden", !earn.ready);
+  $("payAddStub").classList.toggle("hidden", !earn.ready);
+  $("payJob").textContent = [s.employer, s.role].filter(Boolean).join(" · ") || "Paychecks";
+  if (!earn.ready) { $("payTitle").textContent = "Money earned"; $("paySub").textContent = earn.error || ""; return; }
+  const T = earn.totals, Y = earn.year_end, F = Y.federal;
+  const fd = (d, o = { month: "short", day: "numeric" }) => new Date(d + "T00:00").toLocaleDateString("en-US", o);
+  const freq = { weekly: "weekly", biweekly: "every two weeks", semimonthly: "twice a month", monthly: "monthly" }[s.frequency];
+  $("payTitle").textContent = `${money(T.gross)} earned`;
+  $("paySub").textContent = `${fd(s.start)} – ${fd(s.end, { month: "short", day: "numeric", year: "numeric" })} · ${money(s.annual_salary)} a year, paid ${freq} · ${T.checks} paycheck${T.checks === 1 ? "" : "s"}${T.actual_checks ? ` (${T.actual_checks} from pay stubs)` : " (projected)"}`;
+  const withheld = T.federal + T.state + T.dc;
+  $("payKpis").innerHTML = [
+    ["Gross pay", money(T.gross), `${money(T.checks ? T.gross / T.checks : 0)} per check`],
+    ["Take-home", money(T.net), `${(T.gross ? (T.net / T.gross) * 100 : 0).toFixed(1)}% of gross`],
+    ["Income tax withheld", money(withheld), `+ ${money(T.ss + T.medicare)} Social Security & Medicare`],
+    [Y.net_settle >= 0 ? "Expected back at tax time" : "Expected to owe", money(Math.abs(Y.net_settle)), `Keep ${money(Y.true_take_home)} after filing`],
+  ].map(([l, v, sub], i) => `<div class="kpi"><span class="kpi-label">${l}</span><span class="kpi-value ${i === 3 ? (Y.net_settle >= 0 ? "pos" : "neg") : ""}">${v}</span><span class="kpi-sub">${sub}</span></div>`).join("");
+
+  // stacked bars per paycheck
+  const k = { net: cssVar("--accent"), fed: cssVar("--exam"), st: cssVar("--warn"), fica: cssVar("--text-3") };
+  const series = [["Take-home", "net", k.net], ["Federal", "federal", k.fed], ["State", (c) => c.state + c.dc, k.st], ["Social Security + Medicare", (c) => c.ss + c.medicare, k.fica]];
+  payChart?.destroy();
+  payChart = new Chart($("chart-pay"), {
+    type: "bar",
+    data: { labels: earn.checks.map((c) => fd(c.pay_date)), datasets: series.map(([label, f, color]) => ({ label, data: earn.checks.map((c) => (typeof f === "function" ? f(c) : c[f])), backgroundColor: color, borderRadius: 4, maxBarThickness: 44 })) },
+    options: { aspectRatio: 2.6, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${usd.format(c.parsed.y)}` } } },
+      scales: { x: { stacked: true, grid: { display: false }, border: { display: false }, ticks: { color: cssVar("--text-3"), maxRotation: 0 } },
+                y: { stacked: true, border: { display: false }, grid: { color: cssVar("--line") }, ticks: { color: cssVar("--text-3"), maxTicksLimit: 5, callback: (v) => usd0.format(v) } } } },
+  });
+  $("payLegend").innerHTML = series.map(([l, , c]) => `<span><i class="k-dot" style="background:${c}"></i>${l}</span>`).join("");
+
+  // table with expandable math
+  const cols = ["gross", "federal", "state", "ss", "medicare", "net"];
+  const hasDc = T.dc > 0;
+  $("payTable").innerHTML = `<thead><tr><th>Pay date</th><th>Period</th>${["Gross", "Federal", s.work_state === "IL" ? "Illinois" : "State", ...(hasDc ? ["DC"] : []), "Soc. Sec.", "Medicare", "Net"].map((h) => `<th class="num">${h}</th>`).join("")}</tr></thead><tbody>` +
+    earn.checks.map((c, i) => `<tr class="pay-row ${openPay.has(i) ? "open" : ""}" data-payrow="${i}"><td><strong>${fd(c.pay_date)}</strong>${c.source === "actual" ? ' <span class="pf-badge">stub</span>' : ""}</td>
+      <td class="muted">${c.period_start ? `${fd(c.period_start)} – ${fd(c.period_end)}${c.days_worked != null && c.days_worked < c.days_in_period ? ` · ${c.days_worked}/${c.days_in_period} days` : ""}` : ""}</td>
+      ${[c.gross, c.federal, c.state, ...(hasDc ? [c.dc] : []), c.ss, c.medicare].map((v) => `<td class="num">${money(v)}</td>`).join("")}<td class="num"><strong>${money(c.net)}</strong></td></tr>
+      ${openPay.has(i) ? `<tr class="pay-math"><td colspan="${hasDc ? 9 : 8}">${payMath(c)}</td></tr>` : ""}`).join("") +
+    `</tbody><tfoot><tr><td><strong>Total</strong></td><td></td>${[T.gross, T.federal, T.state, ...(hasDc ? [T.dc] : []), T.ss, T.medicare].map((v) => `<td class="num"><strong>${money(v)}</strong></td>`).join("")}<td class="num"><strong>${money(T.net)}</strong></td></tr></tfoot>`;
+  $$("[data-payrow]").forEach((r) => (r.onclick = () => { const i = +r.dataset.payrow; openPay.has(i) ? openPay.delete(i) : openPay.add(i); renderPaychecks(); }));
+
+  // federal brackets: what payroll assumed vs. your actual year
+  const assumedTaxable = Math.max(0, F.payroll_assumed_income - F.std_deduction);
+  $("payFedMeta").textContent = `${pct(F.marginal)} marginal · ${F.effective}% effective`;
+  $("payBrackets").innerHTML = bracketBar(`Your ${earn.year}`, F.taxable, earn.tables.federal, Math.max(assumedTaxable, F.taxable)) +
+    bracketBar(`What payroll assumed (${money(F.payroll_assumed_income)} for a full year)`, assumedTaxable, earn.tables.federal, Math.max(assumedTaxable, F.taxable), true) +
+    `<p class="solver-text">Payroll withholds as if each paycheck repeats all year, so it taxed your summer at the <strong>${pct(F.payroll_assumed_marginal)}</strong> rate. Over the whole year you only reach the <strong>${pct(F.marginal)}</strong> bracket${Y.other_income ? "" : " if this is your only income"}, which is why the federal refund is large.</p>` +
+    mathLines([
+      ["Wages", money(Y.wages)], ...(Y.other_income ? [["+ Other income", money(Y.other_income)]] : []),
+      [`− Standard deduction`, money(F.std_deduction)], ["= Taxable income", money(F.taxable), "sum"],
+      ...F.fill.filter((b) => b.amount > 0).map((b) => [`${pct(b.rate)} × ${money(b.amount)}`, money(b.tax), "sub"]),
+      ["= Federal tax for the year", money(F.tax), "sum"], ["Withheld from paychecks", money(F.withheld)],
+      [F.refund >= 0 ? "Federal refund" : "Federal tax owed", money(Math.abs(F.refund)), F.refund >= 0 ? "pos" : "neg"],
+    ]);
+
+  // state cards
+  const cards = [];
+  if (Y.il) cards.push(`<div class="card"><div class="card-head"><h3>Illinois${Y.il.resident ? "" : " (nonresident)"}</h3><span class="card-meta">Flat ${pct(earn.tables.il_rate)}</span></div>` + mathLines([
+    ["Illinois wages", money(Y.il.wages)], [`− Exemption ${money(Y.il.exemption)} × ${Y.il.ratio}% earned in IL`, money(Y.il.exemption * Y.il.ratio / 100)],
+    [`× ${pct(earn.tables.il_rate)}`, money(Y.il.tax), "sum"], ["Withheld", money(Y.il.withheld)],
+    [Y.il.refund >= 0 ? "Illinois refund" : "Illinois owed", money(Math.abs(Y.il.refund)), Y.il.refund >= 0 ? "pos" : "neg"]]) +
+    `<p class="hint">Illinois taxes wages earned there even if you live elsewhere. Withholding takes out ${money(Y.il.exemption / 52)} a week for the exemption; the full-year exemption is prorated to your Illinois share.</p></div>`);
+  if (Y.dc) cards.push(`<div class="card"><div class="card-head"><h3>District of Columbia (resident)</h3><span class="card-meta">${earn.tables.dc.length} brackets</span></div>` +
+    bracketBar("DC taxable income", Y.dc.taxable, earn.tables.dc, Math.max(Y.dc.taxable * 1.25, 70000)) + mathLines([
+    ["Income", money(Y.agi)], [`− Standard deduction${Y.dc.std_assumed ? " (assumed same as federal)" : ""}`, money(Y.dc.std_deduction)], ["= DC taxable", money(Y.dc.taxable), "sum"],
+    ...Y.dc.fill.filter((b) => b.amount > 0).map((b) => [`${pct(b.rate)} × ${money(b.amount)}`, money(b.tax), "sub"]),
+    ["= DC tax", money(Y.dc.tax), "sum"], ["− Credit for Illinois tax", money(Y.dc.credit_other_state)],
+    ...(Y.dc.withheld ? [["− DC withheld", money(Y.dc.withheld)]] : []),
+    [Y.dc.due > 0 ? "Owed to DC" : "Owed to DC", money(Math.max(0, Y.dc.due)), Y.dc.due > 0 ? "neg" : "pos"]]) +
+    `<p class="hint">DC taxes residents on all income but credits tax paid to another state on the same wages, up to DC's own tax on them. Nothing was withheld for DC unless you told payroll to.</p></div>`);
+  $("payStates").innerHTML = cards.join("");
+  $("payStates").classList.toggle("hidden", !cards.length);
+
+  $("payBottom").innerHTML = mathLines([
+    ["Gross pay", money(Y.wages)], ["− Federal income tax (actual for the year)", money(F.tax)],
+    ["− Social Security & Medicare", money(Y.fica.ss + Y.fica.medicare)],
+    ...(Y.il ? [["− Illinois tax", money(Y.il.tax)]] : []), ...(Y.dc ? [["− DC tax after credit", money(Y.dc.after_credit)]] : []),
+    ["= What you keep", money(Y.true_take_home), "sum"],
+    ["Already in your bank from paychecks", money(T.net)],
+    [Y.net_settle >= 0 ? "Comes back when you file" : "You'll pay when you file", money(Math.abs(Y.net_settle)), Y.net_settle >= 0 ? "pos" : "neg"],
+  ]) + `<p class="hint">${Y.fica.note}</p>`;
+}
+function payMath(c) {
+  if (!c.math) return `<p class="hint">Entered from a pay stub.</p>`;
+  const f = c.math.federal, il = c.math.il, pp = f.pay_periods;
+  const fed = [
+    [`Gross this check${c.days_worked < c.days_in_period ? ` (${money(c.math.per_full_period)} × ${c.days_worked}/${c.days_in_period} workdays)` : ""}`, money(c.gross)],
+    [`× ${pp} pay periods = annualized`, money(f.annualized_wages)], [`− W-4 adjustment (Pub 15-T line 1g)`, money(f.line_1g)],
+    ["= Adjusted annual wage", money(f.adjusted_annual), "sum"],
+    [`Table row: ${money(f.row_base)} + ${pct(f.row_rate)} × (${money(f.adjusted_annual)} − ${money(f.row_from)})`, money(f.annual_withholding)],
+    [`÷ ${pp} = federal withholding${c.source === "actual" ? " (projected; your stub shows " + money(c.federal) + ")" : ""}`, money(f.annual_withholding / pp), "sum"],
+  ];
+  const st = il ? [[`Illinois: (${money(c.gross)} − ${money(il.allowance_per_period)} allowance) × 4.95%`, money(c.state), "sum"]] : [];
+  const fica = [[`Social Security: ${money(c.gross)} × 6.2%`, money(c.ss)], [`Medicare: ${money(c.gross)} × 1.45%${c.math.addl_medicare_wages ? " + 0.9% over $200k" : ""}`, money(c.medicare)]];
+  return `<div class="pay-math-grid"><div><h4>Federal</h4>${mathLines(fed)}</div><div><h4>State & payroll taxes</h4>${mathLines([...st, ...fica])}</div></div>`;
+}
+function mathLines(rows) {
+  return `<div class="math">${rows.map(([l, v, cls]) => `<div class="math-row ${cls || ""}"><span>${l}</span><span>${v}</span></div>`).join("")}</div>`;
+}
+function bracketBar(label, income, brackets, scaleMax, ghost = false) {
+  const max = scaleMax * 1.08 || 1;
+  const segs = brackets.map(([lo, rate], i) => {
+    const hi = i + 1 < brackets.length ? brackets[i + 1][0] : Infinity;
+    if (lo >= max) return "";
+    const w = ((Math.min(hi, max) - lo) / max) * 100, filled = Math.max(0, Math.min(1, (income - lo) / (Math.min(hi, max) - lo)));
+    return `<div class="bseg" style="width:${w}%"><span class="bfill" style="width:${filled * 100}%;opacity:${0.35 + rate * 1.6}"></span><span class="brate">${pct(rate)}</span></div>`;
+  }).join("");
+  return `<div class="bracket ${ghost ? "ghost" : ""}"><div class="bracket-label"><span>${label}</span><strong>${money(income)} taxable</strong></div><div class="bbar">${segs}</div></div>`;
+}
+$("payEdit").onclick = $("paySetup").onclick = () => {
+  const f = $("payForm"), s = earn?.settings || {};
+  [...f.elements].forEach((el) => { if (!el.name) return; if (el.type === "checkbox") el.checked = !!s[el.name]; else el.value = s[el.name] ?? ""; });
+  if (!s.frequency) f.elements.frequency.value = "weekly";
+  $("payDialog").showModal();
+};
+$("payCancel").onclick = () => $("payDialog").close();
+$("payForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const body = {};
+  [...$("payForm").elements].forEach((el) => { if (el.name) body[el.name] = el.type === "checkbox" ? el.checked : el.value; });
+  try { earn = await api("/api/earnings/settings", { method: "PUT", body: JSON.stringify(body) }); $("payDialog").close(); renderPaychecks(); toast("Saved"); }
+  catch (err) { toast(err.message); }
+};
+$("payAddStub").onclick = () => { $("stubForm").reset(); $("stubDialog").showModal(); };
+$("stubCancel").onclick = () => $("stubDialog").close();
+$("stubForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const body = Object.fromEntries([...$("stubForm").elements].filter((el) => el.name).map((el) => [el.name, el.value]));
+  try { earn = await api("/api/earnings/paychecks", { method: "POST", body: JSON.stringify(body) }); $("stubDialog").close(); renderPaychecks(); toast("Pay stub added"); }
+  catch (err) { toast(err.message); }
+};
 
 // ---------- Training: planner, live session, history ----------
 const DAYS = [["mon", "Mon"], ["tue", "Tue"], ["wed", "Wed"], ["thu", "Thu"], ["fri", "Fri"], ["sat", "Sat"], ["sun", "Sun"]];

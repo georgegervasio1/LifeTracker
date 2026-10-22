@@ -172,6 +172,41 @@
           </div>
         </div>
 
+        <!-- Paychecks -->
+        <div class="panel wrap" data-panel="paychecks">
+          <div class="pay-head">
+            <div>
+              <p class="eyebrow" id="payJob">Paychecks</p>
+              <h2 class="title" id="payTitle">Money earned</h2>
+              <p class="lede-sm" id="paySub"></p>
+            </div>
+            <div class="pay-actions">
+              <button class="btn btn-secondary btn-sm" id="payAddStub">Add a pay stub</button>
+              <button class="btn btn-primary btn-sm" id="payEdit">Edit setup</button>
+            </div>
+          </div>
+          <div class="card empty-state hidden" id="payEmpty">
+            <h3>Set up your paychecks</h3>
+            <p>Enter your salary, first and last day, and pay schedule. Every paycheck is projected with the federal and state withholding math, then compared with what you'll actually owe for the year.</p>
+            <button class="btn btn-primary" id="paySetup">Set up</button>
+          </div>
+          <div id="payBody" class="hidden">
+            <div class="kpis" id="payKpis"></div>
+            <div class="card"><div class="card-head"><h3>Every paycheck</h3><span class="card-meta">Where each dollar of gross pay went</span></div><canvas id="chart-pay"></canvas><div class="pay-legend" id="payLegend"></div></div>
+            <div class="card card-flush">
+              <div class="card-head padded"><h3>Paycheck by paycheck</h3><span class="card-meta">Tap a paycheck to see the math</span></div>
+              <div class="table-scroll"><table class="table pay-table" id="payTable"></table></div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h3>Federal tax brackets</h3><span class="card-meta" id="payFedMeta"></span></div>
+              <div id="payBrackets"></div>
+            </div>
+            <div class="grid-2" id="payStates"></div>
+            <div class="card"><div class="card-head"><h3>Bottom line for the year</h3></div><div id="payBottom"></div></div>
+            <p class="hint">Estimates from IRS Pub 15-T (2026), the 2026 federal brackets, Illinois IL-700-T and DC's 2026 rates. Your pay stubs, W-2 and tax return are the source of truth; this isn't tax advice.</p>
+          </div>
+        </div>
+
         <!-- Accounts -->
         <div class="panel wrap" data-panel="accounts">
           <div class="grid-2">
@@ -488,6 +523,59 @@
       </dialog>
 
       <!-- Course editor -->
+      <dialog id="payDialog" class="dialog">
+        <form method="dialog" id="payForm" class="dialog-form" autocomplete="off">
+          <h3>Paycheck setup</h3>
+          <label>Employer<input class="input" name="employer" /></label>
+          <label>Role<input class="input" name="role" placeholder="Summer Associate" /></label>
+          <label>Annual salary rate<input class="input" name="annual_salary" type="number" step="1" min="0" placeholder="e.g. 225000" required /></label>
+          <label>Pay schedule<select class="input" name="frequency"><option value="weekly">Weekly</option><option value="biweekly">Every two weeks</option><option value="semimonthly">Twice a month (15th & last day)</option><option value="monthly">Monthly</option></select></label>
+          <label>First day<input class="input" name="start" type="date" required /></label>
+          <label>Last day<input class="input" name="end" type="date" required /></label>
+          <label>Paid how many days after period ends<input class="input" name="pay_lag_days" type="number" min="0" max="30" /></label>
+          <label>Filing status<select class="input" name="filing_status"><option value="single">Single</option><option value="mfj">Married filing jointly</option></select></label>
+          <fieldset class="span-2 tags-field"><legend>Federal W-4 (2020 or later)</legend>
+            <label class="check"><input type="checkbox" name="w4_step2" /> Step 2 box checked (multiple jobs)</label>
+            <div class="pay-form-row">
+              <label>3: credits<input class="input" name="w4_credits" type="number" min="0" /></label>
+              <label>4a: other income<input class="input" name="w4_other_income" type="number" min="0" /></label>
+              <label>4b: deductions<input class="input" name="w4_deductions" type="number" min="0" /></label>
+              <label>4c: extra / check<input class="input" name="w4_extra" type="number" min="0" /></label>
+            </div>
+          </fieldset>
+          <label>Work state<select class="input" name="work_state"><option value="IL">Illinois</option><option value="">Other / none</option></select></label>
+          <label>Home (resident) state<select class="input" name="resident_state"><option value="DC">District of Columbia</option><option value="IL">Illinois</option><option value="">Other / none</option></select></label>
+          <label>IL-W-4 line 1 allowances<input class="input" name="il_allow1" type="number" min="0" max="30" /></label>
+          <label>IL-W-4 line 2 allowances<input class="input" name="il_allow2" type="number" min="0" max="30" /></label>
+          <label>DC withheld per full period<input class="input" name="dc_withholding" type="number" min="0" placeholder="0" /></label>
+          <label>DC standard deduction<input class="input" name="dc_std_deduction" type="number" min="0" placeholder="same as federal" /></label>
+          <label class="span-2">Other income this year (other jobs, interest)<input class="input" name="other_income" type="number" min="0" placeholder="0" /></label>
+          <div class="dialog-actions span-2"><span style="flex:1"></span>
+            <button type="button" class="btn btn-secondary" id="payCancel">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog id="stubDialog" class="dialog">
+        <form method="dialog" id="stubForm" class="dialog-form" autocomplete="off">
+          <h3>Add a pay stub</h3>
+          <p class="hint span-2">Enter what your stub shows. It replaces the projection for that pay date.</p>
+          <label>Pay date<input class="input" name="pay_date" type="date" required /></label>
+          <label>Gross pay<input class="input" name="gross" type="number" step="0.01" min="0" required /></label>
+          <label>Federal income tax<input class="input" name="federal" type="number" step="0.01" min="0" /></label>
+          <label>State income tax<input class="input" name="state" type="number" step="0.01" min="0" /></label>
+          <label>Social Security<input class="input" name="ss" type="number" step="0.01" min="0" /></label>
+          <label>Medicare<input class="input" name="medicare" type="number" step="0.01" min="0" /></label>
+          <label>DC tax<input class="input" name="dc" type="number" step="0.01" min="0" /></label>
+          <label>Net pay<input class="input" name="net" type="number" step="0.01" min="0" /></label>
+          <div class="dialog-actions span-2"><span style="flex:1"></span>
+            <button type="button" class="btn btn-secondary" id="stubCancel">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </div>
+        </form>
+      </dialog>
+
       <dialog id="courseDialog" class="dialog">
         <form method="dialog" id="courseForm" class="dialog-form" autocomplete="off">
           <h3 id="courseDialogTitle">Course</h3>

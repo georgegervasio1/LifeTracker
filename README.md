@@ -118,6 +118,12 @@ Add a Cloud Scheduler job that calls `POST /api/sync` daily. Easiest path: add a
 - [x] Health: workout log, calendar, WHOOP sync
 - [x] Health: workout planner, live sessions, history + PRs
 - [x] Education: GPA engine, degree audit, course planner
+- [x] Education: pass/fail budget, academic calendar, finals from the Registrar's schedule
 - [ ] Education: weekly schedule, finals planner, Canvas feed
+- [x] Finances: paychecks with per-check withholding math and year-end federal/state tax
+- [ ] Tax visualization across the whole year (all income, brackets, refund/owed)
+- [ ] Brokerage connection (investment account holdings + activity)
+- [ ] Market data (S&P 500) alongside investments
+- [ ] Apple/iCloud calendar sync (subscribe feed for finals, key dates, workouts)
 - [ ] Assistant actions: recategorize, set budgets
 - [ ] "Change the app" requests → GitHub issue → Claude Code PR

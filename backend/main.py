@@ -420,6 +420,10 @@ education.init(app, db, firestore, require_owner, user_ref)
 import training
 training.init(app, db, firestore, require_owner, user_ref)
 
+# ---------------------------------------------------------------- Earnings (paychecks, withholding, year-end tax)
+import earnings
+earnings.init(app, db, firestore, require_owner, user_ref)
+
 
 # ---------------------------------------------------------------- AI assistant
 import assistant

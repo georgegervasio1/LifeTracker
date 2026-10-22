@@ -646,3 +646,40 @@ button.h-row:hover span:first-child { color: var(--accent); }
 }
 .exam-pick { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 0 2px; }
 .exam-pick p { width: 100%; margin: 0; }
+
+/* ---------- Finances: paychecks ---------- */
+.pay-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+.pay-head .title { margin: 2px 0 4px; }
+.pay-actions { display: flex; gap: 8px; }
+#payBody > * + * { margin-top: 20px; }
+.pay-legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--text-2); margin-top: 12px; }
+.pay-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.table-scroll { overflow-x: auto; }
+.pay-table { min-width: 760px; }
+.pay-table td, .pay-table th { white-space: nowrap; }
+.pay-table .muted { color: var(--text-2); font-size: 13px; }
+.pay-row { cursor: pointer; }
+.pay-row:hover td { background: var(--surface-hover); }
+.pay-row.open td { background: var(--bg-alt); }
+.pay-math td { background: var(--bg-alt); white-space: normal; padding: 6px 20px 18px; }
+.pay-table tfoot td { border-top: 1px solid var(--line-strong); }
+.pay-math-grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 28px; }
+.pay-math-grid h4 { font-size: 13px; font-weight: 600; color: var(--text-2); margin: 8px 0 6px; }
+.math { display: grid; gap: 2px; max-width: 720px; font-size: 14px; font-variant-numeric: tabular-nums; }
+.math-row { display: flex; justify-content: space-between; gap: 16px; padding: 5px 0; }
+.math-row span:first-child { color: var(--text-2); }
+.math-row.sub { padding-left: 16px; font-size: 13px; }
+.math-row.sum { border-top: 1px solid var(--line); font-weight: 600; }
+.math-row.sum span:first-child { color: var(--text); }
+.math-row.pos, .math-row.neg { font-weight: 600; font-size: 15px; border-top: 1px solid var(--line); padding-top: 8px; }
+.math-row.pos span:last-child { color: var(--pos); } .math-row.neg span:last-child { color: var(--neg); }
+.bracket { margin: 4px 0 18px; }
+.bracket-label { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--text-2); margin-bottom: 6px; }
+.bracket-label strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.bbar { display: flex; gap: 3px; height: 30px; }
+.bseg { position: relative; background: var(--track); border-radius: 6px; overflow: hidden; min-width: 2px; }
+.bfill { position: absolute; inset: 0 auto 0 0; background: var(--exam); }
+.bracket.ghost .bfill { background: var(--text-3); }
+.brate { position: relative; display: flex; align-items: center; height: 100%; padding-left: 7px; font-size: 11px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; }
+#payStates .card .math { margin-top: 8px; }
+@media (max-width: 760px) { .pay-math-grid { grid-template-columns: 1fr; gap: 8px; } }
