@@ -7,6 +7,7 @@
 service-account*.json
 
 # --- Financial data: never commit statements or exports ---
+*.pdf
 *.csv
 *.ofx
 *.qfx

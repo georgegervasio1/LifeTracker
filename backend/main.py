@@ -13,6 +13,7 @@ Endpoints (all require a Firebase ID token for ALLOWED_EMAIL):
   Health: /api/health/summary, /api/workouts, /api/whoop/{connect,callback,sync}  (see health.py)
   Education: /api/edu, /api/edu/courses, /api/edu/profile, /api/edu/import  (see education.py)
   Syllabi: /api/edu/syllabi/{import,upload}, /api/edu/syllabi/<id>[/file]  (see syllabus.py)
+  Finances (ledger): /api/fin/{overview,cash,investments,income,taxes,upload,imports,reconcile,...}  (see finance.py)
   Training: /api/training, /api/training/{template,state,sessions,history,exercise,import}  (see training.py)
 """
 import csv
@@ -80,7 +81,10 @@ def user_ref():
 import plaid
 from plaid.api import plaid_api
 from plaid.model.country_code import CountryCode
+from plaid.model.accounts_get_request import AccountsGetRequest
 from plaid.model.investments_holdings_get_request import InvestmentsHoldingsGetRequest
+from plaid.model.investments_transactions_get_request import InvestmentsTransactionsGetRequest
+from plaid.model.investments_transactions_get_request_options import InvestmentsTransactionsGetRequestOptions
 from plaid.model.item_public_token_exchange_request import ItemPublicTokenExchangeRequest
 from plaid.model.link_token_create_request import LinkTokenCreateRequest
 from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser
@@ -130,10 +134,36 @@ def exchange_public_token():
     return jsonify(ok=True, item_id=resp["item_id"])
 
 
+PLAID_TYPES = {("depository", "checking"): "checking", ("depository", "savings"): "savings", ("depository", "money market"): "savings",
+               ("depository", "cd"): "savings", ("credit", None): "credit_card", ("loan", None): "loan",
+               ("investment", "roth"): "roth_ira", ("investment", "roth 401k"): "roth_401k", ("investment", "401k"): "401k",
+               ("investment", "ira"): "traditional_ira", ("investment", "rollover"): "rollover_ira", ("investment", None): "brokerage"}
+
+
+def _plaid_accounts(item_doc):
+    """Map this item's Plaid accounts to canonical accounts and record today's balances."""
+    item = item_doc.to_dict()
+    resp = plaid_client.accounts_get(AccountsGetRequest(access_token=item["access_token"])).to_dict()
+    out = {}
+    for a in resp["accounts"]:
+        typ, sub = str(a.get("type") or ""), str(a.get("subtype") or "")
+        kind = PLAID_TYPES.get((typ, sub)) or PLAID_TYPES.get((typ, None)) or "other"
+        canon = ledger.resolve_account(item.get("institution") or "Bank", kind, mask=a.get("mask"),
+                                       name=a.get("official_name") or a.get("name"), alias="plaid:" + a["account_id"])
+        ledger.map_plaid_account(a["account_id"], canon)
+        bal = (a.get("balances") or {}).get("current")
+        if bal is not None:
+            ledger.set_balance(canon, date.today().isoformat(), float(bal), src="plaid")
+        out[a["account_id"]] = canon
+    return out
+
+
 def _sync_transactions(item_doc):
     item = item_doc.to_dict()
     cursor, added, removed = item.get("cursor"), 0, 0
     tx_col = user_ref().collection("transactions")
+    amap = _plaid_accounts(item_doc)
+    touched = {}
     while True:
         args = {"access_token": item["access_token"]}
         if cursor:
@@ -142,9 +172,12 @@ def _sync_transactions(item_doc):
         batch = db.batch()
         for t in resp["added"] + resp["modified"]:
             pfc = t.get("personal_finance_category") or {}
+            canon = amap.get(t["account_id"], "plaid:" + t["account_id"])
+            lo, hi = touched.get(canon, (str(t["date"]), str(t["date"])))
+            touched[canon] = (min(lo, str(t["date"])), max(hi, str(t["date"])))
             batch.set(tx_col.document(t["transaction_id"]), {
                 "source": item["institution"],
-                "account_id": t["account_id"],
+                "account_id": t["account_id"], "account": canon, "src": "plaid",
                 "date": str(t["date"]),
                 # Plaid: positive = money out. We store spending as positive too.
                 "amount": float(t["amount"]),
@@ -162,27 +195,76 @@ def _sync_transactions(item_doc):
         if not resp["has_more"]:
             break
     item_doc.reference.update({"cursor": cursor, "last_sync": firestore.SERVER_TIMESTAMP})
+    for canon, (lo, hi) in touched.items():          # a Plaid copy outranks the same purchase from a CSV
+        ledger.dedupe_transactions(canon, lo, hi)
     return added, removed
 
 
+PLAID_INV_TYPES = {"buy": "buy", "sell": "sell", "fee": "fee", "dividend": "dividend", "interest": "interest",
+                   "deposit": "deposit", "contribution": "contribution", "withdrawal": "withdrawal", "distribution": "distribution"}
+
+
 def _sync_holdings(item_doc):
+    """Holdings become one snapshot per canonical account per day (tax lots are added from the latest
+    statement when the share counts match); investment transactions go into the shared activity ledger."""
     item = item_doc.to_dict()
+    amap = _plaid_accounts(item_doc)
     resp = plaid_client.investments_holdings_get(
         InvestmentsHoldingsGetRequest(access_token=item["access_token"])).to_dict()
     securities = {s["security_id"]: s for s in resp["securities"]}
-    holdings = [{
-        "account_id": h["account_id"],
-        "ticker": securities.get(h["security_id"], {}).get("ticker_symbol"),
-        "name": securities.get(h["security_id"], {}).get("name"),
-        "quantity": float(h["quantity"]),
-        "value": float(h.get("institution_value") or 0),
-        "cost_basis": float(h["cost_basis"]) if h.get("cost_basis") is not None else None,
-    } for h in resp["holdings"]]
-    snap = {"date": date.today().isoformat(), "holdings": holdings,
-            "total": round(sum(h["value"] for h in holdings), 2)}
-    # One snapshot per day -> lets you chart portfolio value over time.
-    user_ref().collection("holdings").document(snap["date"]).set(snap)
-    return len(holdings)
+    today = date.today().isoformat()
+    by_acct = defaultdict(list)
+    cash = defaultdict(float)
+    for h in resp["holdings"]:
+        sec = securities.get(h["security_id"], {})
+        canon = amap.get(h["account_id"])
+        if not canon:
+            continue
+        if sec.get("is_cash_equivalent") or sec.get("type") == "cash":
+            cash[canon] += float(h.get("institution_value") or 0)
+            continue
+        by_acct[canon].append({"symbol": sec.get("ticker_symbol"), "name": sec.get("name"), "quantity": float(h["quantity"]),
+                               "price": float(h.get("institution_price") or 0), "value": float(h.get("institution_value") or 0),
+                               "cost_basis": float(h["cost_basis"]) if h.get("cost_basis") is not None else None,
+                               "unrealized": (float(h.get("institution_value") or 0) - float(h["cost_basis"])) if h.get("cost_basis") is not None else None})
+    for canon in set(by_acct) | set(cash):
+        hs = by_acct.get(canon, [])
+        total = round(sum(x["value"] for x in hs) + cash.get(canon, 0), 2)
+        user_ref().collection("inv_snapshots").document(f"{canon}_{today}_plaid").set(
+            {"account": canon, "date": today, "src": "plaid", "holdings": hs, "cash": round(cash.get(canon, 0), 2), "total": total})
+        ledger.set_balance(canon, today, total, src="plaid")
+    # investment transactions (up to 24 months)
+    start = date.today() - timedelta(days=730)
+    offset, n = 0, 0
+    while True:
+        r = plaid_client.investments_transactions_get(InvestmentsTransactionsGetRequest(
+            access_token=item["access_token"], start_date=start, end_date=date.today(),
+            options=InvestmentsTransactionsGetRequestOptions(offset=offset, count=500))).to_dict()
+        secs = {s["security_id"]: s for s in r.get("securities", [])}
+        batch = db.batch()
+        for t in r["investment_transactions"]:
+            canon = amap.get(t["account_id"])
+            if not canon:
+                continue
+            sub, typ = str(t.get("subtype") or ""), str(t.get("type") or "")
+            kind = PLAID_INV_TYPES.get(sub) or PLAID_INV_TYPES.get(typ) or ("transfer_in" if float(t["amount"]) < 0 else "transfer_out")
+            desc = t.get("name") or ""
+            if kind in ("deposit", "transfer_in"):
+                kind = ledger.classify_inflow(desc)
+            batch.set(user_ref().collection("inv_activity").document("plaid_" + t["investment_transaction_id"]), {
+                "account": canon, "date": str(t["date"]), "type": kind, "description": desc,
+                "symbol": (secs.get(t.get("security_id")) or {}).get("ticker_symbol"),
+                "quantity": abs(float(t.get("quantity") or 0)) or None, "price": float(t.get("price") or 0) or None,
+                "amount": -float(t["amount"]), "src": "plaid", "pending": False}, merge=True)
+            n += 1
+        batch.commit()
+        offset += len(r["investment_transactions"])
+        if offset >= r.get("total_investment_transactions", 0) or not r["investment_transactions"]:
+            break
+    for canon in set(amap.values()):
+        ledger.dedupe_activity(canon, start.isoformat(), today)
+    ledger.pair_transfers()
+    return sum(len(v) for v in by_acct.values())
 
 
 @app.post("/api/sync")
@@ -228,6 +310,7 @@ def venmo_upload():
         return jsonify(error="couldn't find Venmo header row"), 400
     reader = csv.DictReader(io.StringIO("\n".join(lines[start:])))
     tx_col, count, batch = user_ref().collection("transactions"), 0, db.batch()
+    dates = []
     for row in reader:
         amt_key = next((k for k in row if k and k.startswith("Amount (total)")), None)
         amount = _parse_venmo_amount(row.get(amt_key)) if amt_key else None
@@ -238,7 +321,7 @@ def venmo_upload():
         counterparty = row.get("To") if amount > 0 else row.get("From")
         batch.set(tx_col.document(tid), {
             "source": "Venmo",
-            "account_id": "venmo",
+            "account_id": "venmo", "account": "venmo", "src": "venmo_csv",
             "date": row["Datetime"][:10],
             "amount": amount,
             "merchant": counterparty or "Venmo",
@@ -247,7 +330,10 @@ def venmo_upload():
             "pending": False,
         })
         count += 1
+        dates.append(row["Datetime"][:10])
     batch.commit()
+    if dates:
+        ledger.dedupe_transactions("venmo", min(dates), max(dates))
     return jsonify(imported=count)
 
 
@@ -322,13 +408,19 @@ def import_csv():
     # Deterministic ids: re-importing the same rows never duplicates them. The occurrence
     # counter keeps genuinely repeated same-day charges (e.g. two identical coffees) distinct.
     seen = defaultdict(int)
+    canon_for, spans = {}, {}
+    ledger.ensure_defaults()
     tx_col, batch, n = user_ref().collection("transactions"), db.batch(), 0
     for r in rows:
         key = f"{r['account']}|{r['date']}|{r['description']}|{r['amount']:.2f}"
         seen[key] += 1
         tid = "imp_" + hashlib.sha1(f"{key}|{seen[key]}".encode()).hexdigest()[:20]
+        canon = canon_for.setdefault(r["account"], ledger.account_for_label(r["account"]))
+        span = spans.get(canon, (r["date"], r["date"]))
+        spans[canon] = (min(span[0], r["date"]), max(span[1], r["date"]))
         batch.set(tx_col.document(tid), {
-            "source": r["account"], "account_id": "import:" + r["account"], "date": r["date"],
+            "source": r["account"], "account_id": "import:" + r["account"], "account": canon,
+            "src": "chase_csv" if layout.startswith("chase") else "csv", "date": r["date"],
             "amount": r["amount"], "merchant": r["description"], "category": r["category"],
             "pending": False, "imported": True,
         })
@@ -336,16 +428,17 @@ def import_csv():
         if n % 400 == 0:                       # Firestore batches max out at 500 writes
             batch.commit(); batch = db.batch()
     batch.commit()
+    for canon, (lo, hi) in spans.items():         # a CSV row that Plaid already has is kept but not counted
+        ledger.dedupe_transactions(canon, lo, hi)
     dates = sorted(r["date"] for r in rows)
     return jsonify(imported=n, layout=layout,
                    first_date=dates[0] if dates else None, last_date=dates[-1] if dates else None)
 
 
 # ---------------------------------------------------------------- Read endpoints
-def _load_transactions(start, end):
-    q = (user_ref().collection("transactions")
-         .where("date", ">=", start).where("date", "<=", end))
-    return [doc.to_dict() | {"id": doc.id} for doc in q.stream()]
+def _load_transactions(start, end, account=None):
+    """The cash ledger for a date range: one row per real transaction (cross-source copies are skipped)."""
+    return ledger.load_transactions(start, end, account=account)
 
 
 def _date_range():
@@ -368,12 +461,12 @@ def summary():
     return jsonify(compute_summary(*_date_range()))
 
 
-def compute_summary(start, end):
+def compute_summary(start, end, account=None):
     by_cat, by_month, by_source = defaultdict(float), defaultdict(float), defaultdict(float)
     income = spend = 0.0
-    for t in _load_transactions(start, end):
+    for t in _load_transactions(start, end, account):
         cat, amt = t.get("category"), t["amount"]
-        if cat in TRANSFER_CATEGORIES:          # moving money between your own accounts
+        if cat in TRANSFER_CATEGORIES or t.get("transfer_pair"):   # moving money between your own accounts
             continue
         if cat == "Refund":                     # refunds reduce spending, not income
             spend += amt
@@ -396,11 +489,12 @@ def compute_summary(start, end):
 
 
 def load_holdings():
-    snaps = (user_ref().collection("holdings")
-             .order_by("date", direction=firestore.Query.DESCENDING).limit(180).stream())
-    snaps = [s.to_dict() for s in snaps]
-    return dict(latest=snaps[0] if snaps else None,
-                history=[{"date": s["date"], "total": s["total"]} for s in reversed(snaps)])
+    """Latest holdings across investment accounts + value history (statements and Plaid snapshots)."""
+    import portfolio
+    h = portfolio.holdings()
+    latest = {"holdings": [{"ticker": x["symbol"], "name": x["name"], "quantity": x["quantity"], "value": x["value"],
+                            "cost_basis": x["cost_basis"]} for x in h["holdings"]], "total": h["total"]} if h["holdings"] or h["cash"] else None
+    return dict(latest=latest, history=[{"date": p["date"], "total": p["value"]} for p in portfolio.value_series()])
 
 
 @app.get("/api/holdings")
@@ -419,6 +513,10 @@ education.init(app, db, firestore, require_owner, user_ref)
 import syllabus
 syllabus.init(app, db, firestore, require_owner, user_ref)
 
+import ledger
+import finance
+finance.init(app, db, firestore, require_owner, user_ref)
+
 # ---------------------------------------------------------------- Training (planner, sessions, history)
 import training
 training.init(app, db, firestore, require_owner, user_ref)
@@ -432,11 +530,22 @@ earnings.init(app, db, firestore, require_owner, user_ref)
 import assistant
 
 
+def _acct(account):
+    """Accept a canonical id or a type ('brokerage', 'roth_ira', 'credit_card') from the assistant."""
+    if not account:
+        return None
+    rows = ledger.accounts(include_hidden=True)
+    if any(a["id"] == account for a in rows):
+        return account
+    hit = next((a for a in rows if a["type"] == account), None)
+    return hit["id"] if hit else account
+
+
 def tool_search_transactions(start=None, end=None, text=None, category=None, source=None,
-                             min_amount=None, max_amount=None, limit=50):
+                             min_amount=None, max_amount=None, limit=50, account=None):
     start = start or (date.today() - timedelta(days=365)).isoformat()
     end = end or date.today().isoformat()
-    rows = _load_transactions(start, end)
+    rows = _load_transactions(start, end, _acct(account))
     t, c, s = (text or "").lower(), (category or "").lower(), (source or "").lower()
     out = [r for r in rows
            if (not t or t in f"{r.get('merchant')} {r.get('note')} {r.get('category')}".lower())
@@ -445,7 +554,7 @@ def tool_search_transactions(start=None, end=None, text=None, category=None, sou
            and (min_amount is None or r["amount"] >= min_amount)
            and (max_amount is None or r["amount"] <= max_amount)]
     out.sort(key=lambda r: r["date"], reverse=True)
-    keep = ("date", "merchant", "amount", "category", "source", "note", "pending")
+    keep = ("date", "merchant", "amount", "category", "source", "account", "src", "note", "pending")
     return {"match_count": len(out),
             "total_amount": round(sum(r["amount"] for r in out), 2),
             "transactions": [{k: r.get(k) for k in keep} for r in out[:min(int(limit or 50), 200)]]}
@@ -453,21 +562,56 @@ def tool_search_transactions(start=None, end=None, text=None, category=None, sou
 
 def assistant_context():
     items = [d.to_dict() for d in user_ref().collection("items").stream()]
-    accts = ", ".join(f"{i.get('institution')} ({i.get('kind')})" for i in items) or "no linked accounts"
-    return f"Linked via Plaid: {accts}. Venmo data comes from monthly CSV uploads, if any."
+    linked = ", ".join(f"{i.get('institution')} ({i.get('kind')})" for i in items) or "nothing linked through Plaid yet"
+    accts = ", ".join(f"{a['name']} [{a['id']}, {a['type_label']}]" for a in ledger.accounts())
+    return (f"Accounts: {accts}. Plaid: {linked}. UBS data comes from uploaded statement PDFs until Plaid links it; "
+            f"Venmo from CSV uploads; Chase from CSV uploads or Plaid. Records from several sources are matched so each real "
+            f"transaction counts once.")
+
+
+def _tool_investments(account=None):
+    import finance
+    v = finance.investments_view(_acct(account))
+    v.pop("accounts", None); v.pop("settings", None)
+    for h in v["holdings"]["holdings"]:
+        h.pop("accounts", None)
+    return v
+
+
+def _tool_activity(account=None, start=None, end=None, type=None):
+    rows = ledger.load_activity(start or "1900-01-01", end or "2999-12-31", account=_acct(account))
+    if type:
+        rows = [r for r in rows if r["type"] == type]
+    return {"count": len(rows), "total": round(sum(r["amount"] for r in rows), 2),
+            "items": [{k: r.get(k) for k in ("date", "account", "type", "description", "symbol", "quantity", "price", "amount", "pending", "src")} for r in rows[-200:]]}
+
+
+def _tool_data_quality():
+    import finance
+    v = finance.imports_view()
+    return {"coverage": v["coverage"], "reconciliation": [{k: r[k] for k in ("account_name", "period", "closing_date", "ok", "checks")} for r in v["reconciliation"]],
+            "duplicates": v["duplicates"]}
 
 
 @app.post("/api/chat")
 @require_owner
 def chat():
     body = request.get_json(force=True) or {}
+    import finance, fintax, portfolio
+    ledger.ensure_defaults(); ledger.migrate()
     tools_impl = {
-        "get_spending_summary": compute_summary,
+        "get_spending_summary": lambda start, end, account=None: compute_summary(start, end, _acct(account)),
         "search_transactions": tool_search_transactions,
-        "get_investments": load_holdings,
+        "get_accounts_and_net_worth": portfolio.net_worth,
+        "get_investments": _tool_investments,
+        "get_investment_activity": _tool_activity,
+        "get_income": lambda year=None: finance.income_view(int(year or date.today().year)),
+        "get_tax_estimate": lambda year=None: fintax.compute(int(year or date.today().year)),
+        "get_data_quality": _tool_data_quality,
     }
+    place = str(body.get("place") or "")[:200] or None
     try:
-        reply, used = assistant.run_chat(body.get("messages", []), tools_impl, assistant_context())
+        reply, used = assistant.run_chat(body.get("messages", []), tools_impl, assistant_context(), place)
     except ValueError as e:
         return jsonify(error=str(e)), 400
     return jsonify(reply=reply, tools_used=used)
