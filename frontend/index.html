@@ -353,13 +353,124 @@
 
       <!-- ───────────────────────── PLACEHOLDER SECTIONS ───────────────────────── -->
       <section class="route" data-route="health">
+        <!-- Dashboard -->
+        <div class="panel wrap" data-panel="dashboard">
+          <div class="hd-head">
+            <div>
+              <p class="eyebrow" id="hdDate"></p>
+              <h1 class="title">Health</h1>
+            </div>
+            <div class="hd-links">
+              <a class="btn btn-secondary btn-sm" href="#/health/calendar">Calendar</a>
+              <a class="btn btn-secondary btn-sm" href="#/health/connect">Connections</a>
+            </div>
+          </div>
+          <div class="hd-grid" id="hdGrid"></div>
+        </div>
+
+        <!-- Area hero (shared by the five areas) -->
+        <div class="wrap hero-wrap hidden" id="healthHeroWrap">
+          <div class="health-hero" id="healthHero">
+            <div class="hero-media" id="heroMedia"><img id="heroImg" alt="" /></div>
+            <div class="hero-text">
+              <a class="hero-back" href="#/health">Health</a>
+              <h1 id="heroTitle"></h1>
+              <p id="heroSub"></p>
+            </div>
+            <a class="photo-credit" id="heroCredit" target="_blank" rel="noopener"></a>
+          </div>
+        </div>
+
+        <!-- Sports -->
+        <div class="panel wrap" data-panel="sports">
+          <div class="run-head">
+            <p class="hint run-status" id="sportStatus"></p>
+            <div class="run-controls"><select class="select" id="sportYear" aria-label="Year"></select></div>
+          </div>
+          <div class="kpis">
+            <div class="kpi"><span class="kpi-label">Sessions</span><span class="kpi-value" id="s-count">—</span><span class="kpi-sub" id="s-count-sub"></span></div>
+            <div class="kpi"><span class="kpi-label">Time played</span><span class="kpi-value" id="s-time">—</span><span class="kpi-sub" id="s-time-sub"></span></div>
+            <div class="kpi"><span class="kpi-label">Average strain</span><span class="kpi-value" id="s-strain">—</span><span class="kpi-sub">WHOOP, per session</span></div>
+            <div class="kpi"><span class="kpi-label">Calories</span><span class="kpi-value" id="s-cal">—</span><span class="kpi-sub" id="s-cal-sub"></span></div>
+          </div>
+          <div class="grid-2">
+            <div class="card"><div class="card-head"><h3>By sport</h3><span class="card-meta">Hours</span></div><div id="sportBars"></div></div>
+            <div class="card"><div class="card-head"><h3>Sessions per month</h3></div><canvas id="chart-sport-months"></canvas></div>
+          </div>
+          <div class="card card-flush"><div class="card-head padded"><h3>Recent sessions</h3><span class="card-meta" id="sportListMeta"></span></div><div class="run-list" id="sportList"></div></div>
+          <p class="hint">Sports are WHOOP workouts other than runs and lifting, plus anything you log by hand. Runs live in Running, lifting in Weight Lifting.</p>
+        </div>
+
+        <!-- Food: Today -->
+        <div class="panel wrap" data-panel="food-today">
+          <div class="food-daynav">
+            <button class="btn btn-secondary btn-sm" id="foodPrev" aria-label="Previous day">‹</button>
+            <button class="food-date" id="foodDateBtn"><span id="foodDateLabel"></span><input type="date" id="foodDate" /></button>
+            <button class="btn btn-secondary btn-sm" id="foodNext" aria-label="Next day">›</button>
+            <button class="text-btn" id="foodToday">Today</button>
+          </div>
+          <div class="card food-summary">
+            <div class="food-eq">
+              <div><b id="fs-goal">—</b><span>Goal</span></div><i>−</i>
+              <div><b id="fs-food">0</b><span>Food</span></div><i>=</i>
+              <div class="food-remain"><b id="fs-left">—</b><span>Remaining</span></div>
+            </div>
+            <div class="macro-bars" id="macroBars"></div>
+            <p class="hint" id="foodGoalHint"></p>
+          </div>
+          <div id="foodMeals"></div>
+        </div>
+
+        <!-- Food: History -->
+        <div class="panel wrap" data-panel="food-history">
+          <div class="kpis">
+            <div class="kpi"><span class="kpi-label">Average calories</span><span class="kpi-value" id="fh-kcal">—</span><span class="kpi-sub" id="fh-kcal-sub"></span></div>
+            <div class="kpi"><span class="kpi-label">Protein</span><span class="kpi-value" id="fh-p">—</span><span class="kpi-sub">Average per logged day</span></div>
+            <div class="kpi"><span class="kpi-label">Carbs</span><span class="kpi-value" id="fh-c">—</span><span class="kpi-sub">Average per logged day</span></div>
+            <div class="kpi"><span class="kpi-label">Fat</span><span class="kpi-value" id="fh-f">—</span><span class="kpi-sub">Average per logged day</span></div>
+          </div>
+          <div class="card"><div class="card-head"><h3>Calories, last 30 days</h3><span class="card-meta" id="fh-meta"></span></div><canvas id="chart-food"></canvas></div>
+          <div class="card card-flush"><div class="card-head padded"><h3>Days</h3></div><div class="food-days" id="foodDays"></div></div>
+        </div>
+
+        <!-- Food: Goals -->
+        <div class="panel wrap" data-panel="food-goals">
+          <div class="grid-2">
+            <form class="card food-goals-form" id="foodGoalsForm" autocomplete="off">
+              <div class="card-head"><h3>Daily goals</h3></div>
+              <label>Calories<input class="input" type="number" name="kcal" min="500" max="10000" step="10" placeholder="Not set" /></label>
+              <label>Protein (g)<input class="input" type="number" name="protein_g" min="0" max="1000" placeholder="Not set" /></label>
+              <label>Carbs (g)<input class="input" type="number" name="carbs_g" min="0" max="2000" placeholder="Not set" /></label>
+              <label>Fat (g)<input class="input" type="number" name="fat_g" min="0" max="1000" placeholder="Not set" /></label>
+              <p class="hint" id="macroCheck"></p>
+              <button class="btn btn-primary" type="submit">Save goals</button>
+            </form>
+            <form class="card food-goals-form" id="tdeeForm" autocomplete="off">
+              <div class="card-head"><h3>Estimate a calorie goal</h3></div>
+              <p>Mifflin–St Jeor resting energy times an activity factor. It's an estimate: adjust it after two or three weeks of logging and weighing in.</p>
+              <label>Sex<select class="input" name="sex"><option value="m">Male</option><option value="f">Female</option></select></label>
+              <label>Age<input class="input" type="number" name="age" min="14" max="100" required /></label>
+              <label>Height (in)<input class="input" type="number" name="height_in" min="48" max="90" step="0.5" required /></label>
+              <label>Weight (lb)<input class="input" type="number" name="weight_lb" min="70" max="500" step="0.5" required /></label>
+              <label>Activity<select class="input" name="activity">
+                <option value="1.2">Mostly sitting</option><option value="1.375">Light: 1–3 workouts a week</option>
+                <option value="1.55" selected>Moderate: 3–5 a week</option><option value="1.725">Hard: 6–7 a week</option><option value="1.9">Very hard: twice a day</option></select></label>
+              <label>Goal<select class="input" name="delta">
+                <option value="-500">Lose about 1 lb a week</option><option value="-250">Lose about 0.5 lb a week</option>
+                <option value="0" selected>Maintain</option><option value="250">Gain about 0.5 lb a week</option></select></label>
+              <p class="tdee-out" id="tdeeOut"></p>
+              <div class="dialog-actions"><button class="btn btn-secondary" type="submit">Estimate</button><button class="btn btn-primary hidden" type="button" id="tdeeUse">Use as calorie goal</button></div>
+            </form>
+          </div>
+        </div>
+
         <!-- Overview -->
         <div class="panel wrap" data-panel="overview">
           <div class="kpis">
             <div class="kpi"><span class="kpi-label">Recovery</span><span class="kpi-value" id="h-recovery">—</span><span class="kpi-sub" id="h-recovery-sub"></span></div>
             <div class="kpi"><span class="kpi-label">HRV</span><span class="kpi-value" id="h-hrv">—</span><span class="kpi-sub" id="h-hrv-sub"></span></div>
             <div class="kpi"><span class="kpi-label">Sleep</span><span class="kpi-value" id="h-sleep">—</span><span class="kpi-sub" id="h-sleep-sub"></span></div>
-            <a class="kpi kpi-link" href="#/health/planner"><span class="kpi-label">Workouts this week</span><span class="kpi-value" id="h-workouts">—</span><span class="kpi-sub">Open planner →</span></a>
+            <a class="kpi kpi-link" href="#/health/lifting/planner"><span class="kpi-label">Workouts this week</span><span class="kpi-value" id="h-workouts">—</span><span class="kpi-sub">Open planner →</span></a>
           </div>
           <div class="card empty-state hidden" id="whoopEmpty">
             <h3>Connect WHOOP to see recovery, strain and sleep</h3>
@@ -719,6 +830,54 @@
       </dialog>
 
       <!-- Exercise progress -->
+      <dialog id="foodDialog" class="dialog dialog-tall">
+        <div class="food-dlg">
+          <div class="food-dlg-head">
+            <h3 id="foodDlgTitle">Add food</h3>
+            <button type="button" class="btn btn-secondary btn-sm" id="foodDlgClose">Close</button>
+          </div>
+          <div id="foodPick">
+            <input class="input food-search" id="foodSearch" placeholder="Search foods, e.g. greek yogurt" autocomplete="off" />
+            <div class="food-tabs" id="foodTabs">
+              <button type="button" class="seg seg-on" data-ft="results">Search</button>
+              <button type="button" class="seg" data-ft="recent">Recent</button>
+              <button type="button" class="seg" data-ft="mine">My foods</button>
+              <button type="button" class="seg" data-ft="quick">Quick add</button>
+              <button type="button" class="seg" data-ft="create">Create food</button>
+            </div>
+            <div class="food-results" id="foodResults"></div>
+            <form class="food-mini-form hidden" id="quickForm" autocomplete="off">
+              <label>Name<input class="input" name="name" placeholder="Quick add" maxlength="80" /></label>
+              <label>Calories<input class="input" type="number" name="kcal" min="0" max="10000" required /></label>
+              <label>Protein (g)<input class="input" type="number" name="protein" min="0" step="0.1" /></label>
+              <label>Carbs (g)<input class="input" type="number" name="carbs" min="0" step="0.1" /></label>
+              <label>Fat (g)<input class="input" type="number" name="fat" min="0" step="0.1" /></label>
+              <button class="btn btn-primary" type="submit">Add</button>
+            </form>
+            <form class="food-mini-form hidden" id="createForm" autocomplete="off">
+              <label class="span-2">Name<input class="input" name="name" required maxlength="120" /></label>
+              <label>Brand<input class="input" name="brand" maxlength="80" placeholder="Optional" /></label>
+              <label>Serving<input class="input" name="serving_label" placeholder="1 serving" maxlength="60" /></label>
+              <label>Calories per serving<input class="input" type="number" name="kcal" min="0" max="10000" required /></label>
+              <label>Protein (g)<input class="input" type="number" name="protein" min="0" step="0.1" /></label>
+              <label>Carbs (g)<input class="input" type="number" name="carbs" min="0" step="0.1" /></label>
+              <label>Fat (g)<input class="input" type="number" name="fat" min="0" step="0.1" /></label>
+              <button class="btn btn-primary" type="submit">Save and add</button>
+            </form>
+          </div>
+          <form class="food-amount hidden" id="foodAmount" autocomplete="off">
+            <button type="button" class="text-btn" id="foodBack">‹ Back to results</button>
+            <h4 id="faName"></h4><p class="hint" id="faBrand"></p>
+            <div class="fa-row">
+              <label>Amount<input class="input" type="number" id="faQty" min="0.05" step="any" value="1" /></label>
+              <label>Unit<select class="input" id="faUnit"></select></label>
+              <label>Meal<select class="input" id="faMeal"><option value="breakfast">Breakfast</option><option value="lunch">Lunch</option><option value="dinner">Dinner</option><option value="snacks">Snacks</option></select></label>
+            </div>
+            <div class="fa-nutr" id="faNutr"></div>
+            <div class="dialog-actions"><button class="btn btn-primary" type="submit" id="faSave">Add</button><button type="button" class="text-btn danger hidden" id="faDelete">Remove</button></div>
+          </form>
+        </div>
+      </dialog>
       <dialog id="runDialog" class="dialog dialog-wide">
         <div class="run-detail" id="runDetail"></div>
       </dialog>

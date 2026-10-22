@@ -58,6 +58,9 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
   build / peak / taper / race week, ~10%/week ramp with a cutback every 4th week, long run capped by share of the
   week, paces from Daniels' VDOT (current fitness from Strava best efforts or races in the last 10 weeks; goal time
   sets goal pace; neither = effort words, no paces). Planned vs done matched to Strava runs by date.
+- `food.py`: Health → Food diary (MyFitnessPal-style): search USDA FoodData Central (`FDC_API_KEY`, else DEMO_KEY)
+  + Open Food Facts, normalized per 100 g; entries store nutrients when logged; custom foods (per serving), quick
+  add, copy a meal, recent foods, goals (blank until the user sets them), 30-day history.
 - `syllabus.py`: Education → Syllabi: upload a syllabus (Claude extracts sessions/deadlines) or import JSON;
   deadlines feed the calendar. Originals kept in `edu_syllabus_files`.
 - `education.py`: GULC grade points, GPA engine (half-up `r2`), needed-average solver + grade plan, degree audit,
@@ -78,11 +81,14 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
 ### Firestore (`users/{uid}/…`)
 `transactions` (ledger), `items` (Plaid), `inv_snapshots`, `inv_activity`, `holdings` (legacy), `health_days`, `workouts`, `integrations/whoop`, `oauth_states`,
 `training` (state/template/sessions), `education/profile`, `edu_courses`, `edu_syllabi`, `edu_syllabus_files`,
-`earnings/settings`, `paychecks`, `integrations/strava`, `strava_activities`, `race_plans`.
+`earnings/settings`, `paychecks`, `integrations/strava`, `strava_activities`, `race_plans`, `food_log/{date}`, `food_custom`, `food/goals`.
 
 ### Frontend map (`frontend/app.js`)
 Hash routes `#/section/tab`, `SECTIONS` config at the top. Finances: Net Worth, Cash & Cards, Investments,
-Income, Taxes, Accounts & Imports (chat on every tab). Health: Overview, Planner, History, Running, Race Training, Calendar, Connect.
+Income, Taxes, Accounts & Imports (chat on every tab). Health opens on a dashboard of five photo cards (`HEALTH` config: Weight Lifting, Running, Sleep & Recovery, Sports,
+Food; Unsplash photos hotlinked with credit); `#/health/<area>/<tab>` maps to a panel; old `#/health/<tab>` links are aliased.
+The card photo morphs into the area banner with a View Transition (`viewSwap` from the shared `motion.js`).
+Calendar and Connections hang off the dashboard.
 Education: Overview, Syllabi, Grades & GPA, Degree Audit, Planner, Calendar. Goals: `goals.js` (loaded on first
 visit; widgets, detail, editor, library, coach drawer).
 Design tokens on `:root` in `styles.css` (`--accent`, `--pos`, `--neg`, `--warn`, `--exam`, `--done`, …).
@@ -90,7 +96,7 @@ Design tokens on `:root` in `styles.css` (`--accent`, `--pos`, `--neg`, `--warn`
 ### Environment & secrets (Cloud Run)
 Secrets: `plaid-client-id`, `plaid-secret`, `allowed-email`, `anthropic-api-key`, `whoop-client-id`,
 `whoop-client-secret`, `strava-client-id`, `strava-client-secret`. Env: `PLAID_ENV` (sandbox until Plaid production is approved), `CLAUDE_MODEL`,
-`WHOOP_REDIRECT_URI`, `STRAVA_REDIRECT_URI`, `FRONTEND_URL`, `FRONTEND_ORIGIN`. Local dev: `DEV_SKIP_AUTH=1`.
+`WHOOP_REDIRECT_URI`, `STRAVA_REDIRECT_URI`, `FDC_API_KEY` (optional), `FRONTEND_URL`, `FRONTEND_ORIGIN`. Local dev: `DEV_SKIP_AUTH=1`.
 
 ## Testing
 `pip install -r backend/requirements.txt pytest` then `python tests/run_all.py`. It runs `tests/` (scripts) and

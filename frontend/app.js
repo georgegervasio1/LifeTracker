@@ -2,6 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { API_BASE, FIREBASE_CONFIG } from "./config.js";
+import { viewSwap, enter, panelIn } from "./motion.js";
 
 const auth = getAuth(initializeApp(FIREBASE_CONFIG));
 const $ = (id) => document.getElementById(id);
@@ -20,19 +21,45 @@ const SECTIONS = {
   finances: { title: "Finances", tabs: [
     ["networth", "Net Worth"], ["cash", "Cash & Cards"], ["investments", "Investments"],
     ["income", "Income"], ["taxes", "Taxes"], ["accounts", "Accounts & Imports"]] },
-  health: { title: "Health", tabs: [
-    ["overview", "Overview"], ["planner", "Planner"], ["history", "History"], ["running", "Running"], ["race", "Race Training"],
-    ["calendar", "Calendar"], ["connect", "Connect"]] },
+  health: { title: "Health", tabs: [] },   // dashboard + areas, see HEALTH below
   education: { title: "Education", tabs: [
     ["overview", "Overview"], ["syllabi", "Syllabi"], ["grades", "Grades & GPA"], ["audit", "Degree Audit"], ["planner", "Planner"], ["calendar", "Calendar"]] },
   goals: { title: "Goals", tabs: [] },
 };
+
+// Health opens on a dashboard of five areas; each area has its own tabs. A tab maps to a panel in index.html.
+const UNSPLASH = (id) => `https://images.unsplash.com/${id}?auto=format&fit=crop&w=1600&q=70`;
+const HEALTH = {
+  lifting: { title: "Weight Lifting", tabs: [["planner", "Planner", "planner"], ["history", "History", "history"]],
+             img: "photo-1646492169621-d8da8016354a", credit: ["Benjamin Brunner", "a-black-and-white-photo-of-a-barbell-in-a-gym-wcOGQeT1jIw"] },
+  running: { title: "Running", tabs: [["runs", "Runs", "running"], ["race", "Race Training", "race"]],
+             img: "photo-1502224562085-639556652f33", credit: ["lucas Favre", "silhouette-photo-of-a-person-running-on-road-JnoNcfFwrNA"] },
+  sleep:   { title: "Sleep & Recovery", tabs: [["overview", "Overview", "overview"], ["calendar", "Calendar", "calendar"]],
+             img: "photo-1585128719715-46776b56a0d1", credit: ["Julia", "nightstand-with-lamp-and-wooden-house-toX2sYnycCw"] },
+  sports:  { title: "Sports", tabs: [["overview", "Overview", "sports"]],
+             img: "photo-1780404850222-96b7b5a7d8a3", credit: ["Sanket Mishra", "a-man-holding-a-basketball-celebrates-on-an-outdoor-court-YDrqAcHEP_k"] },
+  food:    { title: "Food", tabs: [["today", "Today", "food-today"], ["history", "History", "food-history"], ["goals", "Goals", "food-goals"]],
+             img: "photo-1512621776951-a57141f2eefd", credit: ["Anna Pelzer", "bowl-of-vegetable-salads-IGfIGP5ONV0"] },
+};
+// Old links (and OAuth redirects) keep working
+const HEALTH_LEGACY = { overview: "sleep/overview", planner: "lifting/planner", history: "lifting/history", running: "running/runs",
+                        race: "running/race", calendar: "sleep/calendar" };
+
+function parseHealth(parts) {
+  let [area, tab] = parts;
+  if (HEALTH_LEGACY[area]) [area, tab] = HEALTH_LEGACY[area].split("/");
+  if (area === "connect") return { section: "health", area, tab: "", panel: "connect" };
+  if (!HEALTH[area]) return { section: "health", area: "home", tab: "", panel: "dashboard" };
+  const t = HEALTH[area].tabs.find(([k]) => k === tab) || HEALTH[area].tabs[0];
+  return { section: "health", area, tab: t[0], panel: t[2] };
+}
 
 let routeQuery = new URLSearchParams();
 function parseRoute() {
   const [path, query] = location.hash.replace(/^#\/?/, "").split("?");
   const [section, tab] = path.split("/");
   routeQuery = new URLSearchParams(query || "");
+  if (section === "health") return parseHealth(path.split("/").slice(1));
   if (!SECTIONS[section]) return { section: "home" };
   const tabs = SECTIONS[section].tabs;
   const alias = section === "finances" ? { overview: "networth", transactions: "cash", paychecks: "income", assistant: "networth" }[tab] : null;
@@ -43,9 +70,12 @@ function parseRoute() {
 
 function render() {
   if (!auth.currentUser) return;
-  const { section, tab } = parseRoute();
+  const route = parseRoute();
+  const { section, tab } = route;
+  lastRoute = route;
   $$(".route").forEach((r) => r.classList.toggle("active", r.dataset.route === section));
   $$(".section-links a").forEach((a) => a.classList.toggle("active", a.dataset.section === section));
+  if (section === "health") return renderHealth(route);
 
   const cfg = SECTIONS[section];
   const hasTabs = cfg && cfg.tabs.length;
@@ -67,6 +97,56 @@ function render() {
   load(section, tab).catch(showError);
 }
 
+function renderHealth(r) {
+  const A = HEALTH[r.area];
+  const tabs = A ? A.tabs : [];
+  $("subnav").classList.toggle("hidden", r.area === "home");
+  if (r.area !== "home") {
+    $("subnavTitle").innerHTML = `<a class="subnav-crumb" href="#/health">Health</a>${esc(A ? A.title : "Connections")}`;
+    $("subnavTabs").innerHTML = tabs.length > 1 ? tabs.map(([k, label]) =>
+      `<a href="#/health/${r.area}/${k}" class="${k === r.tab ? "active" : ""}">${label}</a>`).join("") : "";
+    $("sectionControls").classList.toggle("hidden", r.panel !== "overview");
+    $("range").classList.remove("hidden");
+    centerActiveTab();
+  }
+  $$('[data-route="health"] .panel').forEach((p) => p.classList.toggle("active", p.dataset.panel === r.panel));
+  $("healthHeroWrap").classList.toggle("hidden", !A);
+  if (A) {
+    $("heroImg").src = UNSPLASH(A.img);
+    $("heroTitle").textContent = A.title;
+    $("heroSub").textContent = heroLines[r.area] || "";
+    $("heroCredit").textContent = `Photo: ${A.credit[0]} / Unsplash`;
+    $("heroCredit").href = `https://unsplash.com/photos/${A.credit[1]}`;
+    $("healthHero").dataset.area = r.area;
+  }
+  $("askBtn").classList.add("hidden");
+  $("chatDrawer").classList.add("hidden");
+  window.scrollTo({ top: 0 });
+  document.title = `${A ? A.title : r.area === "connect" ? "Connections" : "Health"} · LifeTracker`;
+  loadHealth(r).catch(showError);
+}
+
+// View transitions: a dashboard card's photo morphs into its area's banner and back (viewSwap from motion.js).
+let lastRoute = null;
+function onHashChange() {
+  const next = parseRoute(), prev = lastRoute;
+  lastRoute = next;
+  const morph = prev && prev.section === "health" && next.section === "health" && (prev.area === "home") !== (next.area === "home")
+    && HEALTH[prev.area === "home" ? next.area : prev.area];
+  if (!morph) return render();
+  const area = prev.area === "home" ? next.area : prev.area;
+  const card = () => document.querySelector(`.hd-card[data-area="${area}"] .hd-media`);
+  const src = prev.area === "home" ? card() : $("heroMedia");
+  if (src) src.style.viewTransitionName = "health-hero";
+  const t = viewSwap(() => {
+    if (src) src.style.viewTransitionName = "";
+    render();
+    const dst = next.area === "home" ? card() : $("heroMedia");
+    if (dst) dst.style.viewTransitionName = "health-hero";
+  });
+  t.finished.finally(() => [card(), $("heroMedia")].forEach((el) => el && (el.style.viewTransitionName = "")));
+}
+
 // On narrow screens the tab row scrolls: keep the current tab in view and fade an edge while tabs are hidden past it.
 function centerActiveTab() {
   const row = $("subnavTabs"), a = row.querySelector(".active");
@@ -84,7 +164,7 @@ window.addEventListener("resize", markTabOverflow);
 async function load(section, tab) {
   if (section === "home") return loadHome();
   if (!backendReady) return toast("Backend not connected yet");
-  if (section === "health") return loadHealth(tab);
+
   if (section === "education") return loadEducation(tab);
   if (section === "goals") return (await goalsModule()).loadGoals();
   if (section !== "finances") return;
@@ -97,7 +177,7 @@ async function load(section, tab) {
   if (tab === "accounts") return loadImports();
 }
 
-window.addEventListener("hashchange", render);
+window.addEventListener("hashchange", onHashChange);
 
 // Goals live in goals.js, loaded on first use.
 let goalsMod = null;
@@ -846,14 +926,21 @@ const fmtHours = (h) => (h == null ? "—" : `${Math.floor(h)}h ${String(Math.ro
 let calMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 let whoopState = null;
 
-async function loadHealth(tab) {
-  if (tab === "overview") return loadHealthOverview();
-  if (tab === "planner") return loadWeekPlan();
-  if (tab === "history") return loadHistory();
-  if (tab === "running") return loadRunning();
-  if (tab === "race") return loadRace();
-  if (tab === "calendar") return renderCalendar();
-  if (tab === "connect") return loadConnect();
+async function loadHealth(r) {
+  if (!backendReady) return toast("Backend not connected yet");
+  const p = r.panel;
+  if (p === "dashboard") return loadHealthDash();
+  if (p === "overview") return loadHealthOverview();
+  if (p === "planner") return loadWeekPlan();
+  if (p === "history") return loadHistory();
+  if (p === "running") return loadRunning();
+  if (p === "race") return loadRace();
+  if (p === "calendar") return renderCalendar();
+  if (p === "connect") return loadConnect();
+  if (p === "sports") return loadSports();
+  if (p === "food-today") return loadFoodDay();
+  if (p === "food-history") return loadFoodHistory();
+  if (p === "food-goals") return loadFoodGoals();
 }
 
 async function loadHealthOverview() {
@@ -1006,7 +1093,7 @@ async function renderCalendar() {
       ${stats ? `<p>${stats}</p>` : ""}
       ${ws.map((w) => `<div class="workout-item"><div class="workout-main"><div class="workout-title">${esc(w.type)}</div>
         <div class="workout-meta">${describeWorkout(w)}</div>${w.exercises?.length ? `<div class="workout-ex">${exerciseText(w)}</div>` : ""}</div></div>`).join("")
-        || `<p>No workouts logged. <a class="link" href="#/health/planner">Plan one →</a></p>`}`;
+        || `<p>No workouts logged. <a class="link" href="#/health/lifting/planner">Plan one →</a></p>`}`;
     $("calDetail").classList.remove("hidden");
   }));
 }
@@ -1259,9 +1346,9 @@ async function syncStrava(quiet = false) {
   try {
     const r = await api("/api/strava/sync", { method: "POST" });
     if (!quiet || r.note) toast(r.note || `Strava synced · ${r.runs} runs`);
-    const { tab } = parseRoute();
-    if (tab === "running") await loadRunning();
-    if (tab === "connect") await loadConnect();
+    const { panel } = parseRoute();
+    if (panel === "running") await loadRunning();
+    if (panel === "connect") await loadConnect();
   } catch (e) { toast(e.message); }
   finally { runSyncing = false; btns.forEach((b) => { b.disabled = false; }); $("runSync").textContent = "Sync"; }
 }
@@ -1292,7 +1379,7 @@ async function importStravaExport(file) {
       await api("/api/strava/import", { method: "POST", body: JSON.stringify({ activities: runs.slice(i, i + 40) }) });
     }
     toast(`Imported ${runs.length} runs${noMap ? ` · ${noMap} without a route file LifeTracker can read` : ""}`);
-    if (parseRoute().tab !== "running") location.hash = "#/health/running"; else loadRunning();
+    if (parseRoute().panel !== "running") location.hash = "#/health/running/runs"; else loadRunning();
   } catch (e) { toast(e.message); }
 }
 $$(".strava-zip").forEach((inp) => (inp.onchange = () => { const f = inp.files[0]; inp.value = ""; if (f) importStravaExport(f); }));
@@ -1421,6 +1508,384 @@ $("raceSave").onclick = saveRace;
 $("raceNew").onclick = () => showRaceForm(true);
 $("raceCancel").onclick = () => { showRaceForm(false); showPlan($("racePlanSel").value).catch((e) => toast(e.message)); };
 $("racePlanSel").onchange = () => { showRaceForm(false); showPlan($("racePlanSel").value).catch((e) => toast(e.message)); };
+
+// ---------- Health dashboard ----------
+const heroLines = {};
+const LIFT_RE = /weight|strength|powerlift|functional|lifting|crossfit/i;
+const isSport = (w) => w.source !== "session" && !/run/i.test(w.type || "") && !LIFT_RE.test(w.type || "");
+const n0 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+let dashCache = null;
+
+function dashData() {
+  if (dashCache && Date.now() - dashCache.at < 6e4) return dashCache.p;
+  const today = new Date(), y = today.getFullYear();
+  const safe = (p) => p.catch(() => null);
+  const p = Promise.all([
+    safe(api(`/api/training/history?start=${y}-01-01`)),
+    safe(api(`/api/running?year=${y}`)),
+    safe(api(`/api/health/summary?start=${iso(new Date(Date.now() - 7 * 864e5))}&end=${iso(today)}`)),
+    safe(api(`/api/workouts?start=${y}-01-01&end=${iso(today)}`)),
+    safe(api(`/api/food/day?date=${localDay()}`)),
+  ]).then(([lift, run, sleep, wk, food]) => {
+    const month = localDay().slice(0, 7);
+    const D = {};
+    const sess = lift?.sessions || [];
+    const mSess = sess.filter((s) => s.date.startsWith(month)).length;
+    D.lifting = sess.length ? { big: String(mSess), unit: mSess === 1 ? "session this month" : "sessions this month",
+      line: `Last: ${esc(sess[0].type || "Workout")}, ${shortDate(sess[0].date)}` } : { big: "—", unit: "", line: "Plan your week and log sessions live" };
+    const wkMi = run?.weekly?.length ? run.weekly[run.weekly.length - 1].miles : 0;
+    D.running = run?.runs?.length ? { big: wkMi.toFixed(1), unit: "mi this week", line: `${run.totals.miles.toFixed(0)} mi in ${y} · ${run.totals.runs} runs` }
+      : { big: "—", unit: "", line: "Import Strava or connect WHOOP" };
+    const L = sleep?.latest, lastSleep = sleep ? [...sleep.days].reverse().find((d) => d.sleep_hours != null) : null;
+    D.sleep = L ? { big: `${Math.round(L.recovery)}%`, unit: "recovery", line: [lastSleep && `Slept ${fmtHours(lastSleep.sleep_hours)}`, L.hrv != null && `HRV ${Math.round(L.hrv)} ms`].filter(Boolean).join(" · ") }
+      : { big: "—", unit: "", line: sleep?.whoop?.connected ? "Waiting for WHOOP data" : "Connect WHOOP" };
+    const sp = (wk?.workouts || []).filter(isSport);
+    const mSp = sp.filter((w) => w.date.startsWith(month));
+    D.sports = sp.length ? { big: String(mSp.length), unit: mSp.length === 1 ? "session this month" : "sessions this month", line: `Last: ${esc(sp[0].type)}, ${shortDate(sp[0].date)}` }
+      : { big: "—", unit: "", line: "Golf, basketball and more from WHOOP" };
+    const kc = food?.totals?.kcal || 0, goal = food?.goals?.kcal;
+    D.food = { big: n0.format(kc), unit: goal ? `of ${n0.format(goal)} cal today` : "cal today",
+               line: goal ? (kc <= goal ? `${n0.format(goal - kc)} cal left` : `${n0.format(kc - goal)} cal over`) : "Set a daily goal in Food → Goals" };
+    for (const [k, v] of Object.entries(D)) heroLines[k] = v.big === "—" ? v.line.replace(/<[^>]+>/g, "") : `${v.big} ${v.unit} · ${v.line}`.replace(/&amp;/g, "&");
+    const r = parseRoute();
+    if (r.section === "health" && HEALTH[r.area]) $("heroSub").textContent = heroLines[r.area] || "";
+    return D;
+  });
+  dashCache = { at: Date.now(), p };
+  return p;
+}
+function localDay(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function drawDash(D = {}) {
+  $("hdGrid").innerHTML = Object.entries(HEALTH).map(([k, A]) => {
+    const v = D[k];
+    return `<a class="hd-card hd-${k}" data-area="${k}" href="#/health/${k}">
+      <span class="hd-media"><img src="${UNSPLASH(A.img)}" alt="" loading="eager" /></span>
+      <span class="hd-shade"></span>
+      <span class="hd-body">
+        <span class="hd-title">${esc(A.title)}</span>
+        <span class="hd-stat">${v ? `<b>${v.big}</b>${v.unit ? `<span>${v.unit}</span>` : ""}` : `<b class="hd-skel"></b>`}</span>
+        <span class="hd-line">${v ? v.line : "&nbsp;"}</span>
+      </span>
+      <span class="hd-go" aria-hidden="true">›</span>
+    </a>`; }).join("");
+}
+
+async function loadHealthDash() {
+  $("hdDate").textContent = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  if (!$("hdGrid").children.length) { drawDash(); enter($("hdGrid"), { step: 60 }); }
+  const D = await dashData();
+  if (parseRoute().panel === "dashboard") drawDash(D);
+}
+
+// ---------- Sports (WHOOP + manual workouts other than runs and lifting) ----------
+let sportYear = null;
+async function loadSports() {
+  const y = sportYear || new Date().getFullYear();
+  const { workouts } = await api(`/api/workouts?start=${y}-01-01&end=${y}-12-31`);
+  const sp = workouts.filter(isSport);
+  const years = [];
+  for (let yy = new Date().getFullYear(); yy >= new Date().getFullYear() - 3; yy--) years.push(yy);
+  $("sportYear").innerHTML = years.map((v) => `<option ${v === y ? "selected" : ""}>${v}</option>`).join("");
+  const mins = sp.reduce((a, w) => a + (w.duration_min || 0), 0);
+  const strains = sp.map((w) => w.strain).filter((v) => v != null);
+  const cals = sp.map((w) => w.calories).filter((v) => v != null);
+  $("s-count").textContent = sp.length || "—";
+  $("s-count-sub").textContent = sp.length ? `${new Set(sp.map((w) => w.type)).size} sports in ${y}` : `None logged in ${y}`;
+  $("s-time").textContent = mins ? fmtHours(mins / 60) : "—";
+  $("s-time-sub").textContent = sp.length && mins ? `${Math.round(mins / sp.length)} min per session` : "";
+  $("s-strain").textContent = strains.length ? (strains.reduce((a, b) => a + b, 0) / strains.length).toFixed(1) : "—";
+  $("s-cal").textContent = cals.length ? n0.format(cals.reduce((a, b) => a + b, 0)) : "—";
+  $("s-cal-sub").textContent = cals.length ? `From ${cals.length} sessions with WHOOP data` : "";
+  $("sportStatus").textContent = sp.length ? "" : "No sports sessions yet. They come from WHOOP, or log one under Weight Lifting → History.";
+  const byType = {};
+  sp.forEach((w) => { byType[w.type] = (byType[w.type] || 0) + (w.duration_min || 0) / 60; });
+  const rows = Object.entries(byType).sort((a, b) => b[1] - a[1]);
+  const top = rows[0]?.[1] || 1;
+  $("sportBars").innerHTML = rows.length ? rows.map(([t, h]) => `<div class="bar-row"><span class="bar-label">${esc(t)}</span>
+      <span class="bar-track"><span class="bar-fill" style="display:block;width:${Math.max(2, (h / top) * 100)}%"></span></span>
+      <span class="bar-value">${h.toFixed(1)} h</span></div>`).join("") : `<div class="empty">Nothing yet</div>`;
+  const last = y === new Date().getFullYear() ? new Date().getMonth() : 11;
+  const months = Array.from({ length: last + 1 }, (_, m) => `${y}-${String(m + 1).padStart(2, "0")}`);
+  drawChart("chart-sport-months", "bar", months.map((m) => new Date(m + "-01T00:00").toLocaleDateString("en-US", { month: "short" })),
+    months.map((m) => sp.filter((w) => w.date.startsWith(m)).length), { tip: (v) => `${v} sessions`, tick: (v) => `${v}` }, { y: { min: 0, ticks: { precision: 0 } } });
+  $("sportListMeta").textContent = sp.length ? `${Math.min(sp.length, 30)} of ${sp.length}` : "";
+  $("sportList").innerHTML = sp.slice(0, 30).map((w) => `<div class="run-row sport-row">
+      <span class="sport-date">${shortDate(w.date)}</span>
+      <span class="run-main"><span class="run-name">${esc(w.type)}${w.source === "whoop" ? '<span class="source-tag">WHOOP</span>' : ""}</span><span class="run-date">${new Date(w.date + "T00:00").toLocaleDateString("en-US", { weekday: "long" })}</span></span>
+      <span class="run-stat"><b>${w.duration_min ?? "—"}</b> min</span>
+      <span class="run-stat"><b>${w.strain ?? "—"}</b> strain</span>
+      <span class="run-stat run-opt"><b>${w.avg_hr ?? "—"}</b> bpm</span>
+      <span class="run-stat run-opt"><b>${w.calories ?? "—"}</b> cal</span>
+    </div>`).join("") || `<div class="empty">No sessions in ${y}</div>`;
+}
+$("sportYear").onchange = () => { sportYear = +$("sportYear").value; loadSports().catch(showError); };
+
+// ---------- Food ----------
+const MEAL_NAMES = { breakfast: "Breakfast", lunch: "Lunch", dinner: "Dinner", snacks: "Snacks" };
+let foodDate = localDay();
+let foodDay = null;
+const addDays = (d, n) => localDay(new Date(new Date(d + "T00:00").getTime() + n * 864e5 + 36e5));
+const kcal = (v) => n0.format(Math.round(v || 0));
+const g1 = (v) => (v == null ? "—" : `${Math.round(v)} g`);
+
+async function loadFoodDay() {
+  $("foodDate").value = foodDate;
+  const t = localDay();
+  $("foodToday").classList.toggle("hidden", foodDate === t);
+  $("foodDateLabel").textContent = foodDate === t ? "Today" : foodDate === addDays(t, -1) ? "Yesterday"
+    : new Date(foodDate + "T00:00").toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+  const d = foodDay = await api(`/api/food/day?date=${foodDate}`);
+  const G = d.goals || {}, T = d.totals;
+  $("fs-goal").textContent = G.kcal ? kcal(G.kcal) : "—";
+  $("fs-food").textContent = kcal(T.kcal);
+  const left = G.kcal ? G.kcal - T.kcal : null;
+  $("fs-left").textContent = left == null ? "—" : kcal(left);
+  $("fs-left").parentElement.classList.toggle("over", left != null && left < 0);
+  $("foodGoalHint").innerHTML = G.kcal ? "" : `No calorie goal yet. <a class="link-sm" href="#/health/food/goals">Set one</a>`;
+  $("macroBars").innerHTML = [["protein", "Protein", G.protein_g], ["carbs", "Carbs", G.carbs_g], ["fat", "Fat", G.fat_g]].map(([k, label, goal]) => `
+    <div class="macro"><div class="macro-top"><span>${label}</span><span><b>${Math.round(T[k] || 0)}</b>${goal ? ` / ${Math.round(goal)}` : ""} g</span></div>
+      <span class="bar-track"><span class="bar-fill macro-${k}" style="display:block;width:${goal ? Math.min(100, ((T[k] || 0) / goal) * 100) : 0}%"></span></span></div>`).join("");
+  $("foodMeals").innerHTML = Object.entries(MEAL_NAMES).map(([m, label]) => {
+    const items = d.meals[m] || [];
+    return `<div class="card meal-card">
+      <div class="meal-head"><h3>${label}</h3><span class="meal-kcal">${items.length ? `${kcal(d.meal_totals[m])} cal` : ""}</span></div>
+      ${items.map((e) => `<button class="food-row" data-entry="${esc(e.id)}">
+          <span class="fr-main"><span class="fr-name">${esc(e.name)}</span><span class="fr-sub">${esc(entryAmount(e))}${e.brand ? ` · ${esc(e.brand)}` : ""}</span></span>
+          <span class="fr-macros">${e.protein != null ? `P ${Math.round(e.protein)}` : ""}${e.carbs != null ? ` · C ${Math.round(e.carbs)}` : ""}${e.fat != null ? ` · F ${Math.round(e.fat)}` : ""}</span>
+          <span class="fr-kcal">${kcal(e.kcal)}</span></button>`).join("")}
+      <div class="meal-actions"><button class="text-btn accent" data-add="${m}">Add food</button>
+        ${items.length ? "" : `<button class="text-btn" data-copy="${m}">Copy from yesterday</button>`}</div>
+    </div>`; }).join("");
+  $$("[data-add]").forEach((b) => (b.onclick = () => openFoodDialog(b.dataset.add)));
+  $$("[data-copy]").forEach((b) => (b.onclick = async () => {
+    try { const r = await api("/api/food/copy", { method: "POST", body: JSON.stringify({ from: addDays(foodDate, -1), to: foodDate, meal: b.dataset.copy }) });
+          toast(`Copied ${r.copied} item${r.copied === 1 ? "" : "s"}`); dashCache = null; loadFoodDay(); }
+    catch (e) { toast(e.message); }
+  }));
+  $$("[data-entry]").forEach((b) => (b.onclick = () => editEntry(b.dataset.entry)));
+}
+function entryAmount(e) {
+  if (e.quick) return "Quick add";
+  if (e.food?.per_serving) return `${+e.servings} × ${e.serving_label || "serving"}`;
+  if (e.servings && e.serving_label) return `${+e.servings} × ${e.serving_label}`;
+  return `${Math.round(e.grams)} g`;
+}
+$("foodPrev").onclick = () => { foodDate = addDays(foodDate, -1); loadFoodDay().catch(showError); };
+$("foodNext").onclick = () => { foodDate = addDays(foodDate, 1); loadFoodDay().catch(showError); };
+$("foodToday").onclick = () => { foodDate = localDay(); loadFoodDay().catch(showError); };
+$("foodDate").onchange = () => { if ($("foodDate").value) { foodDate = $("foodDate").value; loadFoodDay().catch(showError); } };
+$("foodDateBtn").onclick = () => { try { $("foodDate").showPicker(); } catch { $("foodDate").focus(); } };
+
+// Add / edit dialog
+let foodCtx = { meal: "breakfast", food: null, entry: null, tab: "results", results: [], recent: null, mine: null };
+function openFoodDialog(meal) {
+  foodCtx = { ...foodCtx, meal, food: null, entry: null };
+  $("foodDlgTitle").textContent = `Add to ${MEAL_NAMES[meal]}`;
+  showFoodPick(true);
+  $("foodDialog").showModal();
+  $("foodSearch").focus();
+  setFoodTab(foodCtx.tab === "quick" || foodCtx.tab === "create" ? "results" : foodCtx.tab);
+}
+function showFoodPick(on) {
+  $("foodPick").classList.toggle("hidden", !on);
+  $("foodAmount").classList.toggle("hidden", on);
+}
+async function setFoodTab(tab) {
+  foodCtx.tab = tab;
+  $$("#foodTabs [data-ft]").forEach((b) => b.classList.toggle("seg-on", b.dataset.ft === tab));
+  $("quickForm").classList.toggle("hidden", tab !== "quick");
+  $("createForm").classList.toggle("hidden", tab !== "create");
+  $("foodResults").classList.toggle("hidden", tab === "quick" || tab === "create");
+  $("foodSearch").classList.toggle("hidden", tab === "quick" || tab === "create");
+  if (tab === "recent" && !foodCtx.recent) foodCtx.recent = (await api("/api/food/recent")).recent;
+  if (tab === "mine" && !foodCtx.mine) foodCtx.mine = (await api("/api/food/custom")).foods;
+  drawFoodResults();
+}
+$$("#foodTabs [data-ft]").forEach((b) => (b.onclick = () => setFoodTab(b.dataset.ft).catch((e) => toast(e.message))));
+
+function foodLine(f) {
+  const per = f.per_serving ? `${kcal(f.per_serving.kcal)} cal per ${f.serving_label || "serving"}`
+    : f.servings?.[0] ? `${kcal((f.per100g.kcal * f.servings[0].grams) / 100)} cal per ${f.servings[0].label}` : `${kcal(f.per100g.kcal)} cal per 100 g`;
+  return per;
+}
+function drawFoodResults() {
+  const t = foodCtx.tab;
+  const q = $("foodSearch").value.trim().toLowerCase();
+  let list = t === "recent" ? (foodCtx.recent || []).map((r) => ({ ...r.food, _last: r })) : t === "mine" ? (foodCtx.mine || []) : foodCtx.results;
+  if (t !== "results" && q) list = list.filter((f) => `${f.name} ${f.brand || ""}`.toLowerCase().includes(q));
+  const empty = t === "results" ? (q.length < 2 ? "Type at least two letters to search USDA and Open Food Facts." : foodCtx.searching ? "Searching…" : "No matches. Try fewer words, or Create food.")
+    : t === "recent" ? "Foods you log show up here." : "Foods you create show up here.";
+  $("foodResults").innerHTML = list.map((f, i) => `<button class="fres" data-i="${i}">
+      <span class="fr-main"><span class="fr-name">${esc(f.name)}</span><span class="fr-sub">${[f.brand, foodLine(f)].filter(Boolean).map(esc).join(" · ")}</span></span>
+      <span class="fr-src">${f.source === "usda" ? (f.kind === "Branded" ? "USDA branded" : "USDA") : f.source === "off" ? "Open Food Facts" : f.source === "custom" ? "Mine" : ""}</span>
+    </button>`).join("") || `<div class="empty">${empty}</div>`;
+  $$("#foodResults [data-i]").forEach((b) => (b.onclick = () => pickFood(list[+b.dataset.i])));
+}
+let searchTimer = null, searchSeq = 0;
+$("foodSearch").oninput = () => {
+  if (foodCtx.tab !== "results") return drawFoodResults();
+  clearTimeout(searchTimer);
+  const q = $("foodSearch").value.trim();
+  if (q.length < 2) { foodCtx.results = []; return drawFoodResults(); }
+  foodCtx.searching = true; drawFoodResults();
+  searchTimer = setTimeout(async () => {
+    const seq = ++searchSeq;
+    try {
+      const r = await api(`/api/food/search?q=${encodeURIComponent(q)}`);
+      if (seq !== searchSeq) return;
+      foodCtx.results = r.foods; foodCtx.searching = false;
+      if (r.errors?.length && !r.foods.length) toast("Food search is unavailable right now. Use Quick add or Create food.");
+      drawFoodResults();
+    } catch (e) { foodCtx.searching = false; toast(e.message); drawFoodResults(); }
+  }, 350);
+};
+
+// amount step: units are the food's servings, grams, and 100 g (or servings for my foods)
+function unitsFor(f) {
+  if (f.per_serving) return [{ label: f.serving_label || "serving", grams: null }];
+  return [...(f.servings || []), { label: "g", grams: 1 }, { label: "100 g", grams: 100 }, { label: "oz", grams: 28.3495 }];
+}
+function pickFood(f, entry = null) {
+  foodCtx.food = f; foodCtx.entry = entry;
+  showFoodPick(false);
+  $("faName").textContent = f.name;
+  $("faBrand").textContent = [f.brand, f.source === "usda" ? "USDA FoodData Central" : f.source === "off" ? "Open Food Facts" : f.source === "custom" ? "My food" : ""].filter(Boolean).join(" · ");
+  const units = unitsFor(f);
+  $("faUnit").innerHTML = units.map((u, i) => `<option value="${i}">${esc(u.label)}</option>`).join("");
+  const last = entry || f._last;
+  let qty = 1, ui = 0;
+  if (last && !f.per_serving) {
+    const j = units.findIndex((u) => u.label === last.serving_label);
+    if (last.servings && j >= 0) { ui = j; qty = last.servings; } else { ui = units.findIndex((u) => u.label === "g"); qty = Math.round(last.grams); }
+  } else if (last?.servings) qty = last.servings;
+  $("faUnit").value = String(ui); $("faQty").value = qty;
+  $("faMeal").value = entry?.meal || foodCtx.meal;
+  $("faSave").textContent = entry ? "Save" : "Add";
+  $("faDelete").classList.toggle("hidden", !entry);
+  $("foodBack").classList.toggle("hidden", !!entry);
+  $("foodDlgTitle").textContent = entry ? "Edit entry" : `Add to ${MEAL_NAMES[foodCtx.meal]}`;
+  drawAmount();
+}
+function amountNow() {
+  const f = foodCtx.food, u = unitsFor(f)[+$("faUnit").value], q = +$("faQty").value || 0;
+  if (f.per_serving) return { servings: q, n: Object.fromEntries(Object.entries(f.per_serving).map(([k, v]) => [k, v * q])) };
+  const grams = q * u.grams;
+  return { grams, servings: u.grams > 1 && !["100 g", "oz"].includes(u.label) ? q : null, serving_label: u.grams > 1 && !["100 g", "oz"].includes(u.label) ? u.label : "",
+           n: Object.fromEntries(Object.entries(f.per100g).map(([k, v]) => [k, (v * grams) / 100])) };
+}
+function drawAmount() {
+  const { n, grams } = amountNow();
+  $("faNutr").innerHTML = [["kcal", "Calories", ""], ["protein", "Protein", " g"], ["carbs", "Carbs", " g"], ["fat", "Fat", " g"], ["fiber", "Fiber", " g"], ["sugar", "Sugar", " g"], ["sodium_mg", "Sodium", " mg"]]
+    .filter(([k]) => n[k] != null).map(([k, l, u]) => `<div><b>${k === "kcal" ? kcal(n[k]) : Math.round(n[k] * 10) / 10}${u}</b><span>${l}</span></div>`).join("")
+    + (grams ? `<div><b>${Math.round(grams)} g</b><span>Weight</span></div>` : "");
+}
+$("faQty").oninput = drawAmount; $("faUnit").onchange = drawAmount;
+$("foodBack").onclick = () => showFoodPick(true);
+$("foodDlgClose").onclick = () => $("foodDialog").close();
+$("foodDialog").addEventListener("click", (e) => { if (e.target === $("foodDialog")) $("foodDialog").close(); });
+$("foodAmount").onsubmit = async (e) => {
+  e.preventDefault();
+  const a = amountNow(), f = foodCtx.food;
+  if (!(+$("faQty").value > 0)) return toast("Enter an amount");
+  try {
+    if (foodCtx.entry) {
+      await api(`/api/food/entries/${foodDate}/${foodCtx.entry.id}`, { method: "PATCH", body: JSON.stringify(
+        f.per_serving ? { servings: a.servings, meal: $("faMeal").value } : { grams: a.grams, servings: a.servings, meal: $("faMeal").value }) });
+    } else {
+      const { _last, ...food } = f;
+      await api("/api/food/entries", { method: "POST", body: JSON.stringify({ date: foodDate, meal: $("faMeal").value, food, grams: a.grams,
+        servings: a.servings, serving_label: a.serving_label }) });
+      foodCtx.recent = null;
+    }
+    $("foodDialog").close(); dashCache = null; loadFoodDay();
+  } catch (err) { toast(err.message); }
+};
+$("faDelete").onclick = async () => {
+  await api(`/api/food/entries/${foodDate}/${foodCtx.entry.id}`, { method: "DELETE" });
+  $("foodDialog").close(); dashCache = null; loadFoodDay();
+};
+function editEntry(id) {
+  const e = Object.values(foodDay.meals).flat().find((x) => x.id === id);
+  if (!e) return;
+  if (e.quick || !e.food) {
+    if (confirm(`Remove "${e.name}" (${kcal(e.kcal)} cal)?`))
+      api(`/api/food/entries/${foodDate}/${id}`, { method: "DELETE" }).then(() => { dashCache = null; loadFoodDay(); }).catch((x) => toast(x.message));
+    return;
+  }
+  foodCtx.meal = e.meal;
+  $("foodDialog").showModal();
+  pickFood(e.food, e);
+}
+$("quickForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const f = Object.fromEntries(new FormData($("quickForm")));
+  try {
+    await api("/api/food/entries", { method: "POST", body: JSON.stringify({ date: foodDate, meal: foodCtx.meal, quick: true, ...f }) });
+    $("quickForm").reset(); $("foodDialog").close(); dashCache = null; loadFoodDay();
+  } catch (err) { toast(err.message); }
+};
+$("createForm").onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    const { food } = await api("/api/food/custom", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData($("createForm")))) });
+    $("createForm").reset(); foodCtx.mine = null;
+    pickFood(food);
+  } catch (err) { toast(err.message); }
+};
+
+async function loadFoodHistory() {
+  const h = await api("/api/food/history?days=30");
+  const A = h.average, G = h.goals || {};
+  $("fh-kcal").textContent = A ? kcal(A.kcal) : "—";
+  $("fh-kcal-sub").textContent = A ? `${h.logged_days} logged day${h.logged_days === 1 ? "" : "s"}${G.kcal ? ` · goal ${kcal(G.kcal)}` : ""}` : "Nothing logged in the last 30 days";
+  $("fh-p").textContent = A ? g1(A.protein) : "—"; $("fh-c").textContent = A ? g1(A.carbs) : "—"; $("fh-f").textContent = A ? g1(A.fat) : "—";
+  $("fh-meta").textContent = G.kcal ? `Line marks your ${kcal(G.kcal)} cal goal` : "";
+  drawChart("chart-food", "bar", h.days.map((d) => shortDate(d.date)), h.days.map((d) => d.kcal || 0), { tip: (v) => `${kcal(v)} cal`, tick: (v) => kcal(v) }, { y: { min: 0 } });
+  if (G.kcal && charts["chart-food"]) {
+    const c = charts["chart-food"];
+    c.data.datasets.push({ type: "line", data: h.days.map(() => G.kcal), borderColor: cssVar("--text-3"), borderDash: [4, 4], borderWidth: 1.5, pointRadius: 0, fill: false });
+    c.update();
+  }
+  $("foodDays").innerHTML = [...h.days].reverse().filter((d) => d.kcal).map((d) => `<button class="food-day-row" data-day="${d.date}">
+      <span>${new Date(d.date + "T00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</span>
+      <span class="fr-macros">P ${Math.round(d.protein)} · C ${Math.round(d.carbs)} · F ${Math.round(d.fat)}</span>
+      <span class="fr-kcal">${kcal(d.kcal)}</span></button>`).join("") || `<div class="empty">Log food on the Today tab and your days show up here.</div>`;
+  $$("[data-day]").forEach((b) => (b.onclick = () => { foodDate = b.dataset.day; location.hash = "#/health/food/today"; }));
+}
+
+async function loadFoodGoals() {
+  const g = await api("/api/food/goals");
+  const f = $("foodGoalsForm").elements;
+  for (const k of ["kcal", "protein_g", "carbs_g", "fat_g"]) f[k].value = g[k] ?? "";
+  macroCheck();
+}
+function macroCheck() {
+  const f = $("foodGoalsForm").elements;
+  const p = +f.protein_g.value || 0, c = +f.carbs_g.value || 0, fat = +f.fat_g.value || 0, k = +f.kcal.value || 0;
+  const m = p * 4 + c * 4 + fat * 9;
+  $("macroCheck").textContent = m ? `Your macros add up to ${kcal(m)} cal${k ? ` (${m > k ? "+" : ""}${kcal(m - k)} vs. the calorie goal)` : ""}. Protein and carbs are 4 cal per gram, fat 9.` : "";
+}
+$("foodGoalsForm").oninput = macroCheck;
+$("foodGoalsForm").onsubmit = async (e) => {
+  e.preventDefault();
+  try { await api("/api/food/goals", { method: "PUT", body: JSON.stringify(Object.fromEntries(new FormData($("foodGoalsForm")))) }); toast("Goals saved"); dashCache = null; }
+  catch (err) { toast(err.message); }
+};
+let tdee = null;
+$("tdeeForm").onsubmit = (e) => {
+  e.preventDefault();
+  const f = Object.fromEntries(new FormData($("tdeeForm")));
+  const kg = f.weight_lb * 0.45359237, cm = f.height_in * 2.54;
+  const bmr = 10 * kg + 6.25 * cm - 5 * f.age + (f.sex === "m" ? 5 : -161);
+  const maint = bmr * +f.activity;
+  tdee = Math.round((maint + +f.delta) / 10) * 10;
+  $("tdeeOut").innerHTML = `Resting about <b>${kcal(bmr)}</b> cal · maintenance about <b>${kcal(maint)}</b> · goal <b>${kcal(tdee)}</b> cal a day`;
+  $("tdeeUse").classList.remove("hidden");
+};
+$("tdeeUse").onclick = () => { $("foodGoalsForm").elements.kcal.value = tdee; macroCheck(); toast("Calorie goal filled in. Save goals to keep it."); };
 
 // ---------- Education ----------
 let edu = null;            // server state {courses, computed, has_data}
@@ -2443,7 +2908,7 @@ $("sessFinish").onclick = async () => {
   try {
     const r = await api("/api/training/sessions", { method: "POST", body: JSON.stringify(body) });
     closeSession(); toast(r.whoop ? `Saved · merged with WHOOP (strain ${r.whoop.strain ?? "—"})` : "Workout saved");
-    location.hash = "#/health/history";
+    location.hash = "#/health/lifting/history";
   } catch (e) { toast(e.message); }
   finally { $("sessFinish").disabled = false; }
 };

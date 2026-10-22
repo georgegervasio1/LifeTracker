@@ -19,6 +19,7 @@ Endpoints (all require a Firebase ID token for ALLOWED_EMAIL):
   Training: /api/training, /api/training/{template,state,sessions,history,exercise,import}  (see training.py)
   Running: /api/running[/<id>], /api/runs, /api/strava/{connect,callback,sync}  (see strava.py)
   Race training: /api/raceplans[/<id>], /api/raceplans/preview  (see raceplan.py)
+  Food: /api/food/{day,entries,copy,search,barcode,recent,custom,goals,history}  (see food.py)
 """
 import csv
 import json
@@ -536,6 +537,10 @@ raceplan.init(app, db, firestore, require_owner, user_ref)
 # ---------------------------------------------------------------- Goals (SMART goals linked to the other sections)
 import goals
 goals.init(app, db, firestore, require_owner, user_ref)
+
+# ---------------------------------------------------------------- Food diary (calories and macros)
+import food
+food.init(app, db, firestore, require_owner, user_ref)
 
 # ---------------------------------------------------------------- Earnings (paychecks, withholding, year-end tax)
 import earnings
