@@ -712,14 +712,25 @@ function renderAudit() {
       const shown = cells.slice(0, a.cap).concat(Array(Math.max(0, a.cap - cells.length)).fill(""));
       if (cells.length > a.cap) shown.push(...Array(cells.length - a.cap).fill("over"));
       body = `<div class="pf-meter">${shown.map((c) => `<i class="${c}"></i>`).join("")}</div>
-        <div class="stack-legend"><span><i class="lg lg-done"></i>${a.used} used</span>${a.in_progress ? `<span><i class="lg lg-prog"></i>${a.in_progress} this term</span>` : ""}<span><i class="lg lg-plan"></i>${a.planned} planned</span><span class="${a.remaining < 0 ? "neg" : ""}"><strong>${a.remaining < 0 ? `${-a.remaining} over the limit` : `${a.remaining} left`}</strong></span></div>
-        <div class="pf-rows">${a.courses.map((c) => `<div><span>${esc(c.title)} <span class="tag">${esc(c.term)} · ${c.credits} cr</span></span><span>${c.outcome === "planned" ? "planned" : c.outcome === "P" ? "Pass" : esc(c.outcome) + " (above target)"}</span></div>`).join("")}</div>
+        <div class="stack-legend"><span><i class="lg lg-done"></i>${a.used} used${a.prior ? ` (${a.prior} from earlier terms)` : ""}</span>${a.in_progress ? `<span><i class="lg lg-prog"></i>${a.in_progress} this term</span>` : ""}<span><i class="lg lg-plan"></i>${a.planned} planned</span><span class="${a.remaining < 0 ? "neg" : ""}"><strong>${a.remaining < 0 ? `${-a.remaining} over the limit` : `${a.remaining} left`}</strong></span></div>
+        <div class="pf-rows">${a.courses.map((c) => `<div><span>${esc(c.title)} <span class="tag">${esc(c.term)} · ${c.credits} cr</span>${c.inferred ? ` <button class="text-btn" data-pfmand="${c.id}" title="Required pass/fail courses don't use the option">Was a required P/F course</button>` : ""}</span><span>${c.outcome === "planned" ? "planned" : c.outcome === "P" ? "Pass" : esc(c.outcome) + " (above target)"}</span></div>`).join("")}</div>
+        <form class="pf-prior" id="pfPriorForm"><label>Used in terms not listed here <input class="input mini" id="pfPrior" type="number" min="0" max="20" step="0.5" value="${a.prior || 0}" /> credits</label><button class="btn btn-secondary btn-sm">Save</button></form>
         <p class="hint">Credits count against the limit whether you get a Pass or keep the letter grade. One P/F course per semester; not for required courses, writing seminars, clinics or supervised research.</p>`;
       return `<div class="audit-row"><div class="audit-title"><span class="pill pill-${a.status}">${a.remaining < 0 ? "Over" : a.remaining === 0 ? "All used" : "Available"}</span><h3>${esc(a.label)}</h3></div>${body}</div>`;
     }
     if (a.courses) body += `<div class="audit-courses">${a.courses.length ? a.courses.map(esc).join(" · ") : "No course tagged yet. Open a course in the Planner and check this requirement."}</div>`;
     return `<div class="audit-row"><div class="audit-title"><span class="pill pill-${a.status}">${{ met: "Met", on_track: "On track", missing: "Missing" }[a.status]}</span><h3>${esc(a.label)}</h3></div>${body}</div>`;
   }).join("");
+  const pf = $("pfPriorForm");
+  if (pf) pf.onsubmit = async (e) => {
+    e.preventDefault();
+    try { edu = await api("/api/edu/profile", { method: "PUT", body: JSON.stringify({ pf_prior_credits: +$("pfPrior").value || 0 }) }); toast("P/F credits updated"); renderAudit(); }
+    catch (err) { toast(err.message); }
+  };
+  $$("[data-pfmand]").forEach((b) => (b.onclick = async () => {
+    try { edu = await api(`/api/edu/courses/${b.dataset.pfmand}`, { method: "PATCH", body: JSON.stringify({ pf_mandatory: true, graded: false }) }); toast("Marked as a required P/F course"); renderAudit(); }
+    catch (err) { toast(err.message); }
+  }));
 }
 
 function renderPlanner() {
@@ -739,10 +750,12 @@ function renderPlanner() {
   const pfLeft = C.pass_fail.remaining;
   const pfBox = (c) => {
     if (c.status === "completed" || c.status === "dropped") return "";
-    if (c.graded === false && !c.pf_elected) return "";                        // mandatory P/F
+    if (c.pf_mandatory || (c.graded === false && !c.pf_elected)) return "";   // mandatory P/F
     if ((c.tags || []).some((t) => t === "pr" || t === "ulwr")) return "";      // not eligible
     const cr = +c.credits || 0;
     if (!cr) return "";
+    const sameTerm = edu.courses.find((x) => x.pf_elected && x.id !== c.id && x.term === c.term && !["dropped", "waitlisted"].includes(x.status));
+    if (!c.pf_elected && sameTerm && sameTerm.status === "completed") return "";   // one P/F option course per semester
     let swap = null;
     if (!c.pf_elected && cr > pfLeft) {   // budget used: offer to move it from another not-yet-taken course
       swap = edu.courses.find((x) => x.pf_elected && x.id !== c.id && !["completed", "dropped"].includes(x.status) && pfLeft + (+x.credits || 0) >= cr);
@@ -811,7 +824,7 @@ function openCourse(c) {
   ["title", "code", "crn", "term", "credits", "status", "priority", "grade_status", "meetings_text", "professor", "exam_type", "exam_date", "exam_time", "category", "waitlist", "notes", "experiential_credits"]
     .forEach((k) => { if (f.elements[k]) f.elements[k].value = v[k] ?? (k === "grade_status" ? "projected" : ""); });
   f.elements.grade.value = v.grade || "";
-  f.elements.pf.checked = v.graded === false && !v.pf_elected;
+  f.elements.pf.checked = !!v.pf_mandatory || (v.graded === false && !v.pf_elected && v.grade !== "P");
   f.elements.pf_elected.checked = !!v.pf_elected;
   f.elements.pf_eligible.checked = !!v.pf_eligible;
   ["pr", "ulwr", "ilo8", "experiential"].forEach((t) => (f.elements[`tag_${t}`].checked = (v.tags || []).includes(t)));
@@ -826,7 +839,8 @@ $("courseForm").onsubmit = async (e) => {
     title: val("title"), code: val("code"), crn: val("crn"), term: val("term"), credits: val("credits") || null,
     status: val("status"), priority: +val("priority"), grade: val("grade") || null, grade_status: val("grade") ? val("grade_status") : null,
     graded: !f.elements.pf.checked && !["P", "H", "CR"].includes(val("grade")), pf_eligible: f.elements.pf_eligible.checked,
-    pf_elected: f.elements.pf_elected.checked && !f.elements.pf.checked, exam_date: val("exam_date") || null, exam_time: val("exam_time"),
+    pf_elected: (f.elements.pf_elected.checked || (val("grade") === "P" && val("status") === "completed")) && !f.elements.pf.checked,
+    pf_mandatory: f.elements.pf.checked, exam_date: val("exam_date") || null, exam_time: val("exam_time"),
     meetings_text: val("meetings_text"), professor: val("professor"), exam_type: val("exam_type"), category: val("category"),
     waitlist: val("waitlist"), notes: val("notes"), experiential_credits: val("experiential_credits") || null,
     tags: ["pr", "ulwr", "ilo8", "experiential"].filter((t) => f.elements[`tag_${t}`].checked),

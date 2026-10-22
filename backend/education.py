@@ -278,6 +278,13 @@ def compute(profile, courses):
         if c.get("term") and c["term"] not in terms:
             terms.append(c["term"])
 
+    def pf_option_used(c):
+        """Elected explicitly, or a finished course graded P that isn't marked as a mandatory pass/fail course."""
+        if c.get("pf_elected"):
+            return True
+        return (c.get("status") == "completed" and (c.get("grade") or "").upper() == "P"
+                and not c.get("pf_mandatory") and _num(c.get("credits")) > 0)
+
     def pf_pending(c):          # elected P/F, no final grade yet -> plan on a P (no GPA effect)
         return bool(c.get("pf_elected")) and c.get("grade_status") != "actual"
 
@@ -364,18 +371,20 @@ def compute(profile, courses):
 
     # ---- pass/fail option budget (credits count whether you end up with a P or keep the letter grade)
     cap = _num(req.get("pf_cap"), 7)
-    pf = [c for c in courses if c.get("pf_elected") and c.get("status") not in ("dropped", "waitlisted")]
-    pf_used = sum(_num(c.get("credits")) for c in pf if c.get("status") == "completed")
+    pf = [c for c in courses if pf_option_used(c) and c.get("status") not in ("dropped", "waitlisted")]
+    pf_prior = _num(p.get("pf_prior_credits"))      # option credits used in terms not tracked here
+    pf_used = pf_prior + sum(_num(c.get("credits")) for c in pf if c.get("status") == "completed")
     pf_prog = sum(_num(c.get("credits")) for c in pf if c.get("status") == "enrolled")
     pf_plan = sum(_num(c.get("credits")) for c in pf if c.get("status") in ("planned", "considering"))
     pf_total = pf_used + pf_prog + pf_plan
 
     def pf_label(c):
         g = c.get("grade") if c.get("grade_status") == "actual" else None
+        g = c.get("grade") if c.get("grade_status") == "actual" or c.get("status") == "completed" else None
         outcome = ("kept " + g) if g in GRADE_POINTS else ("P" if g == "P" else "planned")
         return {"id": c.get("id"), "title": c.get("title"), "term": c.get("term"), "credits": _num(c.get("credits")),
-                "status": c.get("status"), "outcome": outcome}
-    pass_fail = {"cap": cap, "used": pf_used, "in_progress": pf_prog, "planned": pf_plan,
+                "status": c.get("status"), "outcome": outcome, "inferred": not c.get("pf_elected")}
+    pass_fail = {"cap": cap, "used": pf_used, "prior": pf_prior, "in_progress": pf_prog, "planned": pf_plan,
                  "remaining": cap - pf_total, "courses": [pf_label(c) for c in pf]}
     audit.append({"key": "pf", "label": f"Pass/fail option ({int(cap)} credits max)", "type": "pf",
                   "status": "missing" if pf_total > cap else "met", **pass_fail})
@@ -445,7 +454,7 @@ def _grade_plan(remaining, avg):
 # ---------------------------------------------------------------- storage helpers
 COURSE_FIELDS = {"term", "title", "code", "crn", "credits", "grade", "grade_status", "graded", "status", "tags",
                  "experiential_credits", "priority", "professor", "meetings_text", "exam_type", "category",
-                 "seats", "waitlist", "notes", "pf_eligible", "pf_elected", "exam_date", "exam_time"}
+                 "seats", "waitlist", "notes", "pf_eligible", "pf_elected", "pf_mandatory", "exam_date", "exam_time"}
 
 
 def clean_course(b, partial=False):
@@ -472,7 +481,7 @@ def clean_course(b, partial=False):
                 raise ValueError(f"status must be one of {STATUSES}")
         elif k == "tags":
             v = [t for t in (v or []) if t in TAGS]
-        elif k in ("graded", "pf_eligible", "pf_elected"):
+        elif k in ("graded", "pf_eligible", "pf_elected", "pf_mandatory"):
             v = bool(v)
         elif k == "exam_date":
             v = (str(v).strip() or None) if v else None
@@ -540,6 +549,11 @@ def _register_routes():
             upd["target_gpa"] = t
         if "transfer_credits" in b:
             upd["transfer_credits"] = float(b["transfer_credits"] or 0)
+        if "pf_prior_credits" in b:
+            v = float(b["pf_prior_credits"] or 0)
+            if not 0 <= v <= 20:
+                return jsonify(error="P/F credits used must be between 0 and 20"), 400
+            upd["pf_prior_credits"] = v
         if "terms" in b and isinstance(b["terms"], list):
             upd["terms"] = [str(t)[:40] for t in b["terms"]][:16]
         for k in ("school", "program", "grad_term"):
@@ -600,7 +614,7 @@ def _register_routes():
             batch.set(col.document(), c)
         batch.commit()
         if isinstance(b.get("profile"), dict):
-            prof = {k: v for k, v in b["profile"].items() if k in DEFAULT_PROFILE or k == "grad_term"}
+            prof = {k: v for k, v in b["profile"].items() if k in DEFAULT_PROFILE or k in ("grad_term", "pf_prior_credits")}
             _profile_ref().set(prof, merge=True)
         return jsonify(education_state() | {"imported": len(courses)})
 
@@ -622,7 +636,7 @@ def _merge_import(b):
     except ValueError as e:
         return jsonify(error=f"Import failed: {e}"), 400
     if isinstance(b.get("profile"), dict):
-        prof = {k: v for k, v in b["profile"].items() if k in DEFAULT_PROFILE or k == "grad_term"}
+        prof = {k: v for k, v in b["profile"].items() if k in DEFAULT_PROFILE or k in ("grad_term", "pf_prior_credits")}
         if isinstance(prof.get("requirements"), dict):
             prof["requirements"] = {k: v for k, v in prof["requirements"].items() if k in DEFAULT_PROFILE["requirements"]}
         _profile_ref().set(prof, merge=True)

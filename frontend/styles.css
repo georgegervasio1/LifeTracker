@@ -769,3 +769,6 @@ button.h-row:hover span:first-child { color: var(--accent); }
   .syl-next, .syl-grid { grid-template-columns: 1fr; }
   .syl-row { grid-template-columns: 1fr; gap: 2px; }
 }
+.pf-prior { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; font-size: 13px; color: var(--text-2); }
+.pf-prior label { display: inline-flex; align-items: center; gap: 8px; }
+.pf-prior .input.mini { width: 72px; }
