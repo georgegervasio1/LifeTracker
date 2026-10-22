@@ -19,7 +19,7 @@ const chatHistory = []; // [{role, content}] — kept in the browser only
 const SECTIONS = {
   finances: { title: "Finances", tabs: [
     ["overview", "Overview"], ["transactions", "Transactions"], ["investments", "Investments"],
-    ["paychecks", "Summer 2026"], ["assistant", "Assistant"], ["accounts", "Accounts"]] },
+    ["paychecks", "Summer 2026"], ["taxes", "Taxes"], ["assistant", "Assistant"], ["accounts", "Accounts"]] },
   health: { title: "Health", tabs: [
     ["overview", "Overview"], ["planner", "Planner"], ["history", "History"], ["calendar", "Calendar"], ["connect", "Connect"]] },
   education: { title: "Education", tabs: [
@@ -69,6 +69,7 @@ async function load(section, tab) {
   if (tab === "overview" || tab === "transactions") return loadOverview();
   if (tab === "investments") return loadInvestments();
   if (tab === "paychecks") return loadPaychecks();
+  if (tab === "taxes") return loadTaxes();
   if (tab === "assistant") setTimeout(() => $("chatInput").focus(), 50);
 }
 
@@ -1070,6 +1071,49 @@ $("stubForm").onsubmit = async (e) => {
   try { earn = await api("/api/earnings/paychecks", { method: "POST", body: JSON.stringify(body) }); $("stubDialog").close(); renderPaychecks(); toast("Pay stub added"); }
   catch (err) { toast(err.message); }
 };
+
+// ---------- Finances: taxes at a glance ----------
+const TAX_COLORS = { federal: "--exam", ss: "--text-3", medicare: "--line-strong", il: "--warn", dc: "--neg", keep: "--accent" };
+async function loadTaxes() {
+  const t = await api("/api/taxes");
+  $("taxEmpty").classList.toggle("hidden", t.ready);
+  $("taxBody").classList.toggle("hidden", !t.ready);
+  if (!t.ready) return;
+  const fd = (d) => new Date(d + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  $("taxEyebrow").textContent = `Tax year ${t.year}`;
+  $("taxTitle").textContent = `${money(t.taxes)} in taxes on ${money(t.income)}`;
+  $("taxSub").textContent = `Income: ${t.sources.map((x) => `${x.label} ${money(x.amount)}`).join(" · ")}`;
+  $("taxEff").textContent = `${t.effective_total.toFixed(1)}% of income went to taxes`;
+  const seg = t.breakdown.filter((b) => b.amount > 0);
+  $("taxBar").innerHTML = seg.map((b) => `<span class="db-seg ${b.key === "keep" ? "keep" : ""}" style="flex:${b.pct};background:var(${TAX_COLORS[b.key]})" title="${esc(b.label)}: ${money(b.amount)}">${b.pct >= 6 ? `${Math.round(b.pct)}%` : ""}</span>`).join("");
+  $("taxLegend").innerHTML = t.breakdown.map((b) => `<div class="dl-item ${b.key === "keep" ? "keep" : ""}"><i class="k-dot" style="background:var(${TAX_COLORS[b.key]})"></i><span>${esc(b.label)}</span><strong>${money(b.amount)}</strong><em>${b.amount ? `$${b.pct.toFixed(2)} of every $100` : b.key === "dc" ? "covered by the Illinois credit" : "—"}</em></div>`).join("");
+
+  const m = t.marginal, keep = 100 - m.total;
+  $("taxMarginal").innerHTML = `<div class="marginal-big"><strong>${m.total.toFixed(1)}%</strong><span>of your next $100 goes to taxes; you keep <b>$${keep.toFixed(2)}</b></span></div>
+    <div class="marginal-parts">${[["Federal", m.federal, "--exam"], ["Social Security", m.ss, "--text-3"], ["Medicare", m.medicare, "--line-strong"], ["State", m.state, "--warn"]].filter(([, v]) => v).map(([l, v, c]) => `<span><i class="k-dot" style="background:var(${c})"></i>${l} <b>${v}%</b></span>`).join("")}</div>
+    <p class="hint">Marginal = the rate on one more dollar of pay. Your average (effective) rate is lower, ${t.effective_total.toFixed(1)}%, because the first dollars are taxed at lower rates or not at all.</p>`;
+
+  $("taxDue").textContent = `File by ${fd(t.filing_deadline)}`;
+  $("taxSettle").innerHTML = `<div class="settle">${t.settle.map((r) => `<div class="settle-row"><span>${esc(r.tax)}</span><span class="muted">${money(r.owed)} owed · ${money(r.paid)} paid</span><strong class="${r.balance > 0 ? "pos" : r.balance < 0 ? "neg" : ""}">${r.balance > 0 ? `+${money(r.balance)}` : r.balance < 0 ? `−${money(-r.balance)}` : "Even"}</strong></div>`).join("")}
+    <div class="settle-row total"><span>${t.net_settle >= 0 ? "Back to you" : "You owe"}</span><span></span><strong class="${t.net_settle >= 0 ? "pos" : "neg"}">${money(Math.abs(t.net_settle))}</strong></div></div>`;
+
+  const F = t.federal, top = F.fill.findIndex((b) => b.amount === 0);
+  const rows = F.fill.slice(0, top === -1 ? F.fill.length : top + 1);
+  $("taxFedMeta").textContent = `${money(t.income)} − ${money(F.std_deduction)} standard deduction = ${money(F.taxable)} taxable`;
+  $("taxLadder").innerHTML = `<div class="ladder">${rows.map((b) => {
+    const width = b.to == null ? 100 : Math.min(100, (b.amount / (b.to - b.from)) * 100);
+    return `<div class="ladder-row ${b.amount ? "" : "unused"}"><span class="lr-rate">${(b.rate * 100).toFixed(0)}%</span>
+      <span class="lr-range">${usd0.format(b.from)}${b.to == null ? "+" : ` – ${usd0.format(b.to)}`}</span>
+      <span class="lr-bar"><i style="width:${width}%"></i></span>
+      <span class="lr-amt">${b.amount ? `${money(b.amount)} → <b>${money(b.tax)}</b>` : "not reached"}</span></div>`;
+  }).join("")}<div class="ladder-row total"><span></span><span>Federal tax</span><span></span><span class="lr-amt"><b>${money(F.tax)}</b></span></div></div>
+    <p class="hint">Each bracket only taxes the dollars inside it. ${rows.length < F.fill.length ? `Higher brackets (${F.fill.slice(rows.length).map((b) => (b.rate * 100).toFixed(0) + "%").join(", ")}) start above ${usd0.format(rows[rows.length - 1].to)} of taxable income.` : ""}</p>`;
+
+  $("taxBankCard").classList.toggle("hidden", !t.bank_activity.length);
+  const nice = (b) => /\birs\b|usatax|treas/i.test(b.merchant) ? `IRS ${b.kind}` : /\bill\b|illinois/i.test(b.merchant) ? `Illinois ${b.kind}` : /\bdc\b|district/i.test(b.merchant) ? `DC ${b.kind}` : b.merchant;
+  const forYear = (d) => (+d.slice(5, 7) <= 4 ? ` · likely ${+d.slice(0, 4) - 1} taxes` : "");
+  $("taxBank").innerHTML = t.bank_activity.map((b) => `<div class="mini-row"><span>${esc(nice(b))} <span class="tag">${fd(b.date)}${forYear(b.date)}</span></span><span class="${b.kind === "refund" ? "pos" : ""}">${b.kind === "refund" ? "+" : "−"}${money(Math.abs(b.amount))} ${b.kind}</span></div>`).join("");
+}
 
 // ---------- Training: planner, live session, history ----------
 const DAYS = [["mon", "Mon"], ["tue", "Tue"], ["wed", "Wed"], ["thu", "Thu"], ["fri", "Fri"], ["sat", "Sat"], ["sun", "Sun"]];

@@ -276,6 +276,62 @@ def year_end(s, tot, T):
     return out
 
 
+# ---------------------------------------------------------------- whole-year tax picture
+def tax_picture(job):
+    """Concise view of the year built on the job's year-end estimate: where each dollar went, the marginal
+    rate on the next dollar, the bracket ladder and what's left to settle."""
+    if not job.get("ready"):
+        return {"ready": False}
+    s, T, Y, tot = job["settings"], TAX[job["year"]], job["year_end"], job["totals"]
+    income = Y["agi"]
+    il_tax = Y.get("il", {}).get("tax", 0)
+    dc_tax = Y.get("dc", {}).get("after_credit", 0)
+    parts = [("federal", "Federal income tax", Y["federal"]["tax"]), ("ss", "Social Security", Y["fica"]["ss"]),
+             ("medicare", "Medicare", Y["fica"]["medicare"])]
+    if "il" in Y:
+        parts.append(("il", "Illinois", il_tax))
+    if "dc" in Y:
+        parts.append(("dc", "DC (after credit)", dc_tax))
+    taxes = sum(a for _, _, a in parts)
+    parts.append(("keep", "You keep", income - taxes))
+    breakdown = [{"key": k, "label": l, "amount": r2(a), "pct": r2(a / income * 100) if income else 0} for k, l, a in parts]
+
+    # marginal: re-run the year with $100 more wages
+    bump = 100.0
+    tot2 = {**tot, "gross": tot["gross"] + bump}
+    Y2 = year_end(s, tot2, T)
+    ss_room = tot["gross"] < T["ss_wage_base"]
+    marg = {"federal": r2((Y2["federal"]["tax"] - Y["federal"]["tax"]) / bump * 100),
+            "ss": r2(T["ss_rate"] * 100) if ss_room else 0,
+            "medicare": r2((T["medicare_rate"] + (T["addl_medicare_rate"] if tot["gross"] > T["addl_medicare_threshold"] else 0)) * 100),
+            "state": r2(((Y2.get("il", {}).get("tax", 0) + Y2.get("dc", {}).get("after_credit", 0)) - (il_tax + dc_tax)) / bump * 100)}
+    marg["total"] = r2(sum(marg.values()))
+    settle = [{"tax": "Federal", "owed": Y["federal"]["tax"], "paid": Y["federal"]["withheld"], "balance": Y["federal"]["refund"]}]
+    if "il" in Y:
+        settle.append({"tax": "Illinois", "owed": il_tax, "paid": Y["il"]["withheld"], "balance": Y["il"]["refund"]})
+    if "dc" in Y:
+        settle.append({"tax": "DC", "owed": Y["dc"]["after_credit"], "paid": Y["dc"]["withheld"], "balance": r2(-Y["dc"]["due"])})
+    settle.append({"tax": "Social Security & Medicare", "owed": r2(Y["fica"]["ss"] + Y["fica"]["medicare"]),
+                   "paid": r2(tot["ss"] + tot["medicare"]), "balance": 0.0})
+    return {"ready": True, "year": job["year"], "income": r2(income), "taxes": r2(taxes), "breakdown": breakdown,
+            "effective_total": r2(taxes / income * 100) if income else 0, "marginal": marg,
+            "federal": {k: Y["federal"][k] for k in ("std_deduction", "taxable", "tax", "fill", "marginal", "effective")},
+            "settle": settle, "net_settle": Y["net_settle"], "filing_deadline": f"{job['year'] + 1}-04-15",
+            "sources": [{"label": " · ".join(x for x in (s.get("employer"), s.get("role")) if x) or "Wages", "amount": tot["gross"]}]
+                       + ([{"label": "Other income", "amount": Y["other_income"]}] if Y["other_income"] else [])}
+
+
+def bank_tax_activity():
+    """Tax payments and refunds that show up in the bank feed (IRS, state tax agencies)."""
+    out = []
+    for d in user_ref().collection("transactions").where("date", ">=", "2025-01-01").stream():
+        t = d.to_dict(); m = (t.get("merchant") or "")
+        if re.search(r"\birs\b|usataxpymt|treas tax|tax ?rfd|taxrfd|tax refund|dept of revenue|state tax|comptroller", m, re.I) or t.get("category") == "Taxes And Government":
+            out.append({"date": t["date"], "merchant": m.split(" PPD")[0].strip(), "amount": r2(-t["amount"]),
+                        "kind": "refund" if t["amount"] < 0 else "payment"})
+    return sorted(out, key=lambda x: x["date"], reverse=True)
+
+
 # ---------------------------------------------------------------- storage + routes
 def _settings_ref():
     return user_ref().collection("earnings").document("settings")
@@ -352,6 +408,11 @@ def _register_routes():
     @require_owner
     def get_earnings():
         return jsonify(state())
+
+    @bp.get("/api/taxes")
+    @require_owner
+    def get_taxes():
+        return jsonify(tax_picture(state()) | {"bank_activity": bank_tax_activity()})
 
     @bp.put("/api/earnings/settings")
     @require_owner

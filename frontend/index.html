@@ -207,6 +207,38 @@
           </div>
         </div>
 
+        <!-- Taxes -->
+        <div class="panel wrap" data-panel="taxes">
+          <div class="pay-head"><div><p class="eyebrow" id="taxEyebrow">Taxes</p><h2 class="title" id="taxTitle">Taxes</h2><p class="lede-sm" id="taxSub"></p></div></div>
+          <div class="card empty-state hidden" id="taxEmpty"><h3>No income for this year yet</h3><p>Once a job's paychecks are in, this shows where every dollar went.</p></div>
+          <div id="taxBody" class="hidden">
+            <div class="card">
+              <div class="card-head"><h3>Where every dollar went</h3><span class="card-meta" id="taxEff"></span></div>
+              <div class="dollar-bar" id="taxBar"></div>
+              <div class="dollar-legend" id="taxLegend"></div>
+            </div>
+            <div class="grid-2">
+              <div class="card">
+                <div class="card-head"><h3>Your next dollar</h3><span class="card-meta">Combined marginal rate</span></div>
+                <div id="taxMarginal"></div>
+              </div>
+              <div class="card">
+                <div class="card-head"><h3>Settle up</h3><span class="card-meta" id="taxDue"></span></div>
+                <div id="taxSettle"></div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h3>Federal brackets</h3><span class="card-meta" id="taxFedMeta"></span></div>
+              <div id="taxLadder"></div>
+            </div>
+            <div class="card" id="taxBankCard">
+              <div class="card-head"><h3>Tax activity in your accounts</h3><span class="card-meta">From Chase</span></div>
+              <div id="taxBank"></div>
+            </div>
+            <p class="hint">Estimates from the 2026 federal brackets, Illinois and DC rates, built on your paychecks. Not tax advice; your W-2 and return are the source of truth. <a class="link-sm" href="#/finances/paychecks">See every paycheck →</a></p>
+          </div>
+        </div>
+
         <!-- Accounts -->
         <div class="panel wrap" data-panel="accounts">
           <div class="grid-2">
