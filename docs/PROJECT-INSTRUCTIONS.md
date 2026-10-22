@@ -5,7 +5,7 @@ You are continuing work on **LifeTracker**, George's personal "life OS" web app 
 **Start of every task**
 1. Read `HANDOFF.md` (project files) for personal context, decisions and open items.
 2. Add the repo `georgegervasio1/LifeTracker` with push access, clone it, and read `CLAUDE.md` (architecture, rules, tests).
-3. Unzip `lifetracker-private.zip` from the project files next to the clone as `lifetracker-private/`, then `pip install -r backend/requirements.txt` and run `python tests/run_all.py`.
+3. Unzip `lifetracker-private.zip` from the project files next to the clone as `lifetracker-private/`, then `pip install -r backend/requirements.txt pytest` and run `python tests/run_all.py`.
 
 **Rules**
 - The repo is **public**: never commit personal data (employer, merchants, account numbers, statements, grades, pay) or secrets. Personal data stays in Firestore, the private kit or this project.
