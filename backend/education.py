@@ -173,21 +173,23 @@ def calendar_for(courses):
         if c.get("status") not in ("enrolled", "planned", "completed"):
             continue
         date, time, source = c.get("exam_date"), c.get("exam_time"), "you"
-        if not date and c.get("graded", True) is not False and c.get("term") in FINALS_SCHEDULE:
+        paper = (c.get("exam_type") or "").lower() == "paper"
+        if not date and not paper and c.get("graded", True) is not False and c.get("term") in FINALS_SCHEDULE:
             cands = exam_candidates(c)
             if len(cands) == 1:
                 date, time, source = cands[0]["date"], cands[0]["time"], "registrar"
             elif cands:
                 c["exam_options"] = cands      # several sections: let the student pick
         if date:
-            ev = {"date": date, "end": None, "label": f"Final: {c.get('title')}", "kind": "final",
+            ev = {"date": date, "end": None, "label": f"{'Paper due' if paper else 'Final'}: {c.get('title')}", "kind": "final",
                   "time": time, "course_id": c.get("id"), "exam_type": c.get("exam_type"), "source": source}
             out.setdefault(c.get("term") or "Other", []).append(ev)
             slots.setdefault((date, (time or "").upper()), []).append(ev)
     for evs in slots.values():
+        evs = [ev for ev in evs if ev["label"].startswith("Final:")]    # papers don't clash with exams
         if len(evs) > 1:
             for ev in evs:
-                ev["conflict"] = [x["label"][7:] for x in evs if x is not ev]
+                ev["conflict"] = [x["label"].split(": ", 1)[1] for x in evs if x is not ev]
     for evs in out.values():
         evs.sort(key=lambda x: (x["date"], x["kind"] != "final", _time_key(x.get("time"))))
     return out
