@@ -45,10 +45,8 @@ TAX = {
 PERIODS = {"weekly": 52, "biweekly": 26, "semimonthly": 24, "monthly": 12}
 WORKDAYS_PER_YEAR = 260          # partial periods are paid at salary / 260 per workday
 
-# The owner's past summer job, fixed so there's nothing to enter. The employer's name and the actual
-# deposits come from the bank feed at runtime (payroll deposits in the job's window), not from this file.
-SEED = {"role": "Summer Associate", "annual_salary": 225000, "start": "2026-05-26", "end": "2026-07-31",
-        "frequency": "semimonthly", "work_state": "IL", "resident_state": "DC", "archived": True}
+# Job settings live in Firestore (entered in the app or loaded from a finance profile file, see finance.py).
+# The employer's name and the actual deposits come from the bank feed at runtime (payroll deposits in the job's window).
 DEFAULT_SETTINGS = {
     "employer": "", "role": "", "annual_salary": None, "start": None, "end": None,
     "frequency": "weekly", "pay_lag_days": 0,
@@ -392,7 +390,7 @@ def bank_payroll(start, end):
 
 def state():
     snap = _settings_ref().get()
-    settings = snap.to_dict() if snap.exists else dict(SEED)
+    settings = snap.to_dict() if snap.exists else {}
     actuals = [d.to_dict() | {"id": d.id} for d in user_ref().collection("paychecks").stream()]
     employer, deposits, reimb = (None, [], [])
     s = {**DEFAULT_SETTINGS, **settings}

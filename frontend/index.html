@@ -162,7 +162,7 @@
         <div class="panel wrap" data-panel="income">
           <div class="subtabs" id="incTabs" role="tablist"></div>
           <div id="incBody"></div>
-          <div id="incKirkland" class="hidden">
+          <div id="incPay" class="hidden">
           <div class="pay-head">
             <div>
               <p class="eyebrow" id="payJob">Paychecks</p>
@@ -264,6 +264,15 @@
             </label>
             <button id="venmo-upload" class="btn btn-primary">Upload</button>
           </div>
+          <div class="card upload">
+            <h3>Import a finance profile</h3>
+            <p>A LifeTracker finance file with your paycheck job, tax settings and other jobs. Importing again updates the same details.</p>
+            <label class="dropzone">
+              <input type="file" id="profile-file" accept=".json,application/json" />
+              <span id="profileLabel">Choose a JSON file</span>
+            </label>
+            <button id="profile-upload" class="btn btn-primary">Import</button>
+          </div>
         
         </div>
       </section>
@@ -283,7 +292,7 @@
       <dialog id="acctDialog" class="dialog">
         <form method="dialog" id="acctForm" class="dialog-form" autocomplete="off">
           <h3 id="acctDialogTitle">Add account</h3>
-          <label class="span-2">Name<input class="input" name="name" required placeholder="Genpact 401(k)" /></label>
+          <label class="span-2">Name<input class="input" name="name" required placeholder="Old 401(k)" /></label>
           <label>Institution<input class="input" name="institution" placeholder="Voya" /></label>
           <label>Type<select class="input" name="type">
             <option value="checking">Checking</option><option value="savings">Savings</option><option value="credit_card">Credit card</option>
@@ -635,7 +644,7 @@
           <h3>Paycheck setup</h3>
           <label>Employer<input class="input" name="employer" /></label>
           <label>Role<input class="input" name="role" placeholder="Summer Associate" /></label>
-          <label>Annual salary rate<input class="input" name="annual_salary" type="number" step="1" min="0" placeholder="e.g. 225000" required /></label>
+          <label>Annual salary rate<input class="input" name="annual_salary" type="number" step="1" min="0" placeholder="e.g. 85000" required /></label>
           <label>Pay schedule<select class="input" name="frequency"><option value="weekly">Weekly</option><option value="biweekly">Every two weeks</option><option value="semimonthly">Twice a month (15th & last day)</option><option value="monthly">Monthly</option></select></label>
           <label>First day<input class="input" name="start" type="date" required /></label>
           <label>Last day<input class="input" name="end" type="date" required /></label>

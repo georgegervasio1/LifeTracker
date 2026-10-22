@@ -12,8 +12,7 @@ src = open(_os.path.join(HERE, "test_health.py")).read()
 exec(src.split("# ---- fake WHOOP HTTP")[0])
 import earnings as E
 c = main.app.test_client()
-st = c.get("/api/earnings").get_json(); assert st["ready"] and st["settings"]["archived"]  # seeded summer job
-c.put("/api/earnings/settings", json={"archived": False})
+st = c.get("/api/earnings").get_json(); assert not st["ready"]  # nothing personal is seeded in code
 # example inputs only (test fixture): $225k annualized, weekly pay, Mon 2026-05-18 to Fri 2026-07-24 (10 weeks)
 S = {"annual_salary": 225000, "start": "2026-05-18", "end": "2026-07-24", "frequency": "weekly"}
 st = c.put("/api/earnings/settings", json=S).get_json(); assert st["ready"], st

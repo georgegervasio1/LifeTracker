@@ -35,7 +35,7 @@ function parseRoute() {
   if (!SECTIONS[section]) return { section: "home" };
   const tabs = SECTIONS[section].tabs;
   const alias = section === "finances" ? { overview: "networth", transactions: "cash", paychecks: "income", assistant: "networth" }[tab] : null;
-  if (alias === "income" && !routeQuery.get("sub")) routeQuery.set("sub", "kirkland");
+  if (alias === "income" && !routeQuery.get("sub")) routeQuery.set("sub", "paychecks");
   const t = alias || tab;
   return { section, tab: tabs.some(([k]) => k === t) ? t : tabs[0]?.[0] };
 }
@@ -425,7 +425,7 @@ async function loadInv() {
     <div class="grid-2">
       <div class="card"><div class="card-head"><h3>Dividends & interest</h3><span class="card-meta">${m2(v.dividends.projected_annual)} projected a year</span></div><div id="invDivs"></div></div>
       ${roth ? `<div class="card"><div class="card-head"><h3>Roth IRA details</h3><span class="card-meta">Contributions, conversions, 5-year clocks</span></div><div id="invRoth"></div></div>`
-             : single && A?.tax === "pre_tax" ? `<div class="card"><div class="card-head"><h3>Pre-tax money</h3></div><p>${esc(v.pre_tax?.note || "")}</p><p class="hint">This is where the Genpact 401(k) was rolled over. The statements show it was then converted to the Roth IRA in 2025 (1099-R / 5498 on file), leaving the cash balance here. See Taxes for what a withdrawal would cost.</p></div>`
+             : single && A?.tax === "pre_tax" ? `<div class="card"><div class="card-head"><h3>Pre-tax money</h3></div><p>${esc(v.pre_tax?.note || "")}</p><p class="hint">Rollovers and Roth conversions show up here from the 1099-R and 5498 forms on file. See Taxes for what a withdrawal would cost.</p></div>`
              : `<div class="card"><div class="card-head"><h3>Accounts</h3></div><div id="invAccts"></div></div>`}
     </div>
     ${single && v.statements?.length ? `<div class="card card-flush"><div class="card-head padded"><h3>Statements on file</h3><a class="link-sm" href="#/finances/accounts">Reconciliation →</a></div>
@@ -482,13 +482,13 @@ async function loadInv() {
 // ---- Income
 let incData = null, editingJob = null;
 async function loadIncome() {
-  const sub = routeQuery.get("sub") || "overview";
   incData = await api(`/api/fin/income?year=${new Date().getFullYear()}`);
   const tabs = [["overview", "Overview"], ...incData.jobs.map((j) => [j.id, j.employer]), ["trust", "Trust distributions"], ["investment", "Investment income"]];
+  const sub = tabs.some(([k]) => k === routeQuery.get("sub")) ? routeQuery.get("sub") : "overview";   // unknown or old links land on Overview
   subtabs("incTabs", tabs, sub, "income", "sub");
-  $("incKirkland").classList.toggle("hidden", sub !== "kirkland");
-  $("incBody").classList.toggle("hidden", sub === "kirkland");
-  if (sub === "kirkland") return loadPaychecks();
+  $("incPay").classList.toggle("hidden", sub !== "paychecks");
+  $("incBody").classList.toggle("hidden", sub === "paychecks");
+  if (sub === "paychecks") return loadPaychecks();
   const job = incData.jobs.find((j) => j.id === sub);
   if (sub === "overview") {
     const years = Object.entries(incData.by_year);
@@ -500,8 +500,8 @@ async function loadIncome() {
       <div class="job-grid">${incData.jobs.map((j) => `<a class="card job-card" href="#/finances/income?sub=${j.id}"><span class="eyebrow">${esc(j.role || "Job")}</span><h3>${esc(j.employer)}</h3>
         <p>${j.has_data ? `${m2(j.gross)} gross · ${j.checks} paychecks${j.year ? ` · ${j.year}` : ""}` : esc(j.notes || "No pay data yet")}</p>
         <span class="link">${j.link === "earnings" ? "Paychecks and withholding →" : "Open →"}</span></a>`).join("")}
-        <a class="card job-card" href="#/finances/income?sub=trust"><span class="eyebrow">Inheritance</span><h3>Trust distributions</h3><p>${m2(incData.trust_total)} this year</p><span class="link">Open →</span></a></div>
-      <p class="hint">Law school years show no wages, so those years are simply absent. Genpact pay history arrives when Plaid links or you add pay stubs.</p>`;
+        <a class="card job-card" href="#/finances/income?sub=trust"><span class="eyebrow">Trust</span><h3>Trust distributions</h3><p>${m2(incData.trust_total)} this year</p><span class="link">Open →</span></a></div>
+      <p class="hint">Years with no income on file are left out. Pay for other jobs arrives when Plaid links the bank it was paid into, or when you add pay stubs.</p>`;
     $("addJob").onclick = () => openJob(null);
   } else if (job) {
     $("incBody").innerHTML = `<div class="inc-head"><div><p class="eyebrow">${esc(job.role || "Job")}</p><h2 class="title">${esc(job.employer)}</h2>
@@ -512,7 +512,7 @@ async function loadIncome() {
         : `<div class="card empty-state"><h3>No pay data yet</h3><p>${esc(job.notes || "")} Payroll deposits will be picked up automatically once Plaid links the bank you were paid into, or add pay stubs here.</p></div>`}`;
     $("editJob").onclick = () => openJob(job);
   } else if (sub === "trust") {
-    $("incBody").innerHTML = `<div class="inc-head"><div><p class="eyebrow">Income</p><h2 class="title">Trust distributions</h2><p class="lede-sm">From your grandfather's trust (his retirement account)</p></div></div>
+    $("incBody").innerHTML = `<div class="inc-head"><div><p class="eyebrow">Income</p><h2 class="title">Trust distributions</h2><p class="lede-sm">Distributions found in your statements</p></div></div>
       <div class="card">${incData.trust.map((t) => `<div class="mini-row"><span><strong>${fdate(t.date)}</strong> <span class="tag">into ${esc(t.account)} · ${esc(t.description)}</span></span><strong>${m2(t.amount)}</strong></div>`).join("") || `<p class="hint">None on file.</p>`}
         <p class="hint">Treated as taxable ordinary income on the Taxes page (change the taxable share there once the 1099-R or K-1 arrives). It's new money, not a transfer between your accounts, so it counts as income here and in net worth changes.</p>
         <a class="link-sm" href="#/finances/taxes">See the tax on it →</a></div>`;
@@ -581,7 +581,7 @@ async function loadFinTaxes(t) {
         <div class="mini-row"><span>+ Charitable deduction for non-itemizers (up to $1,000)</span><span>${m2(F.charity_nonitemizer)}</span></div>
         <div class="mini-row"><span>vs. itemizing: state & local taxes ${m0(F.salt)} + gifts above 0.5% of income</span><span>${m2(F.itemized)}</span></div>
         <h4 class="mini-h">Charitable gifts found</h4>
-        ${CH.items.map((c) => `<div class="mini-row"><span>${fdate(c.date)} <span class="tag">${esc(c.merchant)}</span></span><span>${m2(c.amount)} <button class="text-btn" data-notgift="${c.id}">Not a gift</button></span></div>`).join("") || `<p class="hint">None found in the card or bank feed yet. The $1,000 to Big Shoulders will appear once the Chase card statement for that month is imported (or Plaid links the card).</p>`}
+        ${CH.items.map((c) => `<div class="mini-row"><span>${fdate(c.date)} <span class="tag">${esc(c.merchant)}</span></span><span>${m2(c.amount)} <button class="text-btn" data-notgift="${c.id}">Not a gift</button></span></div>`).join("") || `<p class="hint">None found in the card or bank feed yet. Gifts appear once that month's statement is imported or Plaid links the card. If a charity isn't picked up, add its name under Your inputs.</p>`}
         ${CH.extra ? `<div class="mini-row"><span>Added by you</span><span>${m2(CH.extra)}</span></div>` : ""}</div>
       <div class="card"><div class="card-head"><h3>Trust money</h3><span class="card-meta">${TR.form_on_file ? "Tax form on file" : "Waiting for the 1099-R / K-1"}</span></div>
         <div class="mini-row"><span>Received</span><strong>${m2(TR.gross)}</strong></div>
@@ -610,12 +610,14 @@ async function loadFinTaxes(t) {
         <label>${t.year - 1} AGI<input class="input" name="prior_year_agi" type="number" step="1" value="${S.prior_year_agi ?? ""}" /></label>
         <label>Other charitable gifts not in the feed<input class="input" name="charitable_extra" type="number" step="0.01" value="${S.charitable_extra || 0}" /></label>
         <label>Birth year<input class="input" name="birth_year" type="number" value="${S.birth_year ?? ""}" /></label>
+        <label class="span-2">Charities you give to (names as they appear on statements, comma-separated)<input class="input" name="charity_keywords" value="${esc((S.charity_keywords || []).join(", "))}" /></label>
         <div class="settings-actions"><button class="btn btn-primary btn-sm">Recalculate</button></div>
       </form></div>
     <p class="hint">${esc(t.disclaimer)} 2026 figures: IRS brackets and standard deduction; Illinois 4.95%; DC 2026 brackets; long-term gains 0%/15%/20% at $49,450 / $545,500 (single); charitable deduction up to $1,000 for non-itemizers and a 0.5%-of-income floor for itemizers (OBBBA); Roth phase-out $153,000–$168,000; Illinois subtracts IRA distributions.</p>`;
   $("taxSettings").onsubmit = async (e) => {
     e.preventDefault();
-    const body = Object.fromEntries([...new FormData(e.target).entries()].map(([k, x]) => [k, x === "" ? null : +x]));
+    const body = Object.fromEntries([...new FormData(e.target).entries()].map(([k, x]) =>
+      [k, k === "charity_keywords" ? x.split(",").map((w) => w.trim()).filter(Boolean) : x === "" ? null : +x]));
     try { loadFinTaxes(await api("/api/fin/tax-settings", { method: "PUT", body: JSON.stringify(body) })); toast("Recalculated"); }
     catch (err) { toast(err.message); }
   };
@@ -708,6 +710,16 @@ $("pdf-upload").onclick = async () => {
   if (last) loadImports(last).then(() => { $("pdfResults").scrollIntoView({ block: "nearest" }); });
   toast(`${ok} of ${files.length} imported`);
 };
+$("profile-file").onchange = () => { $("profileLabel").textContent = $("profile-file").files[0]?.name || "Choose a JSON file"; };
+$("profile-upload").onclick = async () => {
+  const f = $("profile-file").files[0];
+  if (!f) return toast("Choose a finance profile file");
+  try {
+    await api("/api/fin/profile", { method: "POST", body: await f.text() });
+    $("profile-file").value = ""; $("profileLabel").textContent = "Choose a JSON file";
+    toast("Finance profile imported"); loadImports();
+  } catch (e) { toast(e.message); }
+};
 $("reconcileBtn").onclick = async () => {
   try { const r = await api("/api/fin/reconcile", { method: "POST" }); loadImports(r.imports); toast(`Checked: ${r.changed} links updated, ${r.paired} transfers paired`); }
   catch (e) { toast(e.message); }
@@ -729,9 +741,9 @@ const CHAT_SUGGEST = {
   networth: ["What changed my net worth in September?", "Which balances are out of date?", "How much is in cash vs invested?"],
   cash: ["How much did I spend on food last month?", "What are my biggest recurring charges?", "Did anything get counted twice?"],
   investments: ["What's my unrealized gain in the Roth?", "Which lots go long-term in the next 60 days?", "How am I doing vs the S&P 500 this year?"],
-  income: ["What did I earn in 2026, all sources?", "How much did the trust distribute?", "What were my Kirkland paychecks after tax?"],
+  income: ["What did I earn in 2026, all sources?", "How much did the trust distribute?", "What did my paychecks come to after tax?"],
   taxes: ["How much do I owe on the trust money?", "Do I need an estimated payment, and when?", "Itemize or take the standard deduction?"],
-  accounts: ["Did that $10k to UBS get counted twice?", "Which statements are missing?", "Do all the statements reconcile?"],
+  accounts: ["Was any transfer counted twice?", "Which statements are missing?", "Do all the statements reconcile?"],
 };
 function setChatPlace(tab) {
   const sub = routeQuery.get("acct") || routeQuery.get("sub");
@@ -1539,12 +1551,12 @@ function renderPaychecks() {
   const fd = (d, o = { month: "short", day: "numeric" }) => new Date(d + "T00:00").toLocaleDateString("en-US", o);
   const freq = { weekly: "weekly", biweekly: "every two weeks", semimonthly: "twice a month", monthly: "monthly" }[s.frequency];
   $("payTitle").textContent = `${money(T.gross)} earned`;
-  $("paySub").textContent = `${fd(s.start)} – ${fd(s.end, { month: "short", day: "numeric", year: "numeric" })} · ${money(s.annual_salary)} a year, paid ${freq} · ${T.checks} paycheck${T.checks === 1 ? "" : "s"}${T.deposit_checks ? `, all ${T.deposit_checks === T.checks ? "" : T.deposit_checks + " "}matched to Chase deposits` : T.actual_checks ? ` (${T.actual_checks} from pay stubs)` : " (projected)"}`;
+  $("paySub").textContent = `${fd(s.start)} – ${fd(s.end, { month: "short", day: "numeric", year: "numeric" })} · ${money(s.annual_salary)} a year, paid ${freq} · ${T.checks} paycheck${T.checks === 1 ? "" : "s"}${T.deposit_checks ? `, all ${T.deposit_checks === T.checks ? "" : T.deposit_checks + " "}matched to bank deposits` : T.actual_checks ? ` (${T.actual_checks} from pay stubs)` : " (projected)"}`;
   const withheld = T.federal + T.state + T.dc, banked = T.deposited ?? T.net;
   const perDed = T.deposit_checks ? T.other_deductions / T.deposit_checks : 0;
   $("payKpis").innerHTML = [
     ["Gross pay", money(T.gross), `${money(s.annual_salary)} a year, prorated`],
-    [T.deposited != null ? "Deposited to Chase" : "Take-home", money(banked), T.deposited != null ? `${T.deposit_checks} payroll deposits · ${(T.gross ? (banked / T.gross) * 100 : 0).toFixed(1)}% of gross` : `${(T.gross ? (T.net / T.gross) * 100 : 0).toFixed(1)}% of gross`],
+    [T.deposited != null ? "Deposited" : "Take-home", money(banked), T.deposited != null ? `${T.deposit_checks} payroll deposits · ${(T.gross ? (banked / T.gross) * 100 : 0).toFixed(1)}% of gross` : `${(T.gross ? (T.net / T.gross) * 100 : 0).toFixed(1)}% of gross`],
     ["Income tax withheld", money(withheld), `+ ${money(T.ss + T.medicare)} Social Security & Medicare`],
     [Y.net_settle >= 0 ? "Expected back at tax time" : "Expected to owe", money(Math.abs(Y.net_settle)), `Keep ${money(Y.true_take_home)} after filing`],
   ].map(([l, v, sub], i) => `<div class="kpi"><span class="kpi-label">${l}</span><span class="kpi-value ${i === 3 ? (Y.net_settle >= 0 ? "pos" : "neg") : ""}">${v}</span><span class="kpi-sub">${sub}</span></div>`).join("");
@@ -1610,7 +1622,7 @@ function renderPaychecks() {
     ["− Social Security & Medicare", money(Y.fica.ss + Y.fica.medicare)],
     ...(Y.il ? [["− Illinois tax", money(Y.il.tax)]] : []), ...(Y.dc ? [["− DC tax after credit", money(Y.dc.after_credit)]] : []),
     ["= What you keep", money(Y.true_take_home), "sum"],
-    [T.deposited != null ? "Already deposited to Chase" : "Already in your bank from paychecks", money(banked)],
+    [T.deposited != null ? "Already deposited" : "Already in your bank from paychecks", money(banked)],
     ...(T.other_deductions ? [["Other payroll deductions", money(T.other_deductions)]] : []),
     [Y.net_settle >= 0 ? "Comes back when you file" : "You'll pay when you file", money(Math.abs(Y.net_settle)), Y.net_settle >= 0 ? "pos" : "neg"],
   ]) + `<p class="hint">${Y.fica.note}</p>`;
@@ -1627,7 +1639,7 @@ function payMath(c) {
   ];
   const st = il ? [[`Illinois: (${money(c.gross)} − ${money(il.allowance_per_period)} allowance) × 4.95%`, money(c.state), "sum"]] : [];
   const fica = [[`Social Security: ${money(c.gross)} × 6.2%`, money(c.ss)], [`Medicare: ${money(c.gross)} × 1.45%${c.math.addl_medicare_wages ? " + 0.9% over $200k" : ""}`, money(c.medicare)]];
-  const dep = c.deposit != null ? [["Projected net", money(c.net), "sum"], [`Chase deposit ${new Date(c.deposit_date + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`, money(c.deposit)], ["Other deductions on the stub", money(c.other_deductions), "sub"]] : [];
+  const dep = c.deposit != null ? [["Projected net", money(c.net), "sum"], [`Bank deposit ${new Date(c.deposit_date + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`, money(c.deposit)], ["Other deductions on the stub", money(c.other_deductions), "sub"]] : [];
   return `<div class="pay-math-grid"><div><h4>Federal</h4>${mathLines(fed)}</div><div><h4>State & payroll taxes</h4>${mathLines([...st, ...fica, ...dep])}</div></div>`;
 }
 function mathLines(rows) {

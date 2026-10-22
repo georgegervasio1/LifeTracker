@@ -29,8 +29,8 @@ DEFAULT_SETTINGS = {"filing_status": "single", "resident_state": "DC", "work_sta
                     "trust_taxable_pct": 100, "trust_federal_withheld": 0, "trust_state_withheld": 0,
                     "prior_year_tax": None, "prior_year_agi": None, "estimated_payments": [],
                     "birth_year": None, "roth_first_year": None, "roth_prior_contributions": {},
-                    "charitable_extra": 0, "qualified_dividend_pct": None}
-CHARITY = re.compile(r"BIG SHOULDERS|DONAT|CHARIT|FOUNDATION|GOFUNDME|UNITED WAY|RED CROSS|\bFUND\b.*\bGIFT|ALUMNI", re.I)
+                    "charitable_extra": 0, "qualified_dividend_pct": None, "charity_keywords": []}
+CHARITY = re.compile(r"DONAT|CHARIT|FOUNDATION|GOFUNDME|UNITED WAY|RED CROSS|\bFUND\b.*\bGIFT|ALUMNI", re.I)
 
 
 def r2(x):
@@ -51,6 +51,8 @@ def save_settings(b):
             upd[k] = float(upd[k]) if k not in ("birth_year", "roth_first_year") else int(upd[k])
         elif k in upd:
             upd[k] = None
+    if "charity_keywords" in upd:          # merchants the user gives to that the generic rules don't catch
+        upd["charity_keywords"] = [str(k).strip()[:60] for k in upd["charity_keywords"] or [] if str(k).strip()][:50]
     if "estimated_payments" in upd:
         upd["estimated_payments"] = [{"date": str(p.get("date"))[:10], "jurisdiction": p.get("jurisdiction") or "federal",
                                       "amount": float(p.get("amount") or 0)} for p in upd["estimated_payments"] or []][:24]
@@ -140,8 +142,10 @@ def investment_income(year):
 
 def charitable(year, s):
     rows = []
+    mine = [k.lower() for k in s.get("charity_keywords") or []]
+    is_gift = lambda m: bool(CHARITY.search(m)) or any(k in m.lower() for k in mine)
     for t in L.load_transactions(f"{year}-01-01", f"{year}-12-31"):
-        if t.get("amount", 0) > 0 and (t.get("charitable") or t.get("category") == "Gifts And Donations" or CHARITY.search(t.get("merchant") or "")):
+        if t.get("amount", 0) > 0 and (t.get("charitable") or t.get("category") == "Gifts And Donations" or is_gift(t.get("merchant") or "")):
             if t.get("charitable") is False:
                 continue
             rows.append({"date": t["date"], "merchant": t.get("merchant"), "amount": t["amount"], "id": t["id"], "account": t.get("account")})
@@ -250,7 +254,7 @@ def compute(year=2026):
                     "Your 2026 income is inside the Roth phase-out range: only part of a contribution is allowed." if magi < hi else
                     "Your 2026 income is above the Roth limit: a direct contribution isn't allowed (excess contributions can be withdrawn or recharacterized before the filing deadline)."}
 
-    sources = [{"label": w["employer"] or "Wages", "amount": w["gross"], "link": "#/finances/income?sub=kirkland"} if w["gross"] else None,
+    sources = [{"label": w["employer"] or "Wages", "amount": w["gross"], "link": "#/finances/income?sub=paychecks"} if w["gross"] else None,
                {"label": "Trust distribution", "amount": tr["taxable"], "link": "#/finances/income?sub=trust",
                 "note": None if tr["form_on_file"] else "Taxable share assumed 100% until the 1099-R or K-1 arrives"} if tr["gross"] else None,
                {"label": "Dividends (taxable account)", "amount": inv["dividends"], "link": "#/finances/investments?acct=brokerage"} if inv["dividends"] else None,
@@ -287,7 +291,7 @@ def retirement_projection(s, fed, dc):
             conv_pen = sum(c["amount"] for c in r["conversions"] if c["penalty_free_from"] > today) * 0.10 if (age is None or age < 59.5) else 0
             out.append({"account": a["id"], "name": a["name"], "kind": "roth", "value": r2(v),
                         "pieces": [{"label": "Your contributions", "amount": r2(contrib), "tax_now": 0.0, "note": "Always come out first, tax- and penalty-free."},
-                                   {"label": "Converted (Genpact 401(k), 2025)" if conv else "Conversions", "amount": r2(conv), "tax_now": r2(conv_pen),
+                                   {"label": f"Converted ({', '.join(sorted({str(c['year']) for c in r['conversions'] if c.get('year')}))})" if conv else "Conversions", "amount": r2(conv), "tax_now": r2(conv_pen),
                                     "note": "Already taxed in the year converted. 10% penalty if withdrawn within 5 years of the conversion while under 59½."},
                                    {"label": "Earnings", "amount": r2(earn), "tax_now": r2(earn * (fed_m + dc_m + 0.10)),
                                     "note": "Taxable + 10% penalty if withdrawn now; tax-free once qualified (59½ and 5 years)."}],

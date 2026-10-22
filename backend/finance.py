@@ -5,6 +5,7 @@
   GET    /api/fin/investments?account=          holdings + lots, allocation, returns vs S&P 500, movers, fees, dividends, retirement
   GET    /api/fin/income?year=                  jobs, trust distributions, investment income
   GET    /api/fin/taxes?year=                   the year's tax picture;  PUT /api/fin/tax-settings
+  POST   /api/fin/profile                       finance profile file (paycheck job, tax settings, jobs)
   POST   /api/fin/upload                        UBS statement / tax-form PDFs (several at once)
   GET    /api/fin/imports                       coverage timeline, reconciliation, duplicates, files on record
   POST   /api/fin/reconcile                     re-run cross-source matching and transfer pairing
@@ -25,12 +26,7 @@ import ubs_parser
 bp = Blueprint("finance", __name__)
 require_owner = None
 MAX_PDF = 15_000_000
-JOB_SEEDS = [
-    {"id": "kirkland", "employer": "Kirkland & Ellis", "role": "Summer Associate", "start": "2026-05-26", "end": "2026-07-31",
-     "work_state": "IL", "link": "earnings", "order": 1},
-    {"id": "genpact", "employer": "Genpact", "role": "", "start": None, "end": None, "work_state": None, "link": None, "order": 2,
-     "notes": "Pay history to come from Plaid or an upload."},
-]
+PAY_JOB = "paychecks"      # the job backed by the paycheck calculator (earnings.py); other jobs live in income_jobs
 
 
 _routes_done = False
@@ -118,19 +114,21 @@ def investments_view(account=None):
 
 
 # ---------------------------------------------------------------- income
-def jobs():
-    rows = {d.id: d.to_dict() | {"id": d.id} for d in L.col("income_jobs").stream()}
-    for j in JOB_SEEDS:
-        if j["id"] not in rows:
-            L.col("income_jobs").document(j["id"]).set({k: v for k, v in j.items() if k != "id"})
-            rows[j["id"]] = dict(j)
-    return sorted(rows.values(), key=lambda j: (j.get("order") or 99, j.get("employer") or ""))
+def jobs(pay_settings=None):
+    """Jobs the user added, plus the paycheck-calculator job. Its name and dates come from the earnings settings
+    (the employer from the bank feed), so nothing personal lives in code."""
+    rows = [d.to_dict() | {"id": d.id} for d in L.col("income_jobs").stream()]
+    rows = [j for j in rows if j.get("link") != "earnings"]        # older builds stored the paycheck job here too
+    s = pay_settings or {}
+    rows.append({"id": PAY_JOB, "employer": s.get("employer") or "Paychecks", "role": s.get("role") or "",
+                 "start": s.get("start"), "end": s.get("end"), "work_state": s.get("work_state"), "link": "earnings", "order": 1})
+    return sorted(rows, key=lambda j: (j.get("order") or 99, j.get("employer") or ""))
 
 
 def income_view(year):
     import earnings
-    js = jobs()
     job = earnings.state()
+    js = jobs(job.get("settings"))
     out_jobs = []
     for j in js:
         if j.get("link") == "earnings":
@@ -241,7 +239,7 @@ def _routes():
     @bp.delete("/api/fin/income/jobs/<jid>")
     @require_owner
     def delete_job(jid):
-        if jid in ("kirkland",):
+        if jid == PAY_JOB:
             return jsonify(error="This job is linked to the paycheck calculator"), 400
         L.col("income_jobs").document(jid).delete()
         return jsonify(income_view(date.today().year))
@@ -269,6 +267,31 @@ def _routes():
     def tax_settings():
         fintax.save_settings(request.get_json(force=True) or {})
         return jsonify(fintax.compute(date.today().year))
+
+    @bp.post("/api/fin/profile")
+    @require_owner
+    def import_profile():
+        """Load a finance profile file: the paycheck job, tax settings and extra jobs. Personal details live in this
+        file (kept outside the public repo) and in Firestore, never in code. Re-importing overwrites the same fields."""
+        import earnings
+        b = request.get_json(force=True) or {}
+        if b.get("kind") != "lifetracker-finance-profile":
+            return jsonify(error="Not a LifeTracker finance profile file"), 400
+        try:
+            if b.get("paycheck_job"):
+                earnings._settings_ref().set(earnings.clean_settings(b["paycheck_job"]), merge=True)
+            if b.get("tax_settings"):
+                fintax.save_settings(b["tax_settings"])
+            existing = {(d.to_dict().get("employer") or "").lower(): d.id for d in L.col("income_jobs").stream()}
+            for j in b.get("jobs") or []:
+                if not j.get("employer"):
+                    continue
+                jid = existing.get(j["employer"].lower())
+                ref = L.col("income_jobs").document(jid) if jid else L.col("income_jobs").document()
+                ref.set(_clean_job(j) | ({} if jid else {"order": 50}), merge=True)
+        except (ValueError, TypeError) as e:
+            return jsonify(error=str(e)[:200]), 400
+        return jsonify(income_view(date.today().year))
 
     @bp.post("/api/fin/upload")
     @require_owner
