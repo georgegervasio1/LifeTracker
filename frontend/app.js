@@ -474,6 +474,7 @@ async function loadNetWorth() {
       ${a.src !== "plaid" && ["cash", "credit"].includes(a.group) ? `<button class="text-btn" data-bal="${a.account}">Update</button>` : "<span></span>"}
     </div>`).join("");
   bindBalanceButtons();
+  loadSubscriptions();
   $("nwMoves").innerHTML = o.changes.length ? `<div class="move-head"><span>Month</span><span>Change</span><span>Investments</span><span>New money</span><span>Everything else</span></div>` +
     o.changes.filter((c) => c.change || c.investment_returns || c.new_money || c.saving_and_spending || c.newly_tracked).map((c) => `<div class="move-row"><span>${fdate(c.month + "-01", { month: "short", year: "numeric" })}</span><strong class="${c.change < 0 ? "neg" : ""}">${signed(c.change - (c.newly_tracked || 0), m0)}</strong><span>${signed(c.investment_returns, m0)}</span><span>${signed(c.new_money, m0)}</span><span>${signed(c.saving_and_spending, m0)}</span></div>${c.newly_tracked ? `<div class="move-note">${signed(c.newly_tracked, m0)} from accounts first tracked this month, not counted as a change</div>` : ""}`).join("") +
     `<p class="hint">Investments = market change + dividends from your statements. New money = trust distributions. Everything else = saving, spending and transfers from accounts without a balance yet.</p>`
@@ -483,6 +484,57 @@ async function loadNetWorth() {
   $("nwMovers").innerHTML = `<div class="inv-total"><strong>${m0(o.investments.total)}</strong><span>invested across accounts</span></div>` +
     (mv.items.length ? `<p class="hint">${esc(mv.label)}: ${signed(mv.total_change, m0)}</p>` + mv.items.map((i) => `<div class="mini-row"><span><strong>${esc(i.symbol)}</strong></span><span class="${i.change_pct < 0 ? "neg" : "pos"}">${pctTxt(i.change_pct)} · ${signed(i.change_value, m0)}</span></div>`).join("")
       : `<p class="hint">Movers appear once there are two price snapshots (two statements, or daily with Plaid).</p>`);
+}
+
+// ---- Subscriptions & bills (found in the transactions by the backend; nothing typed in)
+const CAD_SHORT = { weekly: "/wk", "every 2 weeks": "/2 wk", monthly: "/mo", "every 3 months": "/3 mo", "every 6 months": "/6 mo", yearly: "/yr" };
+function daysUntil(d) {
+  const n = Math.round((new Date(d + "T00:00") - new Date(iso(new Date()) + "T00:00")) / 864e5);
+  return n === 0 ? "today" : n === 1 ? "tomorrow" : n < 0 ? `${-n} days late` : `in ${n} days`;
+}
+function subRow(s, mode = "active") {
+  const amt = `${s.amount_kind === "varies" ? "~" : ""}${m2(s.amount)}<small>${CAD_SHORT[s.cadence] || ""}</small>`;
+  const note = s.previous_amount != null ? `<span class="sub-note">Was ${m2(s.previous_amount)} until ${fdate(s.price_changed, { month: "short", day: "numeric" })}</span>`
+    : s.amount_kind === "varies" ? `<span class="sub-note muted">Varies, ${m2(s.amount_low)}–${m2(s.amount_high)}; last ${m2(s.amount)}</span>` : "";
+  const when = mode === "active"
+    ? `<span class="sub-next"><strong>${fdate(s.next_date, { month: "short", day: "numeric", ...(s.next_date.slice(0, 4) !== iso(new Date()).slice(0, 4) ? { year: "numeric" } : {}) })}</strong><span>${daysUntil(s.next_date)}</span></span>`
+    : `<span class="sub-next"><strong>${fdate(s.last_date, { month: "short", day: "numeric" })}</strong><span>last charge</span></span>`;
+  const btn = mode === "hidden" ? `<button class="text-btn sub-hide" data-subhide="${esc(s.key)}" data-hide="0">Restore</button>`
+    : `<button class="text-btn sub-hide" data-subhide="${esc(s.key)}" data-hide="1" title="Not a subscription">Hide</button>`;
+  const cad = s.cadence[0].toUpperCase() + s.cadence.slice(1);
+  return `<div class="sub-row">
+      <span class="sub-name"><strong>${esc(s.name)}</strong><span class="tag">${esc(cad)} · ${esc(s.account_name || s.category || "")} · ${s.charges} charges since ${fdate(s.first_date, { month: "short", year: "numeric" })}</span>${note}</span>
+      ${when}<span class="sub-amt">${amt}</span>${btn}</div>`;
+}
+async function loadSubscriptions(r) {
+  const el = $("subsBody");
+  try { r = r || await api("/api/fin/subscriptions"); } catch (e) { el.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const T = r.totals, subs = r.active.filter((s) => s.kind === "subscription"), bills = r.active.filter((s) => s.kind === "bill");
+  $("subsMeta").textContent = T.count ? `${T.count} active · found in your transactions` : "Found in your transactions";
+  const span = r.data_span ? `${fdate(r.data_span.start)} to ${fdate(r.data_span.end)}` : "";
+  const how = `<p class="hint sub-how">Found automatically: the same merchant charging a steady amount on a regular schedule, at least 3 times (twice, at the identical amount, for plans billed every 3 months or longer). Next charge = last charge + the usual gap. Per month spreads longer plans over a month; a bill that varies uses its recent average.${span ? ` Transactions searched: ${span}.` : ""}</p>`;
+  if (!r.active.length && !r.ended.length && !r.hidden.length) {
+    el.innerHTML = `<div class="empty">No recurring charges found yet.</div>${how}`; return;
+  }
+  const stat = (label, v, sub) => `<div class="sub-stat"><span>${label}</span><strong>${v == null ? "—" : m2(v)}</strong><small>${sub}</small></div>`;
+  const group = (title, rows, total) => rows.length ? `<div class="sub-group"><div class="sub-group-head"><span>${title}</span><span>${m2(total)} per month</span></div>${rows.map((s) => subRow(s)).join("")}</div>` : "";
+  const nx = r.upcoming[0];
+  el.innerHTML = `<div class="sub-stats">
+      ${stat("Subscriptions", T.subscriptions_monthly, `per month · ${subs.length} active`)}
+      ${stat("Bills", T.bills_monthly, `per month · ${bills.length} active`)}
+      ${stat("All, per year", T.yearly, "at current prices")}
+      ${stat("Next 30 days", T.next_30_days, nx ? `next: ${esc(nx.name)}, ${fdate(nx.date, { month: "short", day: "numeric" })}` : "nothing due")}
+    </div>
+    ${group("Subscriptions", subs, T.subscriptions_monthly)}${group("Bills", bills, T.bills_monthly)}
+    ${r.ended.length ? `<details class="sub-more"><summary>Possibly cancelled (${r.ended.length})</summary><p class="hint">No charge since the date shown, later than usual.</p>${r.ended.map((s) => subRow(s, "ended")).join("")}</details>` : ""}
+    ${r.hidden.length ? `<details class="sub-more"><summary>Hidden (${r.hidden.length})</summary>${r.hidden.map((s) => subRow(s, "hidden")).join("")}</details>` : ""}
+    ${how}`;
+  $$("[data-subhide]").forEach((b) => (b.onclick = async () => {
+    try {
+      const out = await api(`/api/fin/subscriptions/${encodeURIComponent(b.dataset.subhide)}`, { method: "PATCH", body: JSON.stringify({ hidden: b.dataset.hide === "1" }) });
+      loadSubscriptions(out); toast(b.dataset.hide === "1" ? "Hidden. Find it under Hidden to restore it." : "Restored");
+    } catch (e) { toast(e.message); }
+  }));
 }
 
 function bindBalanceButtons() {

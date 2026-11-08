@@ -39,6 +39,11 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
 - `portfolio.py`: investments and net worth from the ledger; modified-Dietz / time-weighted returns; S&P 500
   comparison from the index returns printed on UBS statements.
 - `finance.py`: `/api/fin/*` (overview/net worth, cash & cards, investments, income, taxes, imports).
+- `subscriptions.py`: Finances → Net Worth "Subscriptions & bills" widget (`/api/fin/subscriptions`). Pure `detect()` finds
+  recurring charges in the ledger: same merchant key (refs/phones/states dropped), steady amount (exact, a price change, or a
+  bill that varies within 2.5x), steady gap (weekly … yearly), ≥3 charges (2 identical for 3-monthly or longer). No merchant
+  list in code. Next charge = last + usual gap; overdue past a grace period → "Possibly cancelled". User hides go in
+  `fin_settings/subscriptions`.
 - `fintax.py`: the whole-year tax picture (wages + trust distribution + investment income; federal, IL
   nonresident, DC resident with IL credit; estimated payments; settings for what documents can't tell us).
 - `categorize.py`: generic merchant → category rules only.

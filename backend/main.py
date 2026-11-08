@@ -530,6 +530,8 @@ edutasks.init(app, db, firestore, require_owner, user_ref)
 import ledger
 import finance
 finance.init(app, db, firestore, require_owner, user_ref)
+import subscriptions
+subscriptions.init(app, db, firestore, require_owner, user_ref)
 
 # ---------------------------------------------------------------- Training (planner, sessions, history)
 import training

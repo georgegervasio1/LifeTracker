@@ -56,6 +56,16 @@ CARD_MONTHLY = [  # merchant, category, amount, day of month
     ("TUNEBOX MUSIC", "Entertainment", 11.99, 12),
     ("IRONWORKS GYM", "Health And Fitness", 45.00, 3),
     ("CITY BIKESHARE MEMBERSHIP", "Transportation", 10.00, 2),
+    ("CLOUDNEST STORAGE", "Shopping", 2.99, 15),
+]
+# more made-up recurring charges for the subscriptions widget: (merchant, category, amount, every n days or months,
+# "d"/"m", first charge days ago, last charge days ago or None). A price rise and a cancelled plan are included.
+CARD_RECURRING = [
+    ("STREAMFLIX SUBSCRIPTION", "Entertainment", 13.99, 1, "m", None, 130),      # the old price, then 15.49 above
+    ("MORNING LEDGER DIGITAL", "Entertainment", 3.99, 7, "d", 200, None),
+    ("PAGETURN AUDIOBOOKS", "Entertainment", 14.95, 1, "m", 290, 95),             # cancelled about three months ago
+    ("FRESHFACE RAZOR CLUB", "Personal Care", 24.00, 3, "m", 280, None),
+    ("CODEDESK PRO ANNUAL", "Entertainment", 119.00, 12, "m", 375, None),
 ]
 CHECKING_MONTHLY = [
     ("MAPLE COURT APARTMENTS RENT", "Bills And Utilities", 1325.00, 1),
@@ -71,6 +81,20 @@ def _tx(store, tid, account, day, amount, merchant, category):
     store.document(f"users/{UID}/transactions/{tid}").set({
         "source": ACCOUNTS[account]["institution"], "account": account, "src": "csv", "date": _iso(day),
         "amount": round(amount, 2), "merchant": merchant, "category": category, "pending": False})
+
+
+def _due(d, today, every, unit, first, last, start):
+    """Is a recurring charge due on day d? Anchored on its first charge (or on the 6th of each month when it started
+    before the demo's history, like the old streaming price)."""
+    if last is not None and d > today - timedelta(days=last):
+        return False
+    anchor = today - timedelta(days=first) if first is not None else start.replace(day=6)
+    if d < anchor:
+        return False
+    if unit == "d":
+        return (d - anchor).days % every == 0
+    months = (d.year - anchor.year) * 12 + d.month - anchor.month
+    return d.day == min(anchor.day, 28) and months % every == 0
 
 
 def finances(c, store, today, rng):
@@ -101,6 +125,9 @@ def finances(c, store, today, rng):
     bal_points = {"demo_checking": [], "demo_savings": [], "demo_card": []}
     card_month = {}
     paid = {}
+    for m, cat, amt, every, unit, first, last in CARD_RECURRING:     # a yearly plan's first charge, before the history starts
+        if first is not None and today - timedelta(days=first) < start:
+            _tx(store, f"demo_tx_pre_{m[:6]}", "demo_card", today - timedelta(days=first), amt, m, cat)
     d = start
     while d <= today:
         n += 1
@@ -111,7 +138,13 @@ def finances(c, store, today, rng):
                 _tx(store, f"demo_tx_{n}_{m[:6]}", "demo_card", d, amt, m, cat)
                 card_month[d.strftime("%Y-%m")] = card_month.get(d.strftime("%Y-%m"), 0) + amt
         for m, cat, amt, dom in CARD_MONTHLY:
+            if m.startswith("STREAMFLIX") and d < today - timedelta(days=130):
+                continue
             if d.day == dom:
+                _tx(store, f"demo_tx_{n}_{m[:6]}", "demo_card", d, amt, m, cat)
+                card_month[d.strftime("%Y-%m")] = card_month.get(d.strftime("%Y-%m"), 0) + amt
+        for m, cat, amt, every, unit, first, last in CARD_RECURRING:
+            if _due(d, today, every, unit, first, last, start):
                 _tx(store, f"demo_tx_{n}_{m[:6]}", "demo_card", d, amt, m, cat)
                 card_month[d.strftime("%Y-%m")] = card_month.get(d.strftime("%Y-%m"), 0) + amt
         # bills from checking

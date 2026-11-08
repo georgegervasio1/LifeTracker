@@ -1642,3 +1642,46 @@ body.is-demo .owner-only { display: none !important; }
 .bk-ride-amt .pos { font-size: 12px; margin-top: 2px; }
 #travelBike .apt-map-card { margin-bottom: 8px; }
 .bk-grid > .card, .apt-wishlist > .card { margin-top: 0; }
+
+/* Subscriptions & bills (Finances > Net Worth) */
+.subs { padding: 0 24px 8px; }
+.sub-how { margin: 16px 0 18px; }
+.sub-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+.sub-stat { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px 18px; border-right: 1px solid var(--line); min-width: 0; }
+.sub-stat:first-child { padding-left: 0; }
+.sub-stat:last-child { border-right: none; }
+.sub-stat span { font-size: 13px; color: var(--text-2); }
+.sub-stat strong { font-family: var(--font-display); font-size: 24px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.sub-stat small { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sub-group { margin-top: 14px; }
+.sub-group-head { display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); padding: 6px 0; border-bottom: 1px solid var(--line); }
+.sub-row { display: grid; grid-template-columns: minmax(0, 1fr) 104px 104px 56px; gap: 14px; align-items: center; padding: 13px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.sub-group .sub-row:last-child, .sub-more .sub-row:last-child { border-bottom: none; }
+.sub-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sub-name .tag { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sub-note { font-size: 12px; color: var(--warn); }
+.sub-note.muted { color: var(--text-3); }
+.sub-next { display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+.sub-next strong { font-weight: 500; }
+.sub-next span { font-size: 12px; color: var(--text-3); }
+.sub-amt { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.sub-amt small { font-weight: 400; font-size: 12px; color: var(--text-3); margin-left: 1px; }
+.sub-hide { color: var(--text-3); justify-self: end; }
+.sub-more { border-top: 1px solid var(--line); margin-top: 6px; }
+.sub-more summary { cursor: pointer; font-size: 14px; color: var(--text-2); padding: 14px 0; list-style: none; display: flex; justify-content: space-between; }
+.sub-more summary::-webkit-details-marker { display: none; }
+.sub-more summary::after { content: "Show"; color: var(--accent); font-size: 13px; }
+.sub-more[open] summary::after { content: "Close"; }
+.sub-more .hint { margin: 0 0 4px; }
+@media (max-width: 760px) {
+  .subs { padding: 0 16px 6px; }
+  .sub-stats { grid-template-columns: 1fr 1fr; }
+  .sub-stat:nth-child(2) { border-right: none; }
+  .sub-stat:nth-child(odd) { padding-left: 0; }
+  .sub-stat:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+  .sub-row { grid-template-columns: minmax(0, 1fr) auto; row-gap: 6px; }
+  .sub-name { grid-column: 1; grid-row: 1; }
+  .sub-amt { grid-column: 2; grid-row: 1; }
+  .sub-next { grid-column: 1; grid-row: 2; flex-direction: row; gap: 6px; align-items: baseline; }
+  .sub-row > button { grid-column: 2; grid-row: 2; }
+}

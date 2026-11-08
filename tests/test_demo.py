@@ -36,6 +36,10 @@ ov = c.get("/api/fin/overview", headers=A).get_json()
 assert ov["net_worth"] > 10000 and all(a["balance"] is None or a["balance"] > -5000 for a in ov["accounts"]), ov["accounts"]
 assert not any(a["account"].startswith("chase") for a in ov["accounts"])          # the built-in defaults stay hidden
 assert c.get(f"/api/earnings?year={y}", headers=A).get_json()["ready"]
+subs = c.get("/api/fin/subscriptions", headers=A).get_json()
+names = {x["name"] for x in subs["active"]}
+assert {"Streamflix Subscription", "Morning Ledger Digital", "Codedesk Pro Annual", "Freshface Razor Club"} <= names, names
+assert [x["name"] for x in subs["ended"]] == ["Pageturn Audiobooks"]
 assert len(c.get(f"/api/running?year={y}", headers=A).get_json()["runs"]) > 20
 assert len(c.get("/api/training/history", headers=A).get_json()["sessions"]) > 20
 assert c.get("/api/health/summary", headers=A).get_json()["whoop"]["connected"]
