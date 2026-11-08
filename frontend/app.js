@@ -26,6 +26,7 @@ const SECTIONS = {
   education: { title: "Education", tabs: [
     ["today", "Today"], ["tasks", "Tasks"], ["plan", "Academic plan"], ["syllabi", "Syllabi"], ["calendar", "Calendar"]] },
   goals: { title: "Goals", tabs: [] },
+  sports: { title: "Sports", tabs: [["teams", "My Teams"], ["schedule", "Schedule"], ["standings", "Standings"], ["find", "Find Teams"]] },
 };
 
 // Health opens on a dashboard of five areas; each area has its own tabs. A tab maps to a panel in index.html.
@@ -180,6 +181,7 @@ async function load(section, tab) {
 
   if (section === "education") return loadEducation(tab);
   if (section === "goals") return (await goalsModule()).loadGoals();
+  if (section === "sports") return (await sportsModule()).loadSports(tab);
   if (section !== "finances") return;
   setChatPlace(tab);
   if (tab === "networth") return loadNetWorth();
@@ -201,6 +203,16 @@ async function goalsModule() {
     goalsMod.initGoals({ api, $, esc, toast, renderMarkdown, usd0, showError });
   }
   return goalsMod;
+}
+
+// Sports (favorite teams, schedules, standings) live in sports.js, loaded on first use.
+let sportsMod = null;
+async function sportsModule() {
+  if (!sportsMod) {
+    sportsMod = await import("./sports.js");
+    sportsMod.initSports({ api, $, esc, toast, showError, API_BASE, routeQuery: () => routeQuery });
+  }
+  return sportsMod;
 }
 
 // ---------- Demo profile: made-up data, no sign-in (see backend/demo.py) ----------

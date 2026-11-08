@@ -58,6 +58,10 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
   build / peak / taper / race week, ~10%/week ramp with a cutback every 4th week, long run capped by share of the
   week, paces from Daniels' VDOT (current fitness from Strava best efforts or races in the last 10 weeks; goal time
   sets goal pace; neither = effort words, no paces). Planned vs done matched to Strava runs by date.
+- `sports.py`: Sports section. Starred teams (`sports/favorites`), team schedules (venue, local time, TV, results),
+  records, standings, team search across NFL/NBA/MLB/NHL/WNBA/MLS/EPL/college, from ESPN's public site API (unofficial,
+  no key; cached in memory). `/api/sports/calendar.ics?teams=nfl:13,...` is public (public schedules only) so it can be
+  downloaded or subscribed to (webcal). Frontend in `frontend/sports.js` (loaded on first visit).
 - `food.py`: Health → Food diary (MyFitnessPal-style): search USDA FoodData Central (`FDC_API_KEY`, else DEMO_KEY)
   + Open Food Facts, normalized per 100 g; entries store nutrients when logged; custom foods (per serving), quick
   add, copy a meal, recent foods, goals (blank until the user sets them), 30-day history.
@@ -87,7 +91,7 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
 ### Firestore (`users/{uid}/…`)
 `transactions` (ledger), `items` (Plaid), `inv_snapshots`, `inv_activity`, `holdings` (legacy), `health_days`, `workouts`, `integrations/whoop`, `oauth_states`,
 `training` (state/template/sessions), `education/profile`, `edu_courses`, `edu_syllabi`, `edu_syllabus_files`,
-`earnings/settings`, `paychecks`, `integrations/strava`, `strava_activities`, `race_plans`, `food_log/{date}`, `food_custom`, `food/goals`.
+`earnings/settings`, `paychecks`, `integrations/strava`, `strava_activities`, `race_plans`, `food_log/{date}`, `food_custom`, `food/goals`, `sports/favorites`.
 
 ### Frontend map (`frontend/app.js`)
 Hash routes `#/section/tab`, `SECTIONS` config at the top. Finances: Net Worth, Cash & Cards, Investments,
@@ -95,6 +99,7 @@ Income, Taxes, Accounts & Imports (chat on every tab). Health opens on a dashboa
 Food; Unsplash photos hotlinked with credit); `#/health/<area>/<tab>` maps to a panel; old `#/health/<tab>` links are aliased.
 The card photo morphs into the area banner with a View Transition (`viewSwap` from the shared `motion.js`).
 Calendar and Connections hang off the dashboard.
+Sports: My Teams, Schedule (month calendar), Standings, Find Teams (`sports.js`).
 Education: Overview, Syllabi, Grades & GPA, Degree Audit, Planner, Calendar. Goals: `goals.js` (loaded on first
 visit; widgets, detail, editor, library, coach drawer).
 Design tokens on `:root` in `styles.css` (`--accent`, `--pos`, `--neg`, `--warn`, `--exam`, `--done`, …).

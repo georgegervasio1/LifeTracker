@@ -1462,3 +1462,113 @@ button.glass-chip { cursor: pointer; }
 .demo-bar .text-btn { color: var(--accent); white-space: nowrap; }
 body.is-demo .owner-only { display: none !important; }
 @media (max-width: 600px) { .demo-bar-inner { padding: 8px 16px; font-size: 12px; } }
+
+/* ── Sports (sports.js): favorite teams, schedule calendar, standings ───── */
+.sports { padding-top: 40px; padding-bottom: 64px; }
+.sp-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
+.sp-head .eyebrow { margin-bottom: 4px; }
+.sp-h2 { font-family: var(--font-display); font-size: 32px; font-weight: 600; letter-spacing: -0.03em; line-height: 1.15; }
+.sp-cal-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+.sp-head .sp-cal-btns { margin-bottom: 0; }
+.sp-note { font-size: 12px; color: var(--text-3); margin-top: 18px; }
+.sp-logo, .sp-logo-sm, .sp-logo-lg { object-fit: contain; flex: none; }
+.sp-logo { width: 40px; height: 40px; }
+.sp-logo-sm { width: 22px; height: 22px; }
+.sp-logo-lg { width: 64px; height: 64px; }
+.sp-logo-txt { display: inline-grid; place-items: center; border-radius: 50%; background: var(--bg-alt); color: var(--text-2); font-size: 10px; font-weight: 600; }
+[data-theme="dark"] .sp-logo, [data-theme="dark"] .sp-logo-sm, [data-theme="dark"] .sp-logo-lg { filter: drop-shadow(0 0 1px rgba(255,255,255,.35)); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) :is(.sp-logo, .sp-logo-sm, .sp-logo-lg) { filter: drop-shadow(0 0 1px rgba(255,255,255,.35)); } }
+
+.sp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; }
+.sp-grid .card + .card { margin-top: 0; }
+.sp-team { position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 18px; padding: 24px; }
+.sp-team::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 4px; background: var(--team); }
+.sp-team-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.sp-team-id { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.sp-team-id > span:not(.sp-logo-txt) { display: flex; flex-direction: column; min-width: 0; }
+.sp-team-name { font-size: 17px; font-weight: 600; letter-spacing: -0.02em; color: var(--text); }
+.sp-team-league { font-size: 12px; color: var(--text-3); }
+.sp-rec { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; font-size: 13px; }
+.sp-rec-num { font-family: var(--font-display); font-size: 34px; font-weight: 600; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; line-height: 1; }
+.sp-games { display: grid; gap: 10px; font-size: 14px; border-top: 1px solid var(--line); padding-top: 14px; }
+.sp-games > div { display: grid; grid-template-columns: 44px 1fr; gap: 8px; }
+.sp-games dt { color: var(--text-3); font-size: 12px; padding-top: 2px; }
+.sp-where { display: block; font-size: 12px; }
+.sp-more { font-size: 13px; color: var(--accent); margin-top: auto; }
+.sp-star { color: var(--text-3); padding: 6px; border-radius: 50%; display: inline-grid; place-items: center; transition: color .2s, background .2s; }
+.sp-star:hover { background: var(--bg-alt); color: var(--text); }
+.sp-star.on { color: var(--warn); }
+.sp-star-btn svg { color: var(--warn); }
+.sp-star-inline { color: var(--warn); display: inline-flex; }
+.sp-star-inline svg { width: 13px; height: 13px; }
+.sp-res { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 6px; font-size: 11px; font-weight: 700; margin-right: 2px; }
+.sp-res-W { background: color-mix(in srgb, var(--pos) 15%, transparent); color: var(--pos); }
+.sp-res-L { background: color-mix(in srgb, var(--neg) 13%, transparent); color: var(--neg); }
+.sp-res-T { background: var(--bg-alt); color: var(--text-2); }
+.sp-live { font-size: 11px; font-weight: 700; color: var(--neg); text-transform: uppercase; letter-spacing: .04em; }
+
+.sp-back { display: inline-block; font-size: 13px; color: var(--accent); margin-bottom: 18px; }
+.sp-back::before { content: "‹ "; }
+.sp-team-head { align-items: center; }
+.sp-team-head .muted { font-size: 14px; margin-top: 4px; }
+.sp-team-head .sp-team-id { gap: 18px; }
+.sp-table-card { margin-top: 0; }
+.sp-table-card + .sp-table-card { margin-top: 20px; }
+.sp-sched td { vertical-align: top; }
+.sp-sched tr.sp-past td { color: var(--text-2); }
+.sp-date { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sp-sub { display: block; font-size: 12px; }
+.sp-opp { display: inline-flex; align-items: center; gap: 8px; color: var(--text); white-space: nowrap; }
+.sp-when { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sp-loc { color: var(--text-2); font-size: 13px; min-width: 180px; }
+.sp-tv { color: var(--text-3); font-size: 13px; white-space: nowrap; }
+
+.sp-filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.sp-filter { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-3); border: 1px solid var(--line); border-radius: 980px; padding: 6px 13px; transition: color .2s, border-color .2s; }
+.sp-filter i { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--team); }
+.sp-filter.on { color: var(--text); border-color: var(--line-strong); }
+.sp-filter.on i { background: var(--team); }
+.sp-cell { cursor: pointer; font: inherit; color: inherit; background: none; }
+.sp-cell.sel { box-shadow: inset 0 0 0 2px var(--accent); }
+.sp-chip { font-size: 11px; color: var(--text); background: var(--bg-alt); border-left: 3px solid var(--team); border-radius: 4px; padding: 2px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sp-chip b { font-weight: 600; }
+.sp-chip-time { color: var(--text-3); }
+.sp-dots { display: none; gap: 3px; flex-wrap: wrap; }
+.sp-dots i { width: 6px; height: 6px; border-radius: 50%; }
+.sp-list { margin: 28px 0 20px; }
+.sp-list-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.sp-list-head h3 { font-size: 19px; font-weight: 600; letter-spacing: -0.02em; }
+.sp-row { display: grid; grid-template-columns: 120px 1fr auto; gap: 16px; align-items: center; padding: 14px 0 14px 14px; border-bottom: 1px solid var(--line); border-left: 3px solid var(--team); margin-bottom: 6px; }
+.sp-row-when { display: flex; flex-direction: column; font-size: 13px; font-variant-numeric: tabular-nums; }
+.sp-row-main { min-width: 0; }
+.sp-row-teams { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 15px; }
+.sp-row-teams b { font-variant-numeric: tabular-nums; }
+
+.sp-group { font-size: 15px; font-weight: 600; padding: 18px 24px 4px; }
+.sp-stand td:first-child { min-width: 220px; }
+.sp-stand tr.sp-fav td { background: var(--accent-soft); }
+.sp-rank { width: 18px; text-align: right; color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.sp-stand-abbr { display: none; }
+
+.sp-find-bar { display: flex; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
+.sp-find-bar .input { flex: 1; min-width: 200px; }
+.sp-find { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0 28px; }
+.sp-find-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.sp-find-row .sp-opp { white-space: normal; }
+
+@media (max-width: 760px) {
+  .sports { padding-top: 24px; }
+  .sp-h2 { font-size: 26px; }
+  .sp-grid { grid-template-columns: 1fr; gap: 12px; }
+  .sp-calendar .cal-cell { min-height: 54px; padding: 6px 4px; align-items: center; }
+  .sp-calendar .cal-dow { padding: 8px 4px; text-align: center; }
+  .sp-calendar .cal-workouts { display: none; }
+  .sp-dots { display: flex; justify-content: center; }
+  .sp-row { grid-template-columns: 1fr auto; gap: 4px 12px; padding-left: 12px; }
+  .sp-row-when { grid-column: 1 / -1; flex-direction: row; gap: 8px; }
+  .sp-stand td:first-child { min-width: 0; }
+  .sp-stand-name { display: none; }
+  .sp-stand-abbr { display: inline; }
+  .sp-group { padding: 16px 16px 2px; }
+  .sp-loc { min-width: 140px; }
+}
