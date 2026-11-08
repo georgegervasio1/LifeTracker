@@ -72,6 +72,12 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
   line from start to deadline, manual value log, JSON import, and `/api/goals/coach` (Claude proposes a goal through the
   `propose_goal` tool; nothing is saved until the user presses Save). `goals_library.py`: the 100-goal starter library
   (generic, no personal data; targets only where the challenge defines one).
+- `demo.py` + `demo_seed.py` + `demo_store.py`: **demo profile** ("Try the demo" on the sign-in page, or `?demo` in the URL).
+  The browser sends `Authorization: Demo <random id>`; the request runs as uid `demo` on a private in-memory copy of
+  made-up data (`Router` stands in for the Firestore client, so demo requests never reach Firestore). Plaid, WHOOP/Strava/
+  Gmail connections and every Claude call answer 403 in the demo. The owner can copy their course schedule (no grades,
+  notes or P/F choices) into the demo from Education → Planner → "Demo profile…" (`/api/demo/schedule`, stored in
+  Firestore `demo/education`). `DEMO_MODE=0` turns the demo off. Seed data is made up, never the owner's.
 - `earnings.py`: paychecks (feeds Income/Taxes). Pub 15-T (2026) Worksheet 1A withholding, SS/Medicare, Illinois IL-700-T,
   year-end federal / IL nonresident / DC resident with credit for other-state tax. `SEED` holds the owner's past
   summer job (no employer name); payroll deposits are matched from the bank feed. `/api/taxes` builds the

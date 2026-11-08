@@ -33,7 +33,11 @@
       <p class="eyebrow login-brand"><svg class="brand-mark" viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="116" fill="currentColor"/><path d="M140 136V340a36 36 0 0 0 36 36h44" fill="none" stroke="var(--bg)" stroke-width="40" stroke-linecap="round"/><path d="M220 376l48-56 40 28 64-96" fill="none" stroke="var(--accent)" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/></svg>LifeTracker</p>
       <h1 class="display">Your life,<br />in one place.</h1>
       <p class="lede">Finances, health, education and goals — together.</p>
-      <button id="signin" class="btn btn-primary btn-lg">Sign in with Google</button>
+      <div class="login-actions">
+        <button id="signin" class="btn btn-primary btn-lg">Sign in with Google</button>
+        <button id="tryDemo" class="btn btn-secondary btn-lg">Try the demo</button>
+      </div>
+      <p class="login-legal">The demo is a made-up profile with sample data. No sign-in, and nothing you change is saved.</p>
       <p class="login-legal">By signing in you agree to how we handle your data, described in our <a href="privacy.html">Privacy Policy</a>.</p>
     </div>
   </div>
@@ -57,6 +61,11 @@
         </div>
       </div>
     </header>
+    <div class="demo-bar hidden" id="demoBar" role="status">
+      <div class="demo-bar-inner">
+        <span><strong>Demo profile.</strong> Everything here is made up, and changes disappear when you leave.</span>
+      </div>
+    </div>
 
     <!-- ───────────────────────── Section sub-nav ───────────────────────── -->
     <div class="subnav hidden" id="subnav">
@@ -830,9 +839,25 @@
             <select id="plannerTerm" class="select" aria-label="Term"></select>
             <div class="planner-stats" id="plannerStats"></div>
             <label class="text-btn" style="cursor:pointer">Import file…<input type="file" id="eduImportFile2" accept=".json" hidden /></label>
+            <button class="text-btn owner-only" id="demoShareBtn">Demo profile…</button>
             <button class="btn btn-primary btn-sm" id="addCourse">Add course</button>
           </div>
           <div class="planner-alerts" id="plannerAlerts"></div>
+          <dialog id="demoDialog" class="dialog">
+            <form method="dialog" class="dialog-form" autocomplete="off">
+              <h3>Your schedule in the demo</h3>
+              <p class="hint span-2">The demo (the "Try the demo" button on the sign-in page) uses made-up data. You can let it show your
+                real course schedule instead of sample courses: titles, terms, credits, professors, meeting times, exams and syllabi.
+                Grades, GPA, notes and pass/fail choices are never copied. Finances and everything else stay sample data.</p>
+              <p class="hint span-2" id="demoStatus">Checking…</p>
+              <div class="dialog-actions span-2">
+                <button type="button" class="btn btn-secondary hidden" id="demoRemove">Remove from demo</button>
+                <span style="flex:1"></span>
+                <button type="button" class="btn btn-secondary" id="demoCancel">Close</button>
+                <button type="button" class="btn btn-primary" id="demoShare">Use my schedule</button>
+              </div>
+            </form>
+          </dialog>
           <div class="board" id="plannerBoard"></div>
         </div>
 

@@ -16,6 +16,8 @@ _client = None
 
 
 def client():
+    import demo
+    demo.guard()       # the demo profile never calls Claude
     global _client
     if _client is None:
         _client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from the environment

@@ -73,7 +73,7 @@ function parseRoute() {
 }
 
 function render() {
-  if (!auth.currentUser) return;
+  if (!auth.currentUser && !isDemo()) return;
   const route = parseRoute();
   const { section, tab } = route;
   lastRoute = route;
@@ -203,12 +203,41 @@ async function goalsModule() {
   return goalsMod;
 }
 
-// ---------- API helper (attaches Firebase ID token) ----------
+// ---------- Demo profile: made-up data, no sign-in (see backend/demo.py) ----------
+// The browser makes a random session id; the server gives that id its own in-memory copy of the demo.
+const DEMO_KEY = "lt_demo_session";
+let demoSid = (() => { try { return sessionStorage.getItem(DEMO_KEY); } catch { return null; } })();
+const isDemo = () => !!demoSid;
+function startDemo() {
+  demoSid = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  try { sessionStorage.setItem(DEMO_KEY, demoSid); } catch { /* private mode: the demo lasts until reload */ }
+  if (location.hash && !location.hash.startsWith("#/")) location.hash = "#/";
+  showApp();
+}
+function exitDemo() {
+  demoSid = null;
+  try { localStorage.removeItem("lt-demo-session"); } catch { /* nothing stored */ }
+  try { sessionStorage.removeItem(DEMO_KEY); } catch { /* nothing stored */ }
+  location.href = location.pathname;          // a clean reload drops every page's demo state
+}
+function showApp() {
+  const signedIn = isDemo() || !!auth.currentUser;
+  document.body.classList.toggle("is-demo", isDemo());
+  $("demoBar").classList.toggle("hidden", !isDemo());
+  $("signout").textContent = isDemo() ? "Exit demo" : "Sign out";
+  $("login").classList.toggle("hidden", signedIn);
+  $("app").classList.toggle("hidden", !signedIn);
+  if (signedIn) render();
+}
+async function authHeader() {
+  return isDemo() ? `Demo ${demoSid}` : `Bearer ${await auth.currentUser.getIdToken()}`;
+}
+
+// ---------- API helper (attaches the Firebase ID token, or the demo session) ----------
 async function api(path, opts = {}) {
-  const token = await auth.currentUser.getIdToken();
   const res = await fetch(API_BASE + path, {
     ...opts,
-    headers: { Authorization: `Bearer ${token}`,
+    headers: { Authorization: await authHeader(),
                ...(opts.body && !(opts.body instanceof FormData) ? { "Content-Type": "application/json" } : {}) },
   });
   const data = await res.json().catch(() => ({}));
@@ -318,7 +347,7 @@ function greeting() {
 }
 
 async function loadHome() {
-  const first = (auth.currentUser.displayName || "").split(" ")[0];
+  const first = isDemo() ? "Alex" : (auth.currentUser.displayName || "").split(" ")[0];
   $("homeGreeting").textContent = `${greeting()}${first ? `, ${first}` : ""}.`;
   $("homeDate").textContent = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
   if (!backendReady) return;
@@ -2306,7 +2335,7 @@ function renderSyllabi() {
   $$("[data-sylfile]").forEach((b) => (b.onclick = async () => {
     const w = window.open("", "_blank");
     try {
-      const res = await fetch(`${API_BASE}/api/edu/syllabi/${b.dataset.sylfile}/file`, { headers: { Authorization: `Bearer ${await auth.currentUser.getIdToken()}` } });
+      const res = await fetch(`${API_BASE}/api/edu/syllabi/${b.dataset.sylfile}/file`, { headers: { Authorization: await authHeader() } });
       if (!res.ok) throw new Error("Couldn't open the file");
       const url = URL.createObjectURL(await res.blob());
       if (w) w.location = url; else location.href = url;
@@ -2816,9 +2845,10 @@ function startSession(w) {
               exercises: w.exercises.map(newSessionExercise), notes: "", rest: null };
   saveDraft(); openSession();
 }
-function saveDraft() { try { localStorage.setItem("lt-session", JSON.stringify(session)); } catch {} }
-function loadDraft() { try { return JSON.parse(localStorage.getItem("lt-session") || "null"); } catch { return null; } }
-function clearDraft() { try { localStorage.removeItem("lt-session"); } catch {} }
+const draftKey = () => (isDemo() ? "lt-demo-session" : "lt-session");     // a demo workout never mixes with a real one
+function saveDraft() { try { localStorage.setItem(draftKey(), JSON.stringify(session)); } catch {} }
+function loadDraft() { try { return JSON.parse(localStorage.getItem(draftKey()) || "null"); } catch { return null; } }
+function clearDraft() { try { localStorage.removeItem(draftKey()); } catch {} }
 $("resumeSession").onclick = () => { session = loadDraft(); if (session) openSession(); };
 
 function openSession() {
@@ -3020,7 +3050,8 @@ if (loadDraft()) setTimeout(() => toast("You have a workout in progress. Resume 
 $("signin").onclick = () => signInWithPopup(auth, new GoogleAuthProvider()).catch((e) => {
   if (!/popup-closed-by-user|cancelled-popup-request/.test(e.code || "")) toast("Sign-in didn't finish. Try again.");
 });
-$("signout").onclick = () => signOut(auth);
+$("signout").onclick = () => (isDemo() ? exitDemo() : signOut(auth));
+$("tryDemo").onclick = startDemo;
 $("sync").onclick = doSync;
 $("range").onchange = () => render();
 $("tx-search").oninput = () => { txShown = 50; renderTx(); };
@@ -3056,8 +3087,33 @@ $("venmo-upload").onclick = async () => {
   catch (e) { toast(e.message); }
 };
 
-onAuthStateChanged(auth, (user) => {
-  $("login").classList.toggle("hidden", !!user);
-  $("app").classList.toggle("hidden", !user);
-  if (user) render();
-});
+// Owner only: let the demo show your real course schedule (never grades). See /api/demo/schedule.
+async function demoStatus() {
+  $("demoStatus").textContent = "Checking…";
+  try {
+    const r = await api("/api/demo/schedule");
+    $("demoStatus").textContent = r.shared
+      ? `The demo shows your schedule now (${r.courses} course${r.courses === 1 ? "" : "s"}, copied ${new Date(r.updated).toLocaleDateString("en-US", { month: "short", day: "numeric" })}). Copy it again after you change courses.`
+      : "The demo shows sample courses now.";
+    $("demoShare").textContent = r.shared ? "Update the copy" : "Use my schedule";
+    $("demoRemove").classList.toggle("hidden", !r.shared);
+  } catch (e) { $("demoStatus").textContent = e.message; }
+}
+$("demoShareBtn").onclick = () => { $("demoDialog").showModal(); demoStatus(); };
+$("demoCancel").onclick = () => $("demoDialog").close();
+$("demoShare").onclick = async () => {
+  try { const r = await api("/api/demo/schedule", { method: "POST" }); toast(`The demo now shows your ${r.courses} courses, without grades`); demoStatus(); }
+  catch (e) { toast(e.message); }
+};
+$("demoRemove").onclick = async () => {
+  try { await api("/api/demo/schedule", { method: "DELETE" }); toast("The demo is back to sample courses"); demoStatus(); }
+  catch (e) { toast(e.message); }
+};
+
+// A link with ?demo (or #demo) opens the demo directly, e.g. to send to a friend.
+if (!isDemo() && (new URLSearchParams(location.search).has("demo") || location.hash === "#demo")) {
+  history.replaceState(null, "", location.pathname + "#/");
+  startDemo();
+}
+onAuthStateChanged(auth, () => showApp());
+if (isDemo()) showApp();

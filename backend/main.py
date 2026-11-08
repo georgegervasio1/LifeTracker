@@ -54,17 +54,22 @@ from google.cloud import firestore
 
 if not firebase_admin._apps:
     firebase_admin.initialize_app()
-db = firestore.Client()
+import demo
+real_db = firestore.Client()
+db = demo.Router(real_db)    # demo requests go to an in-memory store, never to Firestore (see demo.py)
 
 
 def require_owner(fn):
     """Reject any request that isn't from the one allowed Google account."""
     @wraps(fn)
     def wrapper(*args, **kwargs):
+        header = request.headers.get("Authorization", "")
+        if header.startswith("Demo "):          # the demo profile: made-up data, in memory only
+            err = demo.check_auth(header)
+            return err if err is not None else fn(*args, **kwargs)
         if DEV_SKIP_AUTH:
             g.uid = "dev"
             return fn(*args, **kwargs)
-        header = request.headers.get("Authorization", "")
         if not header.startswith("Bearer "):
             return jsonify(error="missing token"), 401
         try:
@@ -546,6 +551,9 @@ food.init(app, db, firestore, require_owner, user_ref)
 import earnings
 earnings.init(app, db, firestore, require_owner, user_ref)
 
+# ---------------------------------------------------------------- Demo profile (made-up data, no sign-in)
+demo.init(app, real_db, firestore, require_owner, user_ref)
+
 
 # ---------------------------------------------------------------- AI assistant
 import assistant
@@ -644,6 +652,8 @@ def handle_error(e):
     from werkzeug.exceptions import HTTPException
     if isinstance(e, HTTPException):
         return jsonify(error=e.description), e.code
+    if isinstance(e, demo.Blocked):
+        return jsonify(error=str(e), demo=True), 403
     app.logger.exception("Unhandled error")
     if isinstance(e, plaid.ApiException):
         try:

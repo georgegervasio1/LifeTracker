@@ -324,6 +324,7 @@ async function acceptPlan() {
 // ---------------------------------------------------------------- Gmail
 let mailToken = null;     // short-lived, kept in memory only
 async function gmailToken(force) {
+  if (!getAuth().currentUser) throw new Error("Reading email is turned off in the demo. Sign in with Google to use it.");
   if (mailToken && !force && mailToken.exp > Date.now()) return mailToken.value;
   const auth = getAuth(), p = new GoogleAuthProvider();
   p.addScope(GMAIL_SCOPE);

@@ -92,7 +92,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 /* ── Sign in ────────────────────────────────────────────────────────────── */
 .login { min-height: 100vh; display: flex; align-items: center; padding: 48px 24px; background: var(--bg); }
 .login-inner { max-width: var(--wrap); width: 100%; margin: 0 auto; }
-.login .btn { margin-top: 40px; }
+.login-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 40px; }
 
 /* ── Top nav ────────────────────────────────────────────────────────────── */
 .topnav { position: sticky; top: 0; z-index: 50; background: var(--nav-bg); backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px); border-bottom: 1px solid var(--line); }
@@ -1454,3 +1454,11 @@ button.glass-chip { cursor: pointer; }
 :root[data-theme="dark"] .myday-sky { filter: brightness(.62) saturate(1.1); }
 :root[data-theme="dark"] .myday .task { background: rgba(28,28,30,.72); color: #f5f5f7; --text-2: #a1a1a6; --text-3: #8e8e93; }
 @media (max-width: 760px) { .segmented a { padding: 6px 10px; font-size: 12.5px; } .plan-nav { padding-top: 20px; } }
+
+/* Demo profile */
+.demo-bar { background: var(--bg-alt); border-bottom: 1px solid var(--line); font-size: 13px; color: var(--text-2); }
+.demo-bar-inner { max-width: var(--wrap); margin: 0 auto; padding: 8px 24px; display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+.demo-bar strong { color: var(--text); font-weight: 600; }
+.demo-bar .text-btn { color: var(--accent); white-space: nowrap; }
+body.is-demo .owner-only { display: none !important; }
+@media (max-width: 600px) { .demo-bar-inner { padding: 8px 16px; font-size: 12px; } }
