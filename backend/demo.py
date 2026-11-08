@@ -40,7 +40,7 @@ BLOCKED = [
     ("*", r"/api/edu/gmail.*"), ("POST", r"/api/edu/plan"), ("POST", r"/api/edu/syllabi/upload"),
     ("PATCH", r"/api/edu/syllabi/[^/]+"),
     ("*", r"/api/whoop(/.*)?"), ("*", r"/api/strava/(connect|sync)"), ("DELETE", r"/api/strava"),
-    ("*", r"/api/demo/.*"),
+    ("*", r"/api/demo/.*"), ("POST", r"/api/travel/bike/rides/scan"),
 ]
 _BLOCKED = [(m, re.compile(p + r"/?")) for m, p in BLOCKED]
 NOT_IN_DEMO = ("This is turned off in the demo: it connects real accounts or uses the AI assistant. "

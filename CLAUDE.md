@@ -82,6 +82,12 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
   Gmail connections and every Claude call answer 403 in the demo. The owner can copy their course schedule (no grades,
   notes or P/F choices) into the demo from Education → Planner → "Demo profile…" (`/api/demo/schedule`, stored in
   Firestore `demo/education`). `DEMO_MODE=0` turns the demo off. Seed data is made up, never the owner's.
+- `travel.py`: Travel. Capital Bikeshare: live bikes / e-bikes / docks at saved stations from the public GBFS feed
+  (`BIKESHARE_GBFS`, cached), ride history parsed from the "Ride Receipt" emails in Gmail (stations, times, line items,
+  "Saved this trip"), membership payoff (savings vs the price the user enters), miles = straight line between stations
+  (receipts have no route), bank/card bikeshare charges from the ledger. Apartments: listings from the weekly digest
+  (`/api/apartments/import`, owner sign-in or `X-Ingest-Key` = env `APARTMENTS_INGEST_KEY`), user status / notes / rank
+  kept across digests, criteria labels (in budget / stretch / large), ranked wishlist, Leaflet map. `frontend/travel.js`.
 - `earnings.py`: paychecks (feeds Income/Taxes). Pub 15-T (2026) Worksheet 1A withholding, SS/Medicare, Illinois IL-700-T,
   year-end federal / IL nonresident / DC resident with credit for other-state tax. `SEED` holds the owner's past
   summer job (no employer name); payroll deposits are matched from the bank feed. `/api/taxes` builds the
@@ -91,7 +97,8 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
 ### Firestore (`users/{uid}/…`)
 `transactions` (ledger), `items` (Plaid), `inv_snapshots`, `inv_activity`, `holdings` (legacy), `health_days`, `workouts`, `integrations/whoop`, `oauth_states`,
 `training` (state/template/sessions), `education/profile`, `edu_courses`, `edu_syllabi`, `edu_syllabus_files`,
-`earnings/settings`, `paychecks`, `integrations/strava`, `strava_activities`, `race_plans`, `food_log/{date}`, `food_custom`, `food/goals`, `sports/favorites`.
+`earnings/settings`, `paychecks`, `integrations/strava`, `strava_activities`, `race_plans`, `food_log/{date}`, `food_custom`, `food/goals`, `sports/favorites`,
+`travel/settings`, `bike_rides`, `apartments`, `apartment_digests`.
 
 ### Frontend map (`frontend/app.js`)
 Hash routes `#/section/tab`, `SECTIONS` config at the top. Finances: Net Worth, Cash & Cards, Investments,
@@ -100,6 +107,7 @@ Food; Unsplash photos hotlinked with credit); `#/health/<area>/<tab>` maps to a 
 The card photo morphs into the area banner with a View Transition (`viewSwap` from the shared `motion.js`).
 Calendar and Connections hang off the dashboard.
 Sports: My Teams, Schedule (month calendar), Standings, Find Teams (`sports.js`).
+Travel: Bikeshare, Apartments (`travel.js`, loaded on first visit).
 Education: Overview, Syllabi, Grades & GPA, Degree Audit, Planner, Calendar. Goals: `goals.js` (loaded on first
 visit; widgets, detail, editor, library, coach drawer).
 Design tokens on `:root` in `styles.css` (`--accent`, `--pos`, `--neg`, `--warn`, `--exam`, `--done`, …).

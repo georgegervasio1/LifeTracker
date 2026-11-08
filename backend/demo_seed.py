@@ -55,6 +55,7 @@ CARD_MONTHLY = [  # merchant, category, amount, day of month
     ("STREAMFLIX SUBSCRIPTION", "Entertainment", 15.49, 6),
     ("TUNEBOX MUSIC", "Entertainment", 11.99, 12),
     ("IRONWORKS GYM", "Health And Fitness", 45.00, 3),
+    ("CITY BIKESHARE MEMBERSHIP", "Transportation", 10.00, 2),
 ]
 CHECKING_MONTHLY = [
     ("MAPLE COURT APARTMENTS RENT", "Bills And Utilities", 1325.00, 1),
@@ -535,6 +536,63 @@ def goals(c, today):
         c.post(f"/api/goals/{books['id']}/log", json={"value": n, "date": _iso(today - timedelta(days=days))})
 
 
+APARTMENTS = [  # made-up listings on made-up streets; example.com links
+    ("1418 Larkspur Ave, Unit 3", "Pearl", 2950, 1420, 3, 2, (45.5291, -122.6848), "Larkspur stop", 0.2, ["in-unit laundry", "gym"], 0, "saved"),
+    ("77 Juniper Row", "Nob Hill", 3400, 1680, 3, 2.5, (45.5268, -122.6985), "Juniper stop", 0.4, ["roof deck", "parking"], 0, "touring"),
+    ("2201 Alder Commons #5B", "Goose Hollow", 2600, 1150, 3, 1, (45.5185, -122.6920), "Alder stop", 0.1, ["dishwasher"], 7, None),
+    ("530 Wren Court", "Pearl", 3650, 1900, 3, 2, (45.5310, -122.6810), "Wren stop", 0.5, ["pool", "gym", "doorman"], 0, None),
+    ("9 Fernhill Lane", "Nob Hill", 2400, 980, 3, 1, (45.5300, -122.7010), "Fernhill stop", 0.7, [], 7, "passed"),
+    ("1600 Cedar Terrace", "Pearl", 3100, 1550, 3, 2, (45.5275, -122.6830), "Cedar stop", 0.3, ["modern kitchen"], 0, None),
+]
+
+
+BIKE_DOCKS = {  # made-up stations
+    "Larkspur Ave & 12th": (45.5291, -122.6848), "Union Station Plaza": (45.5289, -122.6765),
+    "Juniper Row & 21st": (45.5268, -122.6985), "Riverfront Park": (45.5175, -122.6705),
+    "Campus Library": (45.5115, -122.6840), "Alder St & 9th": (45.5185, -122.6810),
+}
+BIKE_TRIPS = [("Larkspur Ave & 12th", "Campus Library", 0.55), ("Campus Library", "Larkspur Ave & 12th", 0.5),
+              ("Larkspur Ave & 12th", "Riverfront Park", 0.12), ("Juniper Row & 21st", "Union Station Plaza", 0.1),
+              ("Alder St & 9th", "Campus Library", 0.08), ("Riverfront Park", "Alder St & 9th", 0.05)]
+
+
+def bike_rides(c, today, rng):
+    rides, start = [], today - timedelta(days=150)
+    for n in range(150):
+        day = start + timedelta(days=n)
+        if day.weekday() >= 5 and rng.random() < 0.6 or rng.random() < 0.35:
+            continue
+        for _ in range(rng.choice((1, 2, 2))):
+            a, b = rng.choices([(x, y) for x, y, _ in BIKE_TRIPS], weights=[w for *_, w in BIKE_TRIPS])[0]
+            ebike = rng.random() < 0.4
+            mins = rng.randint(7, 19)
+            h, m = rng.randint(8, 19), rng.randint(0, 59)
+            fee = round(0.1 * mins, 2) if ebike else 0.0
+            rides.append({"date": _iso(day), "start_station": a, "end_station": b, "minutes": mins,
+                          "start_time": f"{(h - 1) % 12 + 1}:{m:02d}{'am' if h < 12 else 'pm'}",
+                          "bike": "ebike" if ebike else "classic", "total": fee, "saved": round(1.0 + 0.05 * mins + (0.15 * mins if ebike else 0), 2),
+                          "start_lat": BIKE_DOCKS[a][0], "start_lon": BIKE_DOCKS[a][1], "end_lat": BIKE_DOCKS[b][0], "end_lon": BIKE_DOCKS[b][1]})
+    c.post("/api/travel/bike/rides/import", json={"rides": rides})
+    c.put("/api/travel/bike/membership", json={"price": 95, "start": _iso(start), "end": _iso(start + timedelta(days=364))})
+
+
+def apartments(c, today):
+    c.put("/api/apartments/criteria", json={"city": "Portland", "max_rent": 3200, "stretch_rent": 3600, "min_beds": 3,
+                                           "big_sqft": 1500, "move_in": _iso(date(today.year + 1, 6, 1))})
+    last = today - timedelta(days=(today.weekday() + 1) % 7)            # the latest Sunday
+    for weeks in (1, 0):
+        day = _iso(last - timedelta(days=7 * weeks))
+        rows = [{"url": f"https://example.com/listing/demo-{i}", "address": a, "neighborhood": n, "rent": r, "sqft": sq, "beds": b,
+                 "baths": ba, "lat": ll[0], "lon": ll[1], "nearest_stop": st, "stop_mi": mi, "amenities": am,
+                 "available": _iso(date(today.year + 1, 6, 1)), "source": "Demo"}
+                for i, (a, n, r, sq, b, ba, ll, st, mi, am, age, _) in enumerate(APARTMENTS) if (age == 7) == (weeks == 1) or weeks == 0]
+        c.post("/api/apartments/import", json={"digest_date": day, "listings": rows})
+    ids = {x["url"]: x["id"] for x in c.get("/api/apartments").get_json()["listings"]}
+    for i, a in enumerate(APARTMENTS):
+        if a[-1]:
+            c.patch(f"/api/apartments/{ids[f'https://example.com/listing/demo-{i}']}", json={"status": a[-1], "rank": i})
+
+
 def build(app, store, schedule=None, today=None):
     """Fill `store` with the demo profile. Runs the app's endpoints through a test client as the seed session."""
     import demo
@@ -550,4 +608,6 @@ def build(app, store, schedule=None, today=None):
     food(c, today, rng)
     education(c, today, rng, schedule)
     goals(c, today)
+    apartments(c, today)
+    bike_rides(c, today, rng)
     return store

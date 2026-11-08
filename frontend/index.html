@@ -53,6 +53,7 @@
           <a href="#/education" data-section="education">Education</a>
           <a href="#/goals" data-section="goals">Goals</a>
           <a href="#/sports" data-section="sports">Sports</a>
+          <a href="#/travel" data-section="travel">Travel</a>
         </nav>
         <div class="topnav-actions">
           <button class="icon-btn" id="themeBtn" aria-label="Toggle light or dark mode">
@@ -1107,6 +1108,47 @@
       <section class="route" data-route="sports">
         <div class="wrap sports" id="sportsRoot"></div>
       </section>
+      <!-- ───────────────────────── TRAVEL ───────────────────────── -->
+      <section class="route" data-route="travel">
+        <div class="panel wrap" data-panel="bike"><div id="travelBike"></div></div>
+        <div class="panel wrap" data-panel="apartments"><div id="travelApts"></div></div>
+      </section>
+
+      <dialog class="dialog" id="bkDialog">
+        <div class="dialog-form">
+          <h3>Add a station</h3>
+          <label class="span-2">Search<input class="input" id="bkQuery" placeholder="Street or place name" autocomplete="off" /></label>
+          <label class="span-2">Label (optional)<input class="input" id="bkLabel" placeholder="Home, Campus, Gym" maxlength="30" /></label>
+          <div class="span-2 dialog-actions"><button type="button" class="btn btn-secondary btn-sm" id="bkNear">Near me</button></div>
+          <div class="span-2 bk-results" id="bkResults"></div>
+          <div class="span-2 dialog-actions"><button type="button" class="btn btn-secondary" id="bkClose">Done</button></div>
+        </div>
+      </dialog>
+
+      <dialog class="dialog" id="memDialog">
+        <form class="dialog-form" method="dialog">
+          <h3>Your membership</h3>
+          <p class="hint span-2">What you paid and the dates it covers, from your receipt or the app. Savings from each ride receipt are added up against it.</p>
+          <label class="span-2">Price paid<input class="input" name="price" inputmode="decimal" placeholder="Blank until you enter it" /></label>
+          <label>Start<input class="input" type="date" name="start" /></label>
+          <label>End<input class="input" type="date" name="end" /></label>
+          <div class="span-2 dialog-actions"><button class="btn btn-primary" value="save">Save</button><button class="btn btn-secondary" value="cancel" formnovalidate>Cancel</button></div>
+        </form>
+      </dialog>
+
+      <dialog class="dialog" id="aptDialog">
+        <form class="dialog-form" method="dialog">
+          <h3>Search criteria</h3>
+          <p class="hint span-2">Used to label listings. Leave a field blank to skip it.</p>
+          <label class="span-2">City<input class="input" name="city" maxlength="60" /></label>
+          <label>Max rent per month<input class="input" name="max_rent" inputmode="numeric" /></label>
+          <label>Stretch max<input class="input" name="stretch_rent" inputmode="numeric" /></label>
+          <label>Minimum bedrooms<input class="input" name="min_beds" inputmode="numeric" /></label>
+          <label>Mark as large from (sq ft)<input class="input" name="big_sqft" inputmode="numeric" /></label>
+          <label class="span-2">Move-in date<input class="input" type="date" name="move_in" /></label>
+          <div class="span-2 dialog-actions"><button class="btn btn-primary" value="save">Save</button><button class="btn btn-secondary" value="cancel" formnovalidate>Cancel</button></div>
+        </form>
+      </dialog>
     </main>
   </div>
 

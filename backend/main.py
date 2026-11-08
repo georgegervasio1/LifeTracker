@@ -20,6 +20,7 @@ Endpoints (all require a Firebase ID token for ALLOWED_EMAIL):
   Running: /api/running[/<id>], /api/runs, /api/strava/{connect,callback,sync}  (see strava.py)
   Race training: /api/raceplans[/<id>], /api/raceplans/preview  (see raceplan.py)
   Sports: /api/sports, /api/sports/{teams,favorites,team,schedule,standings,calendar.ics}  (see sports.py)
+  Travel: /api/travel/bike, /api/travel/bike/stations, /api/apartments  (see travel.py)
   Food: /api/food/{day,entries,copy,search,barcode,recent,custom,goals,history}  (see food.py)
 """
 import csv
@@ -551,6 +552,9 @@ food.init(app, db, firestore, require_owner, user_ref)
 # ---------------------------------------------------------------- Sports (favorite teams, schedules, standings)
 import sports
 sports.init(app, db, firestore, require_owner, user_ref)
+# ---------------------------------------------------------------- Travel (bikeshare stations, apartment search)
+import travel
+travel.init(app, db, firestore, require_owner, user_ref)
 
 # ---------------------------------------------------------------- Earnings (paychecks, withholding, year-end tax)
 import earnings

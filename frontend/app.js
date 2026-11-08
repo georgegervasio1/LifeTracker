@@ -3,7 +3,7 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChang
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { API_BASE, FIREBASE_CONFIG } from "./config.js";
 import { viewSwap, enter, panelIn } from "./motion.js";
-import { mountEduToday, loadToday, loadTasks } from "./edu-today.js";
+import { mountEduToday, loadToday, loadTasks, gmailToken } from "./edu-today.js";
 
 const auth = getAuth(initializeApp(FIREBASE_CONFIG));
 const $ = (id) => document.getElementById(id);
@@ -27,6 +27,7 @@ const SECTIONS = {
     ["today", "Today"], ["tasks", "Tasks"], ["plan", "Academic plan"], ["syllabi", "Syllabi"], ["calendar", "Calendar"]] },
   goals: { title: "Goals", tabs: [] },
   sports: { title: "Sports", tabs: [["teams", "My Teams"], ["schedule", "Schedule"], ["standings", "Standings"], ["find", "Find Teams"]] },
+  travel: { title: "Travel", tabs: [["bike", "Bikeshare"], ["apartments", "Apartments"]] },
 };
 
 // Health opens on a dashboard of five areas; each area has its own tabs. A tab maps to a panel in index.html.
@@ -182,6 +183,7 @@ async function load(section, tab) {
   if (section === "education") return loadEducation(tab);
   if (section === "goals") return (await goalsModule()).loadGoals();
   if (section === "sports") return (await sportsModule()).loadSports(tab);
+  if (section === "travel") return (await travelModule()).loadTravel(tab);
   if (section !== "finances") return;
   setChatPlace(tab);
   if (tab === "networth") return loadNetWorth();
@@ -213,6 +215,16 @@ async function sportsModule() {
     sportsMod.initSports({ api, $, esc, toast, showError, API_BASE, routeQuery: () => routeQuery });
   }
   return sportsMod;
+}
+
+// Travel (bikeshare stations, apartment search) lives in travel.js, loaded on first use.
+let travelMod = null;
+async function travelModule() {
+  if (!travelMod) {
+    travelMod = await import("./travel.js");
+    travelMod.initTravel({ api, $, esc, toast, showError, usd, usd0, tileLayer, gmailToken, isDemo });
+  }
+  return travelMod;
 }
 
 // ---------- Demo profile: made-up data, no sign-in (see backend/demo.py) ----------
