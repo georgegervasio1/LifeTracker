@@ -7,14 +7,18 @@ SWID; ESPN's sign-in itself (Disney OneID with bot checks) can't be automated, s
 browser once. They are stored in Firestore under the user and never sent back to the browser.
 
 Per user:
-  integrations/espn_fantasy -> {league_id, season, espn_s2, swid, team_id}
+  integrations/espn_fantasy -> {leagues: [{league_id, season, espn_s2, swid, team_id, league_name}], active}
 
 Routes:
   GET    /api/fantasy            -> connection status (no cookies)
-  PUT    /api/fantasy/connect    -> {league_id, season?, espn_s2?, swid?} test the league and save; picks "my team" from SWID
-  PUT    /api/fantasy/team       -> {team_id} which team is mine
-  DELETE /api/fantasy/connect    -> forget the league and cookies
-  GET    /api/fantasy/league     -> league, standings, this week's matchups, my roster
+  PUT    /api/fantasy/connect    -> {league_id, season?, espn_s2?, swid?} add/update a league; picks "my team" from SWID.
+                                    Cookies belong to the ESPN account, so a second league reuses the saved ones.
+  PUT    /api/fantasy/active     -> {league_id} switch leagues
+  PUT    /api/fantasy/team       -> {team_id, league_id?} which team is mine
+  DELETE /api/fantasy/connect    -> ?league_id= forget one league (none: all leagues and the cookies)
+  GET    /api/fantasy/league     -> ?league_id= league, standings, this week's matchups, my roster
+  GET    /api/fantasy/trades     -> suggested trades priced with FantasyCalc values (fantasy_trades.py)
+  POST   /api/fantasy/trades     -> {partner, give, get} evaluate a trade you build
 League-mate names and rosters are read at request time and never stored or committed.
 """
 import re
@@ -24,6 +28,8 @@ from datetime import date
 
 import requests
 from flask import Blueprint, g, jsonify, request
+
+import fantasy_trades as ft
 
 bp = Blueprint("fantasy", __name__)
 db = firestore = require_owner = user_ref = None
@@ -218,94 +224,215 @@ def summarize(data, my_team_id=None, swid=""):
     }
 
 
-# ---------------------------------------------------------------- storage
+# ---------------------------------------------------------------- storage (one doc, a list of leagues)
 def _ref():
     return user_ref().collection("integrations").document("espn_fantasy")
 
 
-def get_conn():
+def get_store():
+    """{leagues: [{league_id, season, espn_s2, swid, team_id, league_name}], active}. Reads the old one-league shape too."""
     s = _ref().get()
-    return (s.to_dict() or {}) if s.exists else {}
+    d = (s.to_dict() or {}) if s.exists else {}
+    if d.get("league_id") and not d.get("leagues"):
+        d = {"leagues": [{k: d.get(k) for k in ("league_id", "season", "espn_s2", "swid", "team_id", "league_name")}],
+             "active": d["league_id"]}
+    d.setdefault("leagues", [])
+    if d["leagues"] and not any(l["league_id"] == d.get("active") for l in d["leagues"]):
+        d["active"] = d["leagues"][0]["league_id"]
+    return d
 
 
-def public_conn(c):
-    return {"connected": bool(c.get("league_id")), "league_id": c.get("league_id") or "",
-            "season": c.get("season") or default_season(), "team_id": c.get("team_id"),
+def save_store(d):
+    _ref().set({"leagues": d["leagues"], "active": d.get("active") or "", "updated": firestore.SERVER_TIMESTAMP})
+
+
+def pick(d, league_id=None):
+    want = league_id or d.get("active")
+    return next((l for l in d["leagues"] if l["league_id"] == want), None)
+
+
+def public_league(c):
+    return {"league_id": c.get("league_id") or "", "season": c.get("season") or default_season(), "team_id": c.get("team_id"),
             "has_cookies": bool(c.get("espn_s2") and c.get("swid")), "league_name": c.get("league_name") or ""}
+
+
+def public_conn(d, league_id=None):
+    c = pick(d, league_id) or {}
+    return {"connected": bool(c), **public_league(c), "active": d.get("active") or "",
+            "leagues": [public_league(l) for l in d["leagues"]]}
+
+
+def _league_id(raw):
+    raw = str(raw or "")
+    m = re.search(r"leagueId=(\d+)", raw)            # a pasted league URL works too
+    return m.group(1) if m else re.sub(r"\D", "", raw)
 
 
 def _register_routes():
     def fail(e):
         return jsonify(error=str(e)), e.code if e.code in (401, 404) else 502
 
+    def load(league_id=None, fresh=False):
+        d = get_store()
+        c = pick(d, league_id)
+        if not c:
+            return d, None, None
+        data = fetch_league(c["league_id"], c.get("season") or default_season(), c.get("espn_s2", ""), c.get("swid", ""), fresh=fresh)
+        return d, c, data
+
     @bp.get("/api/fantasy")
     @require_owner
     def fantasy_status():
-        return jsonify(public_conn(get_conn()))
+        return jsonify(public_conn(get_store()))
 
     @bp.put("/api/fantasy/connect")
     @require_owner
     def fantasy_connect():
+        """Add a league, or update one (same league id). The newest league becomes the active one."""
         b = request.get_json(silent=True) or {}
-        old = get_conn()
-        league = re.sub(r"\D", "", str(b.get("league_id") or ""))
-        m = re.search(r"leagueId=(\d+)", str(b.get("league_id") or ""))   # a pasted league URL works too
-        if m:
-            league = m.group(1)
+        d = get_store()
+        league = _league_id(b.get("league_id"))
         if not re.fullmatch(r"\d{3,12}", league):
             return jsonify(error="Enter the league id (the number after leagueId= in your league's URL)."), 400
         season = int(b.get("season") or default_season())
         if not 2018 <= season <= date.today().year + 1:
             return jsonify(error="Pick a season from 2018 on."), 400
+        old = pick(d, league) or {}
         s2_in, swid_in = str(b.get("espn_s2") or "").strip(), str(b.get("swid") or "").strip()
-        s2 = clean_s2(s2_in) if s2_in else (old.get("espn_s2", "") if old.get("league_id") == league else "")
-        swid = clean_swid(swid_in) if swid_in else (old.get("swid", "") if old.get("league_id") == league else "")
-        if s2_in and not s2:
+        if s2_in and not clean_s2(s2_in):
             return jsonify(error="That espn_s2 value doesn't look right. Copy the whole cookie value."), 400
-        if swid_in and not swid:
+        if swid_in and not clean_swid(swid_in):
             return jsonify(error="SWID should look like {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}."), 400
-        if bool(s2) != bool(swid):
-            return jsonify(error="Add both cookies, espn_s2 and SWID, or neither for a public league."), 400
+        if bool(s2_in) != bool(swid_in):
+            return jsonify(error="Add both cookies, espn_s2 and SWID, or neither."), 400
+        if s2_in:
+            s2, swid = clean_s2(s2_in), clean_swid(swid_in)
+        else:                       # same ESPN account for every league: reuse saved cookies
+            src = old if old.get("espn_s2") else next((l for l in d["leagues"] if l.get("espn_s2")), {})
+            s2, swid = src.get("espn_s2", ""), src.get("swid", "")
         try:
             data = fetch_league(league, season, s2, swid, fresh=True)
         except FantasyError as e:
+            if e.code == 401 and s2 and not s2_in:
+                e = FantasyError("ESPN wouldn't open this league with your saved cookies. Paste fresh espn_s2 and SWID values.", 401)
             return fail(e)
         out = summarize(data, None, swid)
-        team_id = out["my_team_id"] if out["my_team_id"] is not None else (old.get("team_id") if old.get("league_id") == league else None)
-        _ref().set({"league_id": league, "season": season, "espn_s2": s2, "swid": swid, "team_id": team_id,
-                    "league_name": out["league"]["name"][:80], "updated": firestore.SERVER_TIMESTAMP})
-        return jsonify(**public_conn({"league_id": league, "season": season, "espn_s2": s2, "swid": swid,
-                                      "team_id": team_id, "league_name": out["league"]["name"]}),
-                       teams=[{"id": t["id"], "name": t["name"]} for t in out["teams"]])
+        team_id = out["my_team_id"] if out["my_team_id"] is not None else old.get("team_id")
+        row = {"league_id": league, "season": season, "espn_s2": s2, "swid": swid, "team_id": team_id,
+               "league_name": out["league"]["name"][:80]}
+        d["leagues"] = [row if l["league_id"] == league else l for l in d["leagues"]]
+        if not old:
+            if len(d["leagues"]) >= 6:
+                return jsonify(error="Up to 6 leagues."), 400
+            d["leagues"].append(row)
+        d["active"] = league
+        save_store(d)
+        return jsonify(**public_conn(d), teams=[{"id": t["id"], "name": t["name"]} for t in out["teams"]])
+
+    @bp.put("/api/fantasy/active")
+    @require_owner
+    def fantasy_active():
+        d = get_store()
+        league = str((request.get_json(silent=True) or {}).get("league_id") or "")
+        if not pick(d, league):
+            return jsonify(error="That league isn't connected."), 404
+        d["active"] = league
+        save_store(d)
+        return jsonify(public_conn(d))
 
     @bp.put("/api/fantasy/team")
     @require_owner
     def fantasy_team():
-        c = get_conn()
-        if not c.get("league_id"):
+        d = get_store()
+        b = request.get_json(silent=True) or {}
+        c = pick(d, str(b.get("league_id") or "") or None)
+        if not c:
             return jsonify(error="Connect a league first."), 400
-        tid = (request.get_json(silent=True) or {}).get("team_id")
+        tid = b.get("team_id")
         if not isinstance(tid, int):
             return jsonify(error="team_id must be a number"), 400
-        _ref().set({"team_id": tid}, merge=True)
-        return jsonify(public_conn({**c, "team_id": tid}))
+        c["team_id"] = tid
+        save_store(d)
+        return jsonify(public_conn(d, c["league_id"]))
 
     @bp.delete("/api/fantasy/connect")
     @require_owner
     def fantasy_disconnect():
-        _ref().delete()
-        return jsonify(public_conn({}))
+        """?league_id= removes one league; without it, every league and the cookies."""
+        d = get_store()
+        league = request.args.get("league_id", "")
+        d["leagues"] = [l for l in d["leagues"] if league and l["league_id"] != league]
+        if not d["leagues"]:
+            _ref().delete()
+            return jsonify(public_conn({"leagues": []}))
+        if d.get("active") == league:
+            d["active"] = d["leagues"][0]["league_id"]
+        save_store(d)
+        return jsonify(public_conn(d))
 
     @bp.get("/api/fantasy/league")
     @require_owner
     def fantasy_league():
-        c = get_conn()
-        if not c.get("league_id"):
-            return jsonify(error="Connect your ESPN league first.", connect=True), 400
         try:
-            data = fetch_league(c["league_id"], c.get("season") or default_season(), c.get("espn_s2", ""), c.get("swid", ""),
-                                fresh=request.args.get("fresh") == "1")
+            d, c, data = load(request.args.get("league_id") or None, request.args.get("fresh") == "1")
         except FantasyError as e:
             return fail(e)
+        if not c:
+            return jsonify(error="Connect your ESPN league first.", connect=True), 400
         out = summarize(data, c.get("team_id"), c.get("swid", ""))
-        return jsonify(conn=public_conn(c), **out)
+        return jsonify(conn=public_conn(d, c["league_id"]), **out)
+
+    @bp.route("/api/fantasy/trades", methods=["GET", "POST"])
+    @require_owner
+    def fantasy_trades():
+        """GET: suggested trades with every leaguemate (?partner= for one).
+        POST {partner, give: [player ids], get: [player ids]}: evaluate a trade you build yourself."""
+        b = (request.get_json(silent=True) or {}) if request.method == "POST" else {}
+        try:
+            d, c, data = load(request.args.get("league_id") or b.get("league_id") or None)
+        except FantasyError as e:
+            return fail(e)
+        if not c:
+            return jsonify(error="Connect your ESPN league first.", connect=True), 400
+        out = summarize(data, c.get("team_id"), c.get("swid", ""))
+        me = out["my_team_id"]
+        if me is None:
+            return jsonify(error="Pick which team is yours first (League tab)."), 400
+        num_qbs, ppr, slots = ft.league_format(data.get("settings") or {})
+        try:
+            idx = ft.value_index(ft.fetch_values(num_qbs, out["league"]["size"], ppr))
+        except ft.ValuesError as e:
+            return jsonify(error=str(e)), 502
+        rosters = all_rosters(data)
+        priced = {tid: ft.price(r, idx) for tid, r in rosters.items()}
+        mine = priced.get(me, [])
+        fmt = {"qbs": num_qbs, "ppr": ppr, "teams": out["league"]["size"],
+               "slots": {ft_slot_name(k): v for k, v in slots.items()}}
+        names = {t["id"]: t["name"] for t in out["teams"]}
+        if request.method == "POST":
+            partner = b.get("partner")
+            if partner not in priced or partner == me:
+                return jsonify(error="Pick a team to trade with."), 400
+            give, get = set(b.get("give") or []), set(b.get("get") or [])
+            if not give and not get:
+                return jsonify(error="Add players to both sides."), 400
+            t = ft.evaluate(mine, priced[partner], give, get, slots)
+            return jsonify(trade={**t, "team_id": partner, "team": names.get(partner, "")}, format=fmt)
+        partner = request.args.get("partner")
+        partners = {tid: r for tid, r in priced.items() if tid != me and (not partner or str(tid) == partner)}
+        trades = ft.suggest(mine, partners, slots, limit=0 if partner else 15)
+        for t in trades:
+            t["team"] = names.get(t["team_id"], "")
+        return jsonify(trades=trades, format=fmt, my_team_id=me,
+                       rosters={str(tid): sorted(r, key=lambda p: -p["value"]) for tid, r in priced.items()},
+                       teams=[{"id": t["id"], "name": t["name"], "owners": t["owners"]} for t in out["teams"]],
+                       unpriced=[p["name"] for p in mine if not p["priced"] and p["pos"] in ft.TRADEABLE])
+
+
+def ft_slot_name(k):
+    return {0: "QB", 2: "RB", 3: "RB/WR", 4: "WR", 5: "WR/TE", 6: "TE", 7: "OP", 23: "FLEX"}.get(k, str(k))
+
+
+def all_rosters(data):
+    season, period = data.get("seasonId"), data.get("scoringPeriodId")
+    return {t.get("id"): norm_roster(t, period, season) for t in data.get("teams") or []}

@@ -75,8 +75,14 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
 - `fantasy.py`: Sports → Fantasy Football. Reads the user's ESPN league from the unofficial
   `lm-api-reads.fantasy.espn.com` endpoint (views mTeam/mRoster/mMatchup/mMatchupScore/mSettings/mStandings/mStatus).
   Private leagues need the `espn_s2` + `SWID` cookies the user pastes once (ESPN sign-in can't be automated); stored in
-  `integrations/espn_fantasy`, never returned to the browser. "My team" is found from SWID. League-mate data is read
-  live, never stored or committed. Connecting is blocked in the demo.
+  `integrations/espn_fantasy` as `{leagues: [...], active}` (old one-league docs still read), never returned to the
+  browser; a second league reuses the saved cookies (same ESPN account). "My team" is found from SWID. League-mate data
+  is read live, never stored or committed. Connecting is blocked in the demo.
+- `fantasy_trades.py`: trade ideas. Prices every roster with FantasyCalc's public redraft values
+  (`api.fantasycalc.com/values/current`, params from the league: numQbs, numTeams, ppr; matched by `espnId`, then name +
+  position; cached 6 h). Team strength = best legal starting lineup (league's own slots) + 15% of the top 4 bench.
+  A suggestion is within 12% on value, raises your strength and doesn't lower theirs (1-2 players a side).
+  `POST /api/fantasy/trades` grades a trade the user builds.
 - `food.py`: Health → Food diary (MyFitnessPal-style): search USDA FoodData Central (`FDC_API_KEY`, else DEMO_KEY)
   + Open Food Facts, normalized per 100 g; entries store nutrients when logged; custom foods (per serving), quick
   add, copy a meal, recent foods, goals (blank until the user sets them), 30-day history.
@@ -132,7 +138,7 @@ Food; Unsplash photos hotlinked with credit); `#/health/<area>/<tab>` maps to a 
 The card photo morphs into the area banner with a View Transition (`viewSwap` from the shared `motion.js`).
 Calendar and Connections hang off the dashboard.
 Sports: a dashboard of three photo cards like Travel (`sports.js`): Teams (`teams.js`: My Teams, Schedule calendar,
-Standings, Find Teams), Fantasy Football (`fantasy.js`: Matchup, Roster, Standings, League), Betting (in development, plan only).
+Standings, Find Teams), Fantasy Football (`fantasy.js`: Matchup, Roster, Trades, Standings, League; league switcher), Betting (in development, plan only).
 Travel opens on a dashboard of three photo cards like Health (Apartments, Commute, Trips); `#/travel/<area>/<tab>`;
 `travel.js` (loaded on first visit) draws its own heroes and tabs, with `apartments.js` and `trips.js`.
 Education: Overview, Syllabi, Grades & GPA, Degree Audit, Planner, Calendar. Goals: `goals.js` (loaded on first

@@ -86,8 +86,8 @@ r = c.put("/api/fantasy/connect", json={"league_id": "12345", "season": 2026, "e
 j = r.get_json()
 assert r.status_code == 200 and j["connected"] and j["has_cookies"] and j["team_id"] == 1 and j["league_name"] == "Sample League", j
 assert "espn_s2" not in j and "swid" not in j and S2 not in json.dumps(j)
-stored = DATA["users/dev/integrations/espn_fantasy"]
-assert stored["espn_s2"] == S2 and stored["swid"] == SWID
+stored = DATA["users/dev/integrations/espn_fantasy"]["leagues"][0]
+assert stored["espn_s2"] == S2 and stored["swid"] == SWID and DATA["users/dev/integrations/espn_fantasy"]["active"] == "12345"
 assert calls[-1][1]["view"] == fantasy.VIEWS
 assert S2 not in json.dumps(c.get("/api/fantasy").get_json())
 
@@ -126,5 +126,79 @@ mode["down"] = False
 # 7. disconnect forgets the cookies
 assert c.delete("/api/fantasy/connect").get_json()["connected"] is False
 assert "users/dev/integrations/espn_fantasy" not in DATA
+
+# 8. old one-league doc still reads; a second league reuses the saved cookies; switch; remove one
+DATA["users/dev/integrations/espn_fantasy"] = {"league_id": "12345", "season": 2026, "espn_s2": S2, "swid": SWID, "team_id": 1, "league_name": "Sample League"}
+st = c.get("/api/fantasy").get_json()
+assert st["connected"] and st["league_id"] == "12345" and st["has_cookies"] and len(st["leagues"]) == 1
+SECOND = json.loads(json.dumps(LEAGUE)); SECOND["settings"]["name"] = "Work League"
+_orig = fake_get
+def fake_get2(url, params=None, cookies=None, **k):
+    if "/leagues/77777" in url:
+        calls.append((url, params, cookies))
+        return R(200, SECOND) if cookies and cookies.get("SWID") == SWID else R(401, {})
+    return _orig(url, params=params, cookies=cookies, **k)
+fantasy.requests = types.SimpleNamespace(get=fake_get2)
+r = c.put("/api/fantasy/connect", json={"league_id": "77777", "season": 2026}).get_json()
+assert r["active"] == "77777" and [l["league_id"] for l in r["leagues"]] == ["12345", "77777"] and r["league_name"] == "Work League", r
+assert r["team_id"] == 1 and r["leagues"][1]["has_cookies"]
+assert c.get("/api/fantasy/league").get_json()["league"]["name"] == "Work League"
+assert c.get("/api/fantasy/league?league_id=12345").get_json()["league"]["name"] == "Sample League"
+assert c.put("/api/fantasy/active", json={"league_id": "999"}).status_code == 404
+assert c.put("/api/fantasy/active", json={"league_id": "12345"}).get_json()["active"] == "12345"
+assert c.put("/api/fantasy/team", json={"team_id": 2, "league_id": "77777"}).get_json()["team_id"] == 2
+assert c.get("/api/fantasy/league?league_id=77777").get_json()["my_team_id"] == 2
+assert c.get("/api/fantasy/league").get_json()["my_team_id"] == 1
+r = c.delete("/api/fantasy/connect?league_id=12345").get_json()
+assert [l["league_id"] for l in r["leagues"]] == ["77777"] and r["active"] == "77777"
+assert c.delete("/api/fantasy/connect").get_json()["connected"] is False
+
+# 9. trade suggestions (FantasyCalc values, made-up players)
+import fantasy_trades as ft
+assert ft.league_format({"rosterSettings": {"lineupSlotCounts": {"0": 1, "2": 2, "4": 2, "6": 1, "23": 1, "20": 6, "16": 1}},
+                         "scoringSettings": {"scoringItems": [{"statId": 53, "points": 0.5}]}}) == (1, 0.5, {0: 1, 2: 2, 4: 2, 6: 1, 23: 1})
+assert ft.league_format({"rosterSettings": {"lineupSlotCounts": {"0": 1, "7": 1}}, "scoringSettings": {}})[0] == 2
+assert ft.norm_name("Marvin Harrison Jr.") == ft.norm_name("marvin harrison")
+P = lambda i, n, pos, v: {"id": i, "name": n, "pos": pos, "slot": "Bench", "value": v, "priced": True}
+mine = [P(1, "Qb A", "QB", 5000), P(2, "Wr One", "WR", 7000), P(3, "Wr Two", "WR", 6800), P(4, "Wr Three", "WR", 6500),
+        P(8, "Wr Four", "WR", 6200), P(5, "Rb Weak", "RB", 1500), P(6, "Rb Weaker", "RB", 1200), P(7, "Te A", "TE", 3000)]
+them = [P(11, "Qb B", "QB", 5200), P(12, "Rb Star", "RB", 6600), P(13, "Rb Two", "RB", 6000), P(14, "Rb Three", "RB", 5500),
+        P(15, "Wr Weak", "WR", 1400), P(16, "Wr Weaker", "WR", 1100), P(17, "Te B", "TE", 2900)]
+slots = {0: 1, 2: 2, 4: 2, 6: 1, 23: 1}
+st_, bench = ft.best_lineup(mine, slots)
+assert {p["id"] for p in st_} == {1, 2, 3, 4, 5, 6, 7} and [p["id"] for p in bench] == [8]
+ev = ft.evaluate(mine, them, {8}, {14}, slots)
+assert ev["fair"] and ev["value_give"] == 6200 and ev["value_get"] == 5500 and ev["my_gain"] > 0 and ev["their_gain"] > 0, ev
+sug = ft.suggest(mine, {9: them}, slots)
+assert sug and all(t["fair"] and t["my_gain"] > 0 and t["their_gain"] >= 0 for t in sug) and sug[0]["team_id"] == 9
+assert any(p["pos"] == "RB" for p in sug[0]["get"]) and any(p["pos"] == "WR" for p in sug[0]["give"]), sug[0]
+assert len(sug) <= 3 and sug[0]["why"]
+
+# through the API: FantasyCalc rows matched by ESPN id, then by name + position; K and D/ST ignored
+FC = [{"player": {"name": "Qb Prime", "position": "QB", "espnId": "3"}, "value": 6000, "overallRank": 10, "trend30Day": 50},
+      {"player": {"name": "Run Fast", "position": "RB", "espnId": "999999"}, "value": 4000, "overallRank": 30},
+      {"player": {"name": "Flex Wide", "position": "WR", "espnId": "5"}, "value": 5200, "overallRank": 20}]
+fc_calls = []
+def fake_get3(url, params=None, cookies=None, **k):
+    if url == ft.FC_URL:
+        fc_calls.append(params)
+        return R(200, FC)
+    return fake_get2(url, params=params, cookies=cookies, **k)
+class R3(R):
+    def raise_for_status(s): pass
+fantasy.requests = types.SimpleNamespace(get=fake_get3)
+ft.requests = types.SimpleNamespace(get=lambda url, params=None, **k: (fc_calls.append(params), R3(200, FC))[1])
+c.put("/api/fantasy/connect", json={"league_id": "12345", "season": 2026, "espn_s2": S2, "swid": SWID})
+r = c.get("/api/fantasy/trades").get_json()
+assert fc_calls[-1] == {"isDynasty": "false", "numQbs": 1, "numTeams": 8, "ppr": 0}, fc_calls[-1]
+mr = {p["name"]: p for p in r["rosters"]["1"]}
+assert mr["Qb Prime"]["value"] == 6000 and mr["Run Fast"]["value"] == 4000 and mr["Flex Wide"]["value"] == 5200 and not mr["Bench Guy"]["priced"]
+assert "Bench Guy" in r["unpriced"] and r["format"]["slots"] == {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "FLEX": 1}
+assert isinstance(r["trades"], list) and len(r["teams"]) == 4
+bad = c.post("/api/fantasy/trades", json={"partner": 1, "give": [3], "get": []}); assert bad.status_code == 400
+ok = c.post("/api/fantasy/trades", json={"partner": 2, "give": [3], "get": []}).get_json()
+assert ok["trade"]["value_give"] == 6000 and ok["trade"]["value_get"] == 0 and ok["trade"]["my_gain"] < 0 and ok["trade"]["team_id"] == 2
+ft._cache.clear(); ft.requests = types.SimpleNamespace(get=lambda *a, **k: (_ for _ in ()).throw(ConnectionError("x")))
+r = c.get("/api/fantasy/trades"); assert r.status_code == 502 and "FantasyCalc" in r.get_json()["error"]
 
 print("fantasy: connect (public/private), summary, roster, matchups, team pick, disconnect: OK")

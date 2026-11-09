@@ -1,9 +1,11 @@
 // Sports → Fantasy Football: the user's ESPN league (backend/fantasy.py).
-// Tabs: Matchup (this week, live scores and projections, my season), Roster, Standings, League (connection).
+// Tabs: Matchup (this week, live scores and projections, my season), Roster, Trades (suggestions + a trade builder,
+// priced with FantasyCalc values), Standings, League (connection). Several leagues: a switcher at the top.
 // A private league needs the espn_s2 and SWID cookies from espn.com; they stay on the server.
 
 let H;
 let conn = null, data = null;
+let trades = null, tradeFor = "", builder = { partner: null, give: new Set(), get: new Set() };
 
 export function initFantasy(helpers) { H = helpers; }
 
@@ -38,36 +40,57 @@ function weekLine() {
 export async function loadFantasy(tab, el) {
   if (!conn || tab === "league") conn = await H.api("/api/fantasy");
   if (!conn.connected) return renderConnect(el);
-  if (!data) { el.innerHTML = `<p class="empty">Loading your league…</p>`; }
+  if (!data || data.conn?.league_id !== conn.active) { el.innerHTML = `<p class="empty">Loading your league…</p>`; trades = null; }
   try { data = await H.api("/api/fantasy/league"); }
   catch (e) {
     el.innerHTML = `<div class="card empty-state"><h3>Couldn't read your league</h3><p>${H.esc(e.message)}</p>
       <a class="btn btn-secondary" href="#/sports/fantasy/league">League settings</a></div>`;
+    addSwitcher(el);
     return;
   }
-  if (tab === "league") return renderLeague(el);
-  if (data.my_team_id == null) return renderLeague(el, "Pick which team is yours.");
-  if (tab === "roster") return renderRoster(el);
-  if (tab === "standings") return renderStandings(el);
-  return renderMatchup(el);
+  if (tab === "league") renderLeague(el);
+  else if (data.my_team_id == null) renderLeague(el, "Pick which team is yours.");
+  else if (tab === "roster") renderRoster(el);
+  else if (tab === "standings") renderStandings(el);
+  else if (tab === "trades") { addSwitcher(el, true); return renderTrades(el); }
+  else renderMatchup(el);
+  addSwitcher(el);
+}
+
+// one row of league pills above every tab (only when there's more than one league), plus "Add a league"
+function addSwitcher(el, clear) {
+  const L = conn.leagues || [];
+  const html = `<div class="ff-switch">${L.length > 1 ? L.map((l) => `<button class="sp-filter${l.league_id === conn.active ? " on" : ""}" data-lg="${H.esc(l.league_id)}"><i></i>${H.esc(l.league_name || `League ${l.league_id}`)}</button>`).join("") : ""}
+    <button class="text-btn accent" data-add-league>Add a league</button></div>`;
+  if (clear) el.innerHTML = html; else el.insertAdjacentHTML("afterbegin", html);
+  el.querySelectorAll("[data-lg]").forEach((b) => b.onclick = async () => {
+    if (b.dataset.lg === conn.active) return;
+    conn = await H.api("/api/fantasy/active", { method: "PUT", body: JSON.stringify({ league_id: b.dataset.lg }) });
+    data = null; trades = null; builder = { partner: null, give: new Set(), get: new Set() };
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+  });
+  el.querySelector("[data-add-league]").onclick = () => renderConnect(el, "", true);
 }
 
 // ---------------------------------------------------------------- connect
-function renderConnect(el, err = "") {
+function renderConnect(el, err = "", adding = false) {
+  const cur = adding ? {} : (conn || {}), saved = !!(conn?.leagues || []).some((l) => l.has_cookies);
   const yr = new Date().getMonth() <= 1 ? new Date().getFullYear() - 1 : new Date().getFullYear();
   el.innerHTML = `<div class="grid-2 ff-connect">
     <form class="card" id="ffForm" autocomplete="off">
-      <h3>Connect your ESPN league</h3>
+      <h3>${adding ? "Add another ESPN league" : "Connect your ESPN league"}</h3>
       <p>LifeTracker reads your league the same way the ESPN site does. It only reads: it can't set lineups or make moves.</p>
       <label class="ff-field"><span>League ID or league URL</span>
-        <input class="input" name="league_id" required placeholder="e.g. 1234567 or https://fantasy.espn.com/football/league?leagueId=…" value="${H.esc(conn?.league_id || "")}"></label>
-      <label class="ff-field"><span>Season</span><input class="input" name="season" type="number" min="2018" max="${yr + 1}" value="${H.esc(conn?.season || yr)}"></label>
-      <details class="ff-private" ${conn?.has_cookies ? "" : "open"}><summary>Private league? Add your ESPN cookies</summary>
-        <label class="ff-field"><span>espn_s2</span><input class="input" name="espn_s2" placeholder="${conn?.has_cookies ? "Saved. Paste a new one to replace it." : "A long value starting with AE…"}"></label>
-        <label class="ff-field"><span>SWID</span><input class="input" name="swid" placeholder="${conn?.has_cookies ? "Saved" : "{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}"}"></label>
+        <input class="input" name="league_id" required placeholder="e.g. 1234567 or https://fantasy.espn.com/football/league?leagueId=…" value="${H.esc(cur.league_id || "")}"></label>
+      <label class="ff-field"><span>Season</span><input class="input" name="season" type="number" min="2018" max="${yr + 1}" value="${H.esc(cur.season || yr)}"></label>
+      <details class="ff-private" ${saved ? "" : "open"}><summary>Private league? Add your ESPN cookies</summary>
+        <label class="ff-field"><span>espn_s2</span><input class="input" name="espn_s2" placeholder="${saved ? "Saved. Paste a new one to replace it." : "A long value starting with AE…"}"></label>
+        <label class="ff-field"><span>SWID</span><input class="input" name="swid" placeholder="${saved ? "Saved" : "{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}"}"></label>
       </details>
+      ${saved ? `<p class="hint">Your saved ESPN cookies work for every league on the same ESPN account, so you can leave them blank.</p>` : ""}
       ${err ? `<p class="ff-err">${H.esc(err)}</p>` : ""}
-      <div class="ff-actions"><button class="btn btn-primary" type="submit">Connect league</button></div>
+      <div class="ff-actions"><button class="btn btn-primary" type="submit">${adding ? "Add league" : "Connect league"}</button>
+        ${adding ? `<button class="btn btn-secondary" type="button" id="ffCancel">Cancel</button>` : ""}</div>
     </form>
     <div class="card ff-steps"><h3>Where to find these</h3>
       <ol>
@@ -78,6 +101,7 @@ function renderConnect(el, err = "") {
       </ol>
       <p class="hint">ESPN's sign-in can't be done from another site, so many fantasy tools link ESPN leagues this same way. The cookies are kept on the LifeTracker server and never shown again. If you sign out of ESPN or the league stops loading, paste new ones.</p>
     </div></div>`;
+  if (H.$("ffCancel")) H.$("ffCancel").onclick = () => window.dispatchEvent(new HashChangeEvent("hashchange"));
   H.$("ffForm").onsubmit = async (e) => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
@@ -85,11 +109,11 @@ function renderConnect(el, err = "") {
     btn.disabled = true; btn.textContent = "Connecting…";
     try {
       const r = await H.api("/api/fantasy/connect", { method: "PUT", body: JSON.stringify({ ...f, season: +f.season }) });
-      conn = r; data = null;
+      conn = r; data = null; trades = null; builder = { partner: null, give: new Set(), get: new Set() };
       H.toast(`Connected ${r.league_name || "your league"}`);
       location.hash = r.team_id == null ? "#/sports/fantasy/league" : "#/sports/fantasy/matchup";
       if (location.hash === "#/sports/fantasy/league") loadFantasy("league", el).catch(H.showError);
-    } catch (err) { renderConnect(el, err.message); conn = conn || {}; }
+    } catch (err) { renderConnect(el, err.message, adding); }
   };
 }
 
@@ -186,18 +210,115 @@ function renderLeague(el, msg = "") {
       ${msg ? `<p class="ff-err">${H.esc(msg)}</p>` : ""}
       <label class="ff-field"><span>Your team</span><select class="select ff-select" id="ffTeam"><option value="">Pick your team</option>${opts}</select></label>
       <div class="ff-actions"><button class="btn btn-secondary btn-sm" id="ffEdit">Change league or cookies</button>
-        <button class="text-btn danger" id="ffDrop">Disconnect</button></div></div>
+        <button class="text-btn danger" id="ffDrop">${(conn.leagues || []).length > 1 ? "Remove this league" : "Disconnect"}</button></div></div>
     <div class="card"><h3>What LifeTracker reads</h3>
       <p>Standings, every team's record and points, this week's scores and projections, and your roster. Other managers' names and rosters are read live from ESPN and aren't saved.</p></div></div>`;
   H.$("ffTeam").onchange = async (e) => {
     if (!e.target.value) return;
     conn = await H.api("/api/fantasy/team", { method: "PUT", body: JSON.stringify({ team_id: +e.target.value }) });
+    trades = null;
     data.my_team_id = conn.team_id;
     H.toast("Saved your team"); location.hash = "#/sports/fantasy/matchup";
   };
   H.$("ffEdit").onclick = () => renderConnect(el);
   H.$("ffDrop").onclick = async () => {
-    if (!confirm("Disconnect this league? Your ESPN cookies are deleted from LifeTracker.")) return;
-    conn = await H.api("/api/fantasy/connect", { method: "DELETE" }); data = null; renderConnect(el);
+    const last = (conn.leagues || []).length <= 1;
+    if (!confirm(last ? "Disconnect this league? Your ESPN cookies are deleted from LifeTracker." : "Remove this league from LifeTracker?")) return;
+    conn = await H.api(`/api/fantasy/connect?league_id=${encodeURIComponent(conn.active)}`, { method: "DELETE" }); data = null; trades = null;
+    if (conn.connected) window.dispatchEvent(new HashChangeEvent("hashchange")); else renderConnect(el);
   };
+}
+
+// ---------------------------------------------------------------- trades (FantasyCalc values)
+const val = (v) => (v == null ? "—" : Math.round(v).toLocaleString("en-US"));
+const signed = (v) => `${v > 0 ? "+" : v < 0 ? "−" : ""}${val(Math.abs(v))}`;
+const FC_LINK = `<a href="https://fantasycalc.com/trade-calculator" target="_blank" rel="noopener">FantasyCalc</a>`;
+function fmtLine(f) {
+  const slots = Object.entries(f.slots).map(([k, v]) => `${v} ${k}`).join(", ");
+  return `${f.qbs === 2 ? "Superflex / 2QB" : "1QB"} · ${f.ppr === 1 ? "PPR" : f.ppr === 0.5 ? "Half PPR" : "Standard"} · ${f.teams} teams · starters: ${slots}`;
+}
+const chip = (p) => `<span class="tr-player"><b>${H.esc(p.name)}</b><span class="muted">${H.esc(p.pos)}${p.pro ? ` · ${H.esc(p.pro)}` : ""}</span><span class="tr-val">${val(p.value)}</span></span>`;
+
+async function renderTrades(el) {
+  const box = document.createElement("div");
+  el.appendChild(box);
+  if (!trades) {
+    box.innerHTML = `<p class="empty">Pricing every roster with FantasyCalc and testing trades…</p>`;
+    try { trades = await H.api("/api/fantasy/trades"); }
+    catch (e) { box.innerHTML = `<div class="card empty-state"><h3>Couldn't build trade ideas</h3><p>${H.esc(e.message)}</p></div>`; return; }
+  }
+  const T = trades, tname = (id) => (T.teams.find((t) => t.id === id) || {}).name || "";
+  const list = T.trades.filter((t) => !tradeFor || String(t.team_id) === tradeFor);
+  box.innerHTML = `<div class="sp-head"><div><p class="eyebrow">Trade ideas</p><h2 class="sp-h2">Fair trades that make your lineup better</h2>
+      <p class="muted">${H.esc(fmtLine(T.format))}</p></div>
+      <select class="select" id="trFor" aria-label="Trade partner"><option value="">Every team</option>${T.teams.filter((t) => t.id !== T.my_team_id)
+        .map((t) => `<option value="${t.id}"${String(t.id) === tradeFor ? " selected" : ""}>${H.esc(t.name)}</option>`).join("")}</select></div>
+    ${list.length ? `<div class="tr-list">${list.map((t, i) => `<div class="card tr-card">
+        <div class="tr-top"><span class="eyebrow">With ${H.esc(t.team)}</span>
+          <span class="pill ${t.their_gain > 0 ? "pill-met" : "pill-plain"}">${t.their_gain > 0 ? "Helps both teams" : "Even for them"}</span></div>
+        <div class="tr-sides"><div><p class="tr-label">You give</p>${t.give.map(chip).join("")}<p class="tr-sum">${val(t.value_give)}</p></div>
+          <div><p class="tr-label">You get</p>${t.get.map(chip).join("")}<p class="tr-sum">${val(t.value_get)}</p></div></div>
+        <p class="tr-why">${H.esc(t.why)}</p>
+        <div class="tr-foot"><span>Your lineup <b class="pos">${signed(t.my_gain)}</b></span><span>Theirs <b>${signed(t.their_gain)}</b></span>
+          <span class="muted">Values ${t.fair_pct}% apart</span><button class="text-btn accent" data-load="${i}">Open in trade builder</button></div>
+      </div>`).join("")}</div>`
+      : `<div class="card empty-state"><h3>No fair trade improves your lineup${tradeFor ? " with this team" : ""}</h3>
+          <p>Every trade within 12% on FantasyCalc value either weakens your starters or theirs. Try the builder below to test your own idea.</p></div>`}
+    ${T.unpriced.length ? `<p class="sp-note">No FantasyCalc value for: ${H.esc(T.unpriced.join(", "))}. They count as 0.</p>` : ""}
+    <div id="trBuilder"></div>
+    <p class="sp-note">Trade values from ${FC_LINK} (redraft, crowd-sourced from real trades), refreshed every few hours. Lineup change = the value of your best legal starting lineup after the trade minus before, plus a little for bench depth. Kickers and D/ST have no values and aren't traded.</p>`;
+  H.$("trFor").onchange = (e) => { tradeFor = e.target.value; box.remove(); renderTrades(el); };
+  box.querySelectorAll("[data-load]").forEach((b) => b.onclick = () => {
+    const t = list[+b.dataset.load];
+    builder = { partner: t.team_id, give: new Set(t.give.map((p) => p.id)), get: new Set(t.get.map((p) => p.id)) };
+    drawBuilder(); H.$("trBuilder").scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  drawBuilder();
+}
+
+let evalTimer = null;
+function drawBuilder() {
+  const T = trades, wrap = H.$("trBuilder");
+  if (!wrap) return;
+  const others = T.teams.filter((t) => t.id !== T.my_team_id);
+  if (builder.partner == null) builder.partner = others[0]?.id ?? null;
+  const mine = T.rosters[String(T.my_team_id)] || [], theirs = T.rosters[String(builder.partner)] || [];
+  const col = (players, set, side) => players.filter((p) => ["QB", "RB", "WR", "TE"].includes(p.pos)).map((p) => `
+    <label class="tr-pick${set.has(p.id) ? " on" : ""}"><input type="checkbox" data-side="${side}" value="${p.id}"${set.has(p.id) ? " checked" : ""}>
+      <span><b>${H.esc(p.name)}</b> <span class="muted">${H.esc(p.pos)} · ${H.esc(p.pro || "")}${p.priced ? "" : " · no value"}</span></span><span class="tr-val">${val(p.value)}</span></label>`).join("");
+  wrap.innerHTML = `<h3 class="ff-h3">Trade builder</h3>
+    <div class="card tr-builder">
+      <label class="ff-field"><span>Trade with</span><select class="select ff-select" id="trPartner">${others.map((t) =>
+        `<option value="${t.id}"${t.id === builder.partner ? " selected" : ""}>${H.esc(t.name)}${t.owners?.length ? ` (${H.esc(t.owners[0])})` : ""}</option>`).join("")}</select></label>
+      <div class="tr-cols"><div><p class="tr-label">You give</p>${col(mine, builder.give, "give")}</div>
+        <div><p class="tr-label">You get</p>${col(theirs, builder.get, "get")}</div></div>
+      <div id="trResult" class="tr-result"><p class="muted">Pick players on both sides to see how the trade grades.</p></div>
+    </div>`;
+  H.$("trPartner").onchange = (e) => { builder = { partner: +e.target.value, give: builder.give, get: new Set() }; drawBuilder(); };
+  wrap.querySelectorAll("input[data-side]").forEach((cb) => cb.onchange = () => {
+    const set = builder[cb.dataset.side], id = +cb.value;
+    cb.checked ? set.add(id) : set.delete(id);
+    cb.closest(".tr-pick").classList.toggle("on", cb.checked);
+    clearTimeout(evalTimer); evalTimer = setTimeout(gradeBuilder, 250);
+  });
+  if (builder.give.size || builder.get.size) gradeBuilder();
+}
+async function gradeBuilder() {
+  const out = H.$("trResult");
+  if (!out) return;
+  if (!builder.give.size || !builder.get.size) { out.innerHTML = `<p class="muted">Pick players on both sides to see how the trade grades.</p>`; return; }
+  try {
+    const { trade: t } = await H.api("/api/fantasy/trades", { method: "POST",
+      body: JSON.stringify({ partner: builder.partner, give: [...builder.give], get: [...builder.get] }) });
+    const verdict = !t.fair ? (t.value_diff > 0 ? "You'd win this trade on value. They probably won't accept." : "You'd overpay on value.")
+      : t.my_gain > 0 && t.their_gain >= 0 ? "Fair, and both lineups get better. Worth proposing."
+      : t.my_gain > 0 ? "Fair and helps you, but their lineup gets worse." : "Fair on value, but it doesn't make your lineup better.";
+    const good = t.fair && t.my_gain > 0;
+    const max = Math.max(t.value_give, t.value_get) || 1;
+    out.innerHTML = `<div class="tr-bars"><div><span>You give</span><i style="width:${(t.value_give / max) * 100}%"></i><b>${val(t.value_give)}</b></div>
+        <div><span>You get</span><i class="get" style="width:${(t.value_get / max) * 100}%"></i><b>${val(t.value_get)}</b></div></div>
+      <p class="tr-verdict ${good ? "pos" : t.fair ? "" : "neg"}">${verdict}</p>
+      <div class="tr-foot"><span>Your lineup <b class="${t.my_gain > 0 ? "pos" : t.my_gain < 0 ? "neg" : ""}">${signed(t.my_gain)}</b></span>
+        <span>Theirs <b>${signed(t.their_gain)}</b></span><span class="muted">Values ${t.fair_pct}% apart</span></div>`;
+  } catch (e) { out.innerHTML = `<p class="ff-err">${H.esc(e.message)}</p>`; }
 }
