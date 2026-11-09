@@ -619,11 +619,55 @@ def apartments(c, today):
                  "baths": ba, "lat": ll[0], "lon": ll[1], "nearest_stop": st, "stop_mi": mi, "amenities": am,
                  "available": _iso(date(today.year + 1, 6, 1)), "source": "Demo"}
                 for i, (a, n, r, sq, b, ba, ll, st, mi, am, age, _) in enumerate(APARTMENTS) if (age == 7) == (weeks == 1) or weeks == 0]
-        c.post("/api/apartments/import", json={"digest_date": day, "listings": rows})
+        if weeks == 0:                                    # a price cut between the two emails
+            next(r for r in rows if r["address"] == APARTMENTS[2][0])["rent"] -= 150
+        body = "\n".join(f"{r['address']}: ${r['rent']:,}, {r['beds']} bed / {r['baths']:g} bath, {r['sqft']:,} sq ft. {r['nearest_stop']} is {r['stop_mi']} mi away."
+                         for r in rows)
+        c.post("/api/apartments/import", json={"digest_date": day, "listings": rows, "save_photos": False,
+                                               "digest": {"subject": f"Apartment digest: week of {date.fromisoformat(day).strftime('%b %-d')}",
+                                                          "kind": "email", "body": f"New and notable this week (largest first)\n\n{body}\n\nMade-up demo email."}})
     ids = {x["url"]: x["id"] for x in c.get("/api/apartments").get_json()["listings"]}
     for i, a in enumerate(APARTMENTS):
         if a[-1]:
-            c.patch(f"/api/apartments/{ids[f'https://example.com/listing/demo-{i}']}", json={"status": a[-1], "rank": i})
+            c.patch(f"/api/apartments/{ids[f'https://example.com/listing/demo-{i}']}",
+                    json={"status": a[-1], "rank": i, **({"rating": 5 - i} if a[-1] != "passed" else {})})
+
+
+METRO_STOPS = ["Union Station", "Pearl Center", "Campus", "Riverfront", "Nob Hill"]
+
+
+def metro(c, today, rng):
+    """Made-up transit card history: weekday rides, a monthly benefit load, the odd bus."""
+    trips, start = [], today - timedelta(days=120)
+    for n in range(121):
+        day = start + timedelta(days=n)
+        if day.day == 1:
+            trips.append({"date": _iso(day), "time": "00:05", "desc": "SmartBenefits load", "change": 50.0, "kind": "benefit"})
+        if day.weekday() >= 5 or rng.random() < 0.55:
+            continue
+        a, b = rng.sample(METRO_STOPS, 2)
+        trips.append({"date": _iso(day), "time": f"{rng.randint(8, 10):02d}:{rng.randint(0, 59):02d}", "desc": "Exit", "entry": a, "exit": b,
+                      "change": -round(rng.choice((2.25, 2.25, 2.6, 3.1)), 2), "kind": "rail"})
+        if rng.random() < 0.2:
+            trips.append({"date": _iso(day), "time": "17:40", "desc": "Bus", "entry": "D4", "change": -2.25, "kind": "bus"})
+    c.post("/api/travel/metro/import", json={"trips": trips})
+    c.put("/api/travel/metro/benefit", json={"monthly": 50, "start": _iso(start.replace(day=1)), "label": "School transit benefit"})
+
+
+def trips(c, today):
+    """Two made-up trips: one coming up with bookings, one from last spring."""
+    c.put("/api/trips/settings", json={"home_airport": "PDX", "airlines": ["Alaska", "Delta"]})
+    s = today + timedelta(days=38)
+    c.post("/api/trips", json={"name": "Winter break in Lisbon", "start": _iso(s), "end": _iso(s + timedelta(days=7)),
+                               "places": "Lisbon; Porto", "travelers": 2, "notes": "Day trip to Sintra. Made-up demo trip.",
+                               "bookings": [{"kind": "flight", "airline": "Delta", "flight_no": "DL 0000", "from": "PDX", "to": "LIS",
+                                             "date": _iso(s), "time": "17:05", "cost": 912},
+                                            {"kind": "stay", "title": "Apartment in Alfama", "date": _iso(s), "end_date": _iso(s + timedelta(days=5)),
+                                             "cost": 640}]})
+    c.post("/api/trips", json={"name": "Weekend in Seattle", "places": "Seattle"})
+    p = today - timedelta(days=200)
+    c.post("/api/trips", json={"name": "Spring trip to Austin", "start": _iso(p), "end": _iso(p + timedelta(days=4)), "places": "Austin",
+                               "bookings": [{"kind": "flight", "airline": "Alaska", "from": "PDX", "to": "AUS", "date": _iso(p), "cost": 388}]})
 
 
 def build(app, store, schedule=None, today=None):
@@ -643,4 +687,6 @@ def build(app, store, schedule=None, today=None):
     goals(c, today)
     apartments(c, today)
     bike_rides(c, today, rng)
+    metro(c, today, rng)
+    trips(c, today)
     return store

@@ -87,12 +87,22 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
   Gmail connections and every Claude call answer 403 in the demo. The owner can copy their course schedule (no grades,
   notes or P/F choices) into the demo from Education → Planner → "Demo profile…" (`/api/demo/schedule`, stored in
   Firestore `demo/education`). `DEMO_MODE=0` turns the demo off. Seed data is made up, never the owner's.
-- `travel.py`: Travel. Capital Bikeshare: live bikes / e-bikes / docks at saved stations from the public GBFS feed
-  (`BIKESHARE_GBFS`, cached), ride history parsed from the "Ride Receipt" emails in Gmail (stations, times, line items,
+- `travel.py`: Travel → Commute. Capital Bikeshare: live bikes / e-bikes / docks at saved stations from the public GBFS
+  feed (`BIKESHARE_GBFS`, cached), ride history parsed from the "Ride Receipt" emails in Gmail (stations, times, line items,
   "Saved this trip"), membership payoff (savings vs the price the user enters), miles = straight line between stations
-  (receipts have no route), bank/card bikeshare charges from the ledger. Apartments: listings from the weekly digest
-  (`/api/apartments/import`, owner sign-in or `X-Ingest-Key` = env `APARTMENTS_INGEST_KEY`), user status / notes / rank
-  kept across digests, criteria labels (in budget / stretch / large), ranked wishlist, Leaflet map. `frontend/travel.js`.
+  (receipts have no route), bank/card bikeshare charges from the ledger. Metro: WMATA has no API, so trips come from the
+  SmarTrip usage-history CSV (`parse_smartrip_csv`, columns matched by keyword; re-imports only add new rows) plus the
+  monthly transit benefit the user enters (`fin_settings` `transit_benefit`) and WMATA charges in the ledger.
+  `/api/travel/commute` merges both by month.
+- `apartments.py`: Travel → Apartments. Listings from the weekly digest (`/api/apartments/import`, owner sign-in or
+  `X-Ingest-Key` = env `APARTMENTS_INGEST_KEY`), keyed by URL (query dropped) or address. User status / notes / rank /
+  rating (1-5) survive later digests; `private` is sticky and private spots never go in the KML export; a rent change adds
+  `price_history`. Photo URLs are hotlinked and copies are downloaded once into `apartment_photos` (base64, ≤700 KB; the
+  frontend falls back to `/api/apartments/photo/<id>` when the hotlink fails). Digest docs keep subject + body.
+  `/api/apartments/export.kml` for Google My Maps. Frontend `frontend/apartments.js` (Zillow-style cards, detail dialog).
+- `trips.py`: Travel → Trips. Trips with dates, places, travelers, notes and bookings (flight / stay / car / other);
+  prefilled Google Flights, Airbnb and Google Hotels searches and airline links (no airline/Flights booking API exists for
+  personal apps). Home airport + airlines in `travel/trip_settings`. Frontend `frontend/trips.js`.
 - `earnings.py`: paychecks (feeds Income/Taxes). Pub 15-T (2026) Worksheet 1A withholding, SS/Medicare, Illinois IL-700-T,
   year-end federal / IL nonresident / DC resident with credit for other-state tax. `SEED` holds the owner's past
   summer job (no employer name); payroll deposits are matched from the bank feed. `/api/taxes` builds the
@@ -103,7 +113,7 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
 `transactions` (ledger), `items` (Plaid), `inv_snapshots`, `inv_activity`, `holdings` (legacy), `health_days`, `workouts`, `integrations/whoop`, `oauth_states`,
 `training` (state/template/sessions), `education/profile`, `edu_courses`, `edu_syllabi`, `edu_syllabus_files`,
 `earnings/settings`, `paychecks`, `integrations/strava`, `strava_activities`, `race_plans`, `food_log/{date}`, `food_custom`, `food/goals`, `sports/favorites`,
-`travel/settings`, `bike_rides`, `apartments`, `apartment_digests`.
+`travel/settings`, `bike_rides`, `metro_trips`, `apartments`, `apartment_digests`, `apartment_photos`, `trips`, `travel/trip_settings`.
 
 ### Frontend map (`frontend/app.js`)
 Hash routes `#/section/tab`, `SECTIONS` config at the top. Finances: Net Worth, Cash & Cards, Investments,
@@ -112,7 +122,8 @@ Food; Unsplash photos hotlinked with credit); `#/health/<area>/<tab>` maps to a 
 The card photo morphs into the area banner with a View Transition (`viewSwap` from the shared `motion.js`).
 Calendar and Connections hang off the dashboard.
 Sports: My Teams, Schedule (month calendar), Standings, Find Teams (`sports.js`).
-Travel: Bikeshare, Apartments (`travel.js`, loaded on first visit).
+Travel opens on a dashboard of three photo cards like Health (Apartments, Commute, Trips); `#/travel/<area>/<tab>`;
+`travel.js` (loaded on first visit) draws its own heroes and tabs, with `apartments.js` and `trips.js`.
 Education: Overview, Syllabi, Grades & GPA, Degree Audit, Planner, Calendar. Goals: `goals.js` (loaded on first
 visit; widgets, detail, editor, library, coach drawer).
 Design tokens on `:root` in `styles.css` (`--accent`, `--pos`, `--neg`, `--warn`, `--exam`, `--done`, …).

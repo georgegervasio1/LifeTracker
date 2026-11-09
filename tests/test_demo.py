@@ -51,6 +51,16 @@ plan = c.get("/api/raceplans", headers=A).get_json()["plans"][0]
 assert c.get(f"/api/raceplans/{plan['id']}", headers=A).status_code == 200
 run = c.get(f"/api/running?year={y}", headers=A).get_json()["runs"][0]
 assert c.get(f"/api/running/{run['id']}", headers=A).get_json()["polyline"]
+apts = c.get("/api/apartments", headers=A).get_json()
+assert len(apts["listings"]) == 6 and apts["digests"][0]["subject"] and any(a.get("price_change") for a in apts["listings"])
+assert any(a.get("rating") for a in apts["listings"]) and len(apts["wishlist"]) == 2
+met = c.get("/api/travel/metro", headers=A).get_json()
+assert met["totals"]["rides"] > 20 and met["benefit"]["monthly"] == 50
+cm = c.get("/api/travel/commute", headers=A).get_json()
+assert cm["months"] and cm["months"][-1]["benefit"] == 50
+tp = c.get("/api/trips", headers=A).get_json()
+assert [t["when"] for t in tp["trips"]] == ["upcoming", "someday", "past"] and tp["trips"][0]["cost"] == 1552
+assert any(l["label"] == "Google Flights" for l in tp["trips"][0]["links"])
 
 # ---- the same data every time today (every server instance builds the same demo)
 docs1 = demo.template().docs

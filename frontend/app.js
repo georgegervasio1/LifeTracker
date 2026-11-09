@@ -27,7 +27,7 @@ const SECTIONS = {
     ["today", "Today"], ["tasks", "Tasks"], ["plan", "Academic plan"], ["syllabi", "Syllabi"], ["calendar", "Calendar"]] },
   goals: { title: "Goals", tabs: [] },
   sports: { title: "Sports", tabs: [["teams", "My Teams"], ["schedule", "Schedule"], ["standings", "Standings"], ["find", "Find Teams"]] },
-  travel: { title: "Travel", tabs: [["bike", "Bikeshare"], ["apartments", "Apartments"]] },
+  travel: { title: "Travel", tabs: [] },
 };
 
 // Health opens on a dashboard of five areas; each area has its own tabs. A tab maps to a panel in index.html.
@@ -65,6 +65,7 @@ function parseRoute() {
   const [section, tab] = path.split("/");
   routeQuery = new URLSearchParams(query || "");
   if (section === "health") return parseHealth(path.split("/").slice(1));
+  if (section === "travel") return { section, parts: path.split("/").slice(1) };
   if (!SECTIONS[section]) return { section: "home" };
   const tabs = SECTIONS[section].tabs;
   const alias = section === "finances" ? { overview: "networth", transactions: "cash", paychecks: "income", assistant: "networth" }[tab] : null;
@@ -82,6 +83,11 @@ function render() {
   $$(".route").forEach((r) => r.classList.toggle("active", r.dataset.route === section));
   $$(".section-links a").forEach((a) => a.classList.toggle("active", a.dataset.section === section));
   if (section === "health") return renderHealth(route);
+  if (section === "travel") {             // Travel draws its own dashboard, heroes and tabs (travel.js)
+    $("askBtn").classList.add("hidden"); $("chatDrawer").classList.add("hidden");
+    window.scrollTo({ top: 0 });
+    return travelModule().then((m) => m.renderTravel(route.parts)).catch(showError);
+  }
 
   const cfg = SECTIONS[section];
   const hasTabs = cfg && cfg.tabs.length;
@@ -183,7 +189,6 @@ async function load(section, tab) {
   if (section === "education") return loadEducation(tab);
   if (section === "goals") return (await goalsModule()).loadGoals();
   if (section === "sports") return (await sportsModule()).loadSports(tab);
-  if (section === "travel") return (await travelModule()).loadTravel(tab);
   if (section !== "finances") return;
   setChatPlace(tab);
   if (tab === "networth") return loadNetWorth();
@@ -217,12 +222,12 @@ async function sportsModule() {
   return sportsMod;
 }
 
-// Travel (bikeshare stations, apartment search) lives in travel.js, loaded on first use.
+// Travel (apartments, commute, trips) lives in travel.js, loaded on first use.
 let travelMod = null;
 async function travelModule() {
   if (!travelMod) {
     travelMod = await import("./travel.js");
-    travelMod.initTravel({ api, $, esc, toast, showError, usd, usd0, tileLayer, gmailToken, isDemo });
+    travelMod.initTravel({ api, $, esc, toast, showError, usd, usd0, tileLayer, gmailToken, isDemo, authFetch });
   }
   return travelMod;
 }
@@ -269,6 +274,11 @@ async function api(path, opts = {}) {
   if (res.status === 401 && /token/.test(data.error || "")) throw new Error("Your sign-in expired. Sign out and sign in again.");
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;
+}
+
+// Raw fetch with the same auth (for blobs such as saved apartment photos).
+async function authFetch(path, opts = {}) {
+  return fetch(API_BASE + path, { ...opts, headers: { Authorization: await authHeader(), ...(opts.headers || {}) } });
 }
 
 // Errors from page code (not the server) shouldn't surface as raw JavaScript messages.

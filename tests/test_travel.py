@@ -110,7 +110,7 @@ hdr = {"X-Ingest-Key": "k" * 32}
 assert c.post("/api/apartments/import", json={"listings": []}).status_code == 401      # no sign-in, no key
 assert c.post("/api/apartments/import", json={"listings": []}, headers=hdr).status_code == 403
 os.environ["APARTMENTS_INGEST_KEY"] = "k" * 32
-travel.owner_uid = lambda: "owner1"
+import apartments; apartments.owner_uid = lambda: "owner1"
 assert c.post("/api/apartments/import", json={"listings": []}, headers={"X-Ingest-Key": "x" * 32}).status_code == 403
 r = c.post("/api/apartments/import", json={"digest_date": "2026-11-08", "listings": [L[0]]}, headers=hdr)
 assert r.status_code == 200 and r.get_json()["added"] == 1

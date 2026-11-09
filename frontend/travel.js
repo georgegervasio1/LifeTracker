@@ -1,22 +1,106 @@
-// Travel: Capital Bikeshare at your saved stations (live from the public feed) and an apartment search with a
-// ranked wishlist (listings arrive from the weekly digest or an imported file).
-// app.js passes its helpers in with initTravel() and calls loadTravel(tab) on #/travel/<tab>.
+// Travel: a dashboard of three photo cards (Apartments, Commute, Trips), like Health. Each area has its own tabs.
+// Commute (Capital Bikeshare + Metro) lives here; Apartments in apartments.js, Trips in trips.js.
+// app.js calls renderTravel(parts) for #/travel/<area>/<tab>.
+import { initApartments, loadApartments, apartmentsData } from "./apartments.js";
+import { initTrips, loadTrips, tripsData } from "./trips.js";
 
-let H;                        // { api, $, esc, toast, showError, usd0, isDemo }
-let bike = null, apts = null, rides = null;
-let aptFilter = "new", aptSort = "sqft";
-let refreshTimer = null, aptMap = null, wishSort = null, rideMap = null;
+let H;                        // { api, $, esc, toast, showError, usd, usd0, tileLayer, gmailToken, isDemo, authFetch, viewSwap }
+let bike = null, rides = null, metro = null;
+let refreshTimer = null, rideMap = null;
 
-export function initTravel(helpers) { H = helpers; }
+const UNSPLASH = (id) => `https://images.unsplash.com/${id}?auto=format&fit=crop&w=1600&q=70`;
+const AREAS = {
+  apartments: { title: "Apartments", tabs: [["listings", "Listings"], ["saved", "Saved"], ["map", "Map"], ["emails", "Weekly emails"]],
+                img: "photo-1592252566776-c680fa586020", credit: ["Benjamin R.", "body-of-water-near-green-trees-and-high-rise-buildings-during-daytime-IVTis_xBsUQ"],
+                sub: "Listings from your weekly search, saved spots and the map" },
+  commute:    { title: "Commute", tabs: [["overview", "Overview"], ["bike", "Bikeshare"], ["metro", "Metro"]],
+                img: "photo-1569328922596-4c04460c91a2", credit: ["Andy Feliciotti", "people-biking-on-road-and-different-vehicles-viewing-united-states-capitol-during-daytime-screenshot-isg8AL7-6uk"],
+                sub: "Capital Bikeshare and Metro, and your transit benefit" },
+  trips:      { title: "Trips", tabs: [["trips", "Trips"]],
+                img: "photo-1527605158555-853f200063e9", credit: ["William Bayreuther", "plane-wing-through-glass-window-C0KdBbibUYo"],
+                sub: "Vacations and travel: dates, places, flights and stays" },
+};
+const LEGACY = { bike: ["commute", "bike"], apartments: ["apartments", "listings"], metro: ["commute", "metro"] };
 
-export async function loadTravel(tab) {
+export function initTravel(helpers) {
+  H = helpers;
+  initApartments(H);
+  initTrips(H);
+}
+
+export function parseTravel(parts) {
+  let [area, tab] = parts;
+  if (!AREAS[area] && LEGACY[area]) [area, tab] = LEGACY[area];
+  if (!AREAS[area]) return { area: "home" };
+  const t = AREAS[area].tabs.find(([k]) => k === tab) || AREAS[area].tabs[0];
+  return { area, tab: t[0] };
+}
+
+export async function renderTravel(parts) {
   clearInterval(refreshTimer);
-  if (tab === "apartments") return loadApartments();
+  const r = parseTravel(parts), A = AREAS[r.area];
+  const sub = H.$("subnav");
+  sub.classList.toggle("hidden", !A);
+  if (A) {
+    H.$("subnavTitle").innerHTML = `<a class="subnav-crumb" href="#/travel">Travel</a>${H.esc(A.title)}`;
+    H.$("subnavTabs").innerHTML = A.tabs.length > 1 ? A.tabs.map(([k, label]) =>
+      `<a href="#/travel/${r.area}/${k}" class="${k === r.tab ? "active" : ""}">${label}</a>`).join("") : "";
+    H.$("sectionControls").classList.add("hidden");
+  }
+  document.title = `${A ? A.title : "Travel"} · LifeTracker`;
+  const root = H.$("travelRoot");
+  if (!A) return renderHome(root);
+  if (root.dataset.area !== r.area) {
+    root.innerHTML = `<div class="hero-wrap tr-hero-wrap"><div class="health-hero tr-hero">
+        <div class="hero-media"><img src="${UNSPLASH(A.img)}" alt="" /></div>
+        <div class="hero-text"><a class="hero-back" href="#/travel">Travel</a><h1>${H.esc(A.title)}</h1><p>${H.esc(A.sub)}</p></div>
+        <a class="photo-credit" target="_blank" rel="noopener" href="https://unsplash.com/photos/${A.credit[1]}">Photo: ${H.esc(A.credit[0])} / Unsplash</a>
+      </div></div><div id="travelArea"></div>`;
+    root.dataset.area = r.area;
+  }
+  const area = H.$("travelArea");
+  if (r.area === "apartments") return loadApartments(r.tab, area);
+  if (r.area === "trips") return loadTrips(area);
+  if (r.tab === "metro") return loadMetro(area);
+  if (r.tab === "overview") return loadOverview(area);
+  area.innerHTML = `<div id="travelBike"></div>`;
   await loadBike();
   refreshTimer = setInterval(() => {
-    if (document.visibilityState === "visible" && location.hash.startsWith("#/travel/bike")) loadBike(true).catch(() => {});
+    if (document.visibilityState === "visible" && /^#\/travel\/commute\/bike/.test(location.hash)) loadBike(true).catch(() => {});
     else if (!location.hash.startsWith("#/travel")) clearInterval(refreshTimer);
   }, 60000);
+}
+
+// ---------------------------------------------------------------- home: three photo cards
+async function renderHome(root) {
+  root.dataset.area = "home";
+  const card = (k, stat) => {
+    const A = AREAS[k];
+    return `<a class="hd-card tr-card" data-area="${k}" href="#/travel/${k}">
+      <span class="hd-media"><img src="${UNSPLASH(A.img)}" alt="" loading="eager" /></span><span class="hd-shade"></span>
+      <span class="hd-body"><span class="hd-title">${A.title}</span>
+        <span class="hd-stat">${stat ? `<b>${H.esc(stat.big)}</b>${stat.unit ? `<span>${H.esc(stat.unit)}</span>` : ""}` : `<b class="hd-skel"></b>`}</span>
+        <span class="hd-line">${stat ? H.esc(stat.line) : "&nbsp;"}</span></span>
+      <span class="hd-go" aria-hidden="true">›</span></a>`;
+  };
+  const draw = (S = {}) => {
+    root.innerHTML = `<div class="wrap"><div class="hd-head"><div><p class="eyebrow">Travel</p><h1 class="title">Where you're going</h1></div></div>
+      <div class="hd-grid tr-grid">${card("apartments", S.apartments)}${card("commute", S.commute)}${card("trips", S.trips)}</div>
+      <p class="hint tr-credits">Photos: ${Object.values(AREAS).map((A) => `<a href="https://unsplash.com/photos/${A.credit[1]}" target="_blank" rel="noopener">${H.esc(A.credit[0])}</a>`).join(", ")} / Unsplash</p></div>`;
+  };
+  draw();
+  const S = {};
+  await Promise.all([
+    apartmentsData().then((A) => { const d = A.digests[0];
+      S.apartments = { big: String(A.wishlist.length), unit: "saved", line: d ? `Latest email ${fd(d.date)}: ${d.new} new` : `${A.listings.length} listings` }; }).catch(() => { S.apartments = { big: "—", line: "Open to set up" }; }),
+    H.api("/api/travel/commute").then((C) => { const m = C.months[C.months.length - 1];
+      S.commute = m ? { big: String(m.metro_rides + m.bike_rides), unit: "trips this month", line: `${m.bike_rides} by bike · ${m.metro_rides} by Metro${m.benefit != null ? ` · ${H.usd.format(Math.max(0, m.benefit - m.metro_fares))} benefit left` : ""}` }
+        : { big: "—", line: "Bring in your rides and Metro trips" }; }).catch(() => { S.commute = { big: "—", line: "Open to set up" }; }),
+    tripsData().then((T) => { const next = T.trips.find((t) => t.when === "upcoming" || t.when === "now");
+      S.trips = next ? { big: next.when === "now" ? "Now" : String(next.days_until), unit: next.when === "now" ? "" : next.days_until === 1 ? "day" : "days", line: `${next.name}${next.places?.length ? ` · ${next.places[0]}` : ""}` }
+        : { big: String(T.trips.length), unit: T.trips.length === 1 ? "trip" : "trips", line: "Add a trip" }; }).catch(() => { S.trips = { big: "—", line: "Add a trip" }; }),
+  ]);
+  if (H.$("travelRoot").dataset.area === "home") draw(S);
 }
 
 const yr = new Date().getFullYear();
@@ -264,164 +348,105 @@ function openMembership() {
   dlg.showModal();
 }
 
-// ---------------------------------------------------------------- Apartments
-const STATUS = { new: "New", saved: "Wishlist", touring: "Touring", applied: "Applied", passed: "Passed" };
 
-async function loadApartments() {
-  const root = H.$("travelApts");
-  if (!apts) root.innerHTML = `<p class="empty">Loading listings…</p>`;
-  apts = await H.api("/api/apartments");
-  renderApts();
-}
-
-function setApts(r) { apts = r; renderApts(); }
-
-function facts(a) {
-  return [a.rent != null ? `${money(a.rent)}/mo` : "", a.sqft ? `${num(a.sqft)} sq ft` : "",
-    a.beds != null ? `${a.beds} bd` : "", a.baths != null ? `${a.baths} ba` : ""].filter(Boolean).join(" · ");
-}
-
-function pills(a) {
-  return [a.is_new && a.status === "new" ? `<span class="pill pill-on_track">New</span>` : "",
-    a.fit === "stretch" ? `<span class="pill pill-warn">Stretch</span>` : a.fit === "over" ? `<span class="pill pill-missing">Over budget</span>` : "",
-    a.big ? `<span class="pill pill-met">Large</span>` : "",
-    a.status !== "new" ? `<span class="pill pill-plain">${STATUS[a.status]}</span>` : ""].join("");
-}
-
-function where(a) {
-  return [a.neighborhood, a.nearest_stop ? `${a.nearest_stop}${a.stop_mi != null ? ` (${a.stop_mi} mi)` : ""}` : "",
-    a.available ? `Available ${/^\d{4}-\d{2}-\d{2}$/.test(a.available) ? fd(a.available) : a.available}` : ""].filter(Boolean).join(" · ");
-}
-
-function listingRow(a) {
-  return `<div class="apt-row" data-id="${a.id}">
-    <div class="apt-main">
-      <div class="apt-title"><a href="${H.esc(a.url)}" target="_blank" rel="noopener">${H.esc(a.address || a.title)}</a>${pills(a)}</div>
-      <div class="apt-facts">${H.esc(facts(a)) || `<span class="muted">No rent or size listed</span>`}</div>
-      ${where(a) ? `<div class="muted apt-where">${H.esc(where(a))}</div>` : ""}
-      ${a.amenities?.length ? `<div class="apt-chips">${a.amenities.map((x) => `<span class="apt-chip">${H.esc(x)}</span>`).join("")}</div>` : ""}
+// ---------------------------------------------------------------- Commute overview: both modes, month by month
+async function loadOverview(area) {
+  if (!area.innerHTML.includes("tr-overview")) area.innerHTML = `<p class="empty">Loading…</p>`;
+  const C = await H.api("/api/travel/commute");
+  const M = C.months, last = M[M.length - 1], B = C.metro.benefit || {};
+  const max = Math.max(1, ...M.map((m) => m.metro_rides + m.bike_rides));
+  const benefitNow = last && last.benefit != null ? last.benefit - last.metro_fares : null;
+  area.innerHTML = `<div class="tr-overview">
+    <div class="kpis kpis-3">
+      <div class="kpi"><span class="kpi-label">Trips this month</span><span class="kpi-value">${last ? last.metro_rides + last.bike_rides : "—"}</span>
+        <span class="kpi-sub">${last ? `${last.bike_rides} bikeshare · ${last.metro_rides} Metro` : "No trips yet"}</span></div>
+      <div class="kpi"><span class="kpi-label">${H.esc(B.label || "Transit benefit")} left</span><span class="kpi-value">${benefitNow != null ? H.usd.format(Math.max(0, benefitNow)) : "—"}</span>
+        <span class="kpi-sub">${benefitNow != null ? `of ${H.usd.format(last.benefit)} this month, after ${H.usd.format(last.metro_fares)} in fares` : `<a class="link-sm" href="#/travel/commute/metro">Set up your benefit</a>`}</span></div>
+      <div class="kpi"><span class="kpi-label">Bikeshare membership</span><span class="kpi-value ${C.bike.membership.paid_off ? "pos" : ""}">${C.bike.membership.price == null ? "—" : C.bike.membership.paid_off ? "Paid off" : H.usd.format(-C.bike.membership.net)}</span>
+        <span class="kpi-sub">${C.bike.membership.price == null ? `<a class="link-sm" href="#/travel/commute/bike">Enter what you paid</a>` : C.bike.membership.paid_off ? `${H.usd.format(C.bike.membership.net)} ahead` : "to go"}</span></div>
     </div>
-    <div class="apt-acts">
-      ${["saved", "touring", "applied"].includes(a.status) ? `<span class="muted">On wishlist</span>`
-        : `<button class="btn btn-secondary btn-sm" data-st="saved">Save</button>`}
-      ${a.status === "passed" ? `<button class="text-btn" data-st="new">Undo pass</button>` : `<button class="text-btn" data-st="passed">Pass</button>`}
+    <div class="card"><h3 class="card-head">Trips by month</h3>
+      ${M.length ? `<div class="cm-chart">${M.map((m) => `<div class="cm-col" title="${m.month}: ${m.bike_rides} bikeshare, ${m.metro_rides} Metro">
+        <div class="cm-stack"><span class="cm-metro" style="height:${(m.metro_rides / max * 100).toFixed(1)}%"></span><span class="cm-bike" style="height:${(m.bike_rides / max * 100).toFixed(1)}%"></span></div>
+        <span class="bk-mlabel">${new Date(m.month + "-01T00:00").toLocaleDateString("en-US", { month: "short" })}</span></div>`).join("")}</div>
+        <div class="cm-legend"><span><i class="cm-bike"></i>Bikeshare</span><span><i class="cm-metro"></i>Metro</span></div>`
+        : `<p class="hint">Bring in your bikeshare ride receipts and your SmarTrip history to see both here.</p>`}
     </div>
-  </div>`;
+    <div class="card"><h3 class="card-head">Money by month</h3>
+      ${M.length ? `<div class="h-table"><div class="tr-mrow tr-mhead"><span>Month</span><span>Metro fares</span><span>Benefit</span><span>Bikeshare</span><span>Bike miles</span></div>
+        ${[...M].reverse().map((m) => `<div class="tr-mrow"><span>${new Date(m.month + "-01T00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" })}</span>
+          <span>${H.usd.format(m.metro_fares)}</span><span>${m.benefit != null ? H.usd.format(m.benefit) : "—"}</span><span>${H.usd.format(m.bike_spent)}</span><span>${m.bike_miles ? m.bike_miles.toFixed(1) : "—"}</span></div>`).join("")}</div>
+        <p class="hint">Bike miles are straight-line estimates between stations. Metro fares come from your SmarTrip history.</p>` : `<p class="hint">Nothing yet.</p>`}
+    </div></div>`;
 }
 
-function wishCard(a, i) {
-  return `<div class="card apt-wish" data-id="${a.id}">
-    <span class="apt-rank drag" title="Drag to reorder">${i + 1}</span>
-    <div class="apt-wmain">
-      <div class="apt-title"><a href="${H.esc(a.url)}" target="_blank" rel="noopener">${H.esc(a.address || a.title)}</a>${pills({ ...a, status: "new", is_new: false })}</div>
-      <div class="apt-facts">${H.esc(facts(a))}</div>
-      ${where(a) ? `<div class="muted apt-where">${H.esc(where(a))}</div>` : ""}
-      <textarea class="input apt-notes" rows="1" placeholder="Notes: questions, tour time, what you liked" data-notes>${H.esc(a.notes || "")}</textarea>
-    </div>
-    <div class="apt-wside">
-      <select class="select apt-status" data-status aria-label="Status">${["saved", "touring", "applied", "passed"].map((s) =>
-        `<option value="${s}" ${a.status === s ? "selected" : ""}>${STATUS[s]}</option>`).join("")}</select>
-    </div>
-  </div>`;
+// ---------------------------------------------------------------- Metro: SmarTrip history and the transit benefit
+async function loadMetro(area) {
+  if (!metro) area.innerHTML = `<p class="empty">Loading Metro…</p>`;
+  metro = await H.api("/api/travel/metro");
+  renderMetro(area);
 }
 
-function renderApts() {
-  const root = H.$("travelApts"), A = apts, C = A.criteria || {};
-  const byId = Object.fromEntries(A.listings.map((a) => [a.id, a]));
-  const wish = A.wishlist.map((id) => byId[id]).filter(Boolean);
-  const newCount = A.listings.filter((a) => a.is_new && a.status === "new").length;
-  const sorters = { sqft: (a, b) => (b.sqft || 0) - (a.sqft || 0), rent: (a, b) => (a.rent ?? 1e9) - (b.rent ?? 1e9),
-                    newest: (a, b) => (b.first_seen || "").localeCompare(a.first_seen || "") };
-  const shown = A.listings.filter((a) => aptFilter === "new" ? a.is_new && a.status === "new"
-    : aptFilter === "passed" ? a.status === "passed" : a.status !== "passed").sort(sorters[aptSort]);
-  const last = A.latest_digest ? `Latest digest ${fd(A.latest_digest)} · ${newCount} new` : "No digest received yet";
-  const crit = [C.max_rent != null ? `Up to ${money(C.max_rent)}${C.stretch_rent != null ? ` (stretch ${money(C.stretch_rent)})` : ""}` : "",
-    C.min_beds != null ? `${C.min_beds}+ beds` : "", C.move_in ? `Move in ${fd(C.move_in)}` : ""].filter(Boolean).join(" · ");
-  const seg = (v, label) => `<button class="seg ${aptFilter === v ? "seg-on" : ""}" data-af="${v}">${label}</button>`;
-  root.innerHTML = `
-    <div class="tr-head">
-      <div><p class="eyebrow">Apartment search${C.city ? ` · ${H.esc(C.city)}` : ""}</p><h1 class="title">${wish.length ? `${wish.length} on your wishlist` : "Apartments"}</h1>
-        <p class="lede-sm">${H.esc(last)}${crit ? ` · ${H.esc(crit)}` : ""}</p></div>
-      <div class="goals-actions"><label class="btn btn-secondary btn-sm">Import file<input type="file" id="aptImport" accept=".json" hidden /></label>
-        <button class="btn btn-secondary btn-sm" id="aptCrit">Criteria</button></div>
-    </div>
-    ${A.listings.length ? "" : `<div class="card empty-state"><h3>No listings yet</h3><p>Listings from your weekly apartment digest land here, so you can save the best ones to a ranked wishlist with notes. You can also import a listings file.</p>
-      <div class="empty-actions"><button class="btn btn-secondary" id="aptCrit2">Set your criteria</button></div></div>`}
-    ${wish.length ? `<h2 class="section-label">Wishlist</h2><div class="apt-wishlist" id="aptWish">${wish.map(wishCard).join("")}</div>
-      <p class="hint">Drag the numbers to rank them.</p>` : A.listings.length ? `<p class="hint">Save listings to build a ranked wishlist.</p>` : ""}
-    ${A.listings.some((a) => a.lat != null) ? `<div class="card card-flush apt-map-card"><div id="aptMap" class="apt-map"></div></div>` : ""}
-    ${A.listings.length ? `<div class="apt-bar"><div class="seg-row">${seg("new", `New${newCount ? ` ${newCount}` : ""}`)}${seg("all", "All")}${seg("passed", "Passed")}</div>
-      <select class="select" id="aptSort" aria-label="Sort"><option value="sqft">Largest first</option><option value="rent">Lowest rent</option><option value="newest">Newest</option></select></div>
-      <div class="card apt-list">${shown.length ? shown.map(listingRow).join("") : `<p class="empty">${aptFilter === "new" ? "Nothing new in the latest digest." : "Nothing here."}</p>`}</div>` : ""}`;
-
-  root.querySelectorAll("[data-af]").forEach((b) => (b.onclick = () => { aptFilter = b.dataset.af; renderApts(); }));
-  const so = H.$("aptSort"); if (so) { so.value = aptSort; so.onchange = () => { aptSort = so.value; renderApts(); }; }
-  H.$("aptImport").onchange = importApts;
-  H.$("aptCrit").onclick = openCriteria;
-  H.$("aptCrit2")?.addEventListener("click", openCriteria);
-  root.querySelectorAll(".apt-row [data-st]").forEach((b) => (b.onclick = () =>
-    patch(b.closest("[data-id]").dataset.id, { status: b.dataset.st, ...(b.dataset.st === "saved" ? { rank: wish.length } : {}) })));
-  root.querySelectorAll(".apt-wish").forEach((card) => {
-    const id = card.dataset.id;
-    card.querySelector("[data-status]").onchange = (e) => patch(id, { status: e.target.value });
-    const ta = card.querySelector("[data-notes]");
-    const grow = () => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; };
-    grow(); ta.oninput = grow;
-    ta.onchange = () => H.api(`/api/apartments/${id}`, { method: "PATCH", body: JSON.stringify({ notes: ta.value }) })
-      .then((r) => { apts = r; H.toast("Notes saved"); }).catch(H.showError);
+function renderMetro(area) {
+  const M = metro, B = M.benefit || {}, T = M.totals;
+  const months = Object.entries(M.by_month).slice(-12);
+  const cur = months.length ? months[months.length - 1][1] : null;
+  const benefitCard = B.monthly == null
+    ? `<div class="card"><h3 class="card-head">Transit benefit</h3><p class="hint">If school or work loads money onto your SmarTrip card each month (SmartBenefits), enter the amount to see how much is left each month.</p>
+        <button class="btn btn-secondary btn-sm" data-ben>Set up benefit</button></div>`
+    : `<div class="card"><div class="bk-top"><h3 class="card-head">${H.esc(B.label || "Transit benefit")}</h3><button class="text-btn" data-ben>Edit</button></div>
+        ${cur && cur.benefit != null ? `<div class="bk-verdict ${cur.benefit_left >= 0 ? "" : "neg"}">${H.usd.format(Math.max(0, cur.benefit_left))} left</div>
+          <p class="muted">${H.usd.format(cur.fares)} in fares of ${H.usd.format(cur.benefit)} this month${cur.benefit_left < 0 ? `, ${H.usd.format(-cur.benefit_left)} over` : ""}</p>
+          <div class="goal-bar bk-pbar"><div class="goal-fill pace-on_track" style="width:${Math.min(100, (cur.fares / cur.benefit) * 100).toFixed(1)}%"></div></div>` : `<p class="hint">Not active this month.</p>`}
+        <p class="hint">${H.usd.format(B.monthly)} a month${B.start ? ` from ${fd(B.start)}` : ""}${B.end ? ` to ${fd(B.end)}` : ""}. Fares come from your SmarTrip history; import it again to bring this up to date.</p></div>`;
+  area.innerHTML = `
+    <div class="tr-head"><div><p class="eyebrow">Metro</p><h1 class="title">${T.rides ? `${T.rides} ride${T.rides === 1 ? "" : "s"}` : "SmarTrip"}</h1>
+      <p class="lede-sm">${T.rides ? `${fd(T.first)} to ${fd(T.last)}${M.balance != null ? ` · card balance ${H.usd.format(M.balance)} on ${fd(M.balance_date)}` : ""}` : "Import your card's usage history to see trips and fares."}</p></div>
+      <div class="goals-actions"><label class="btn btn-primary btn-sm">Import SmarTrip CSV<input type="file" id="mtImport" accept=".csv,text/csv" hidden /></label></div></div>
+    <div class="grid-2 bk-two">${benefitCard}
+      <div class="card"><h3 class="card-head">Rides by month</h3>${months.length ? `<div class="bk-months">${months.map(([m, v]) => `<div class="bk-month" title="${m}: ${v.rail} rail, ${v.bus} bus, ${H.usd.format(v.fares)}">
+        <span class="bk-bar" style="height:${Math.max(4, (v.rides / Math.max(1, ...months.map(([, x]) => x.rides))) * 100).toFixed(0)}%"></span>
+        <span class="bk-mlabel">${new Date(m + "-01T00:00").toLocaleDateString("en-US", { month: "short" })}</span></div>`).join("")}</div>` : `<p class="hint">No trips yet.</p>`}</div></div>
+    ${T.rides ? "" : `<div class="card"><h3 class="card-head">How to get your SmarTrip history</h3>
+      <p class="hint">WMATA doesn't share trips with other apps, so this uses the file you can download. Sign in at smartrip.wmata.com, open your card, choose Card usage (or Usage history), pick the dates, and export or download it as CSV. Then press Import SmarTrip CSV here. Importing again later only adds new trips.</p></div>`}
+    ${M.top_stations.length ? `<div class="card"><h3 class="card-head">Top stations</h3>${M.top_stations.map((s) => `<div class="bk-li"><span>${H.esc(s.name)}</span><span class="muted">${s.visits}</span></div>`).join("")}</div>` : ""}
+    ${M.trips.length ? `<div class="card"><div class="bk-top"><h3 class="card-head">Recent activity</h3><button class="text-btn danger" id="mtForget">Forget Metro trips</button></div>
+      ${M.trips.slice(0, 15).map((t) => `<div class="bk-ride"><div><div>${t.kind === "rail" ? `${H.esc(t.entry || "?")} <span class="muted">to</span> ${H.esc(t.exit || "?")}` : t.kind === "bus" ? `Bus ${H.esc(t.entry)}` : H.esc(t.desc || t.kind)}</div>
+        <div class="muted">${fd(t.date)}${t.time ? ` · ${t.time}` : ""} · ${{ rail: "Metrorail", bus: "Metrobus", entry: "Entry", load: "Added value", benefit: "Benefit", other: "Other" }[t.kind]}</div></div>
+        <div class="bk-ride-amt ${t.change > 0 ? "pos" : ""}">${t.change != null && t.change !== 0 ? (t.change > 0 ? "+" : "−") + H.usd.format(Math.abs(t.change)) : ""}</div></div>`).join("")}</div>` : ""}
+    ${M.bank_total ? `<p class="hint">Your bank and card data also show ${H.usd.format(M.bank_total)} paid to WMATA or SmarTrip in the last 12 months.</p>` : ""}`;
+  area.querySelectorAll("[data-ben]").forEach((b) => (b.onclick = () => openBenefit(area)));
+  H.$("mtImport").onchange = async (ev) => {
+    const f = ev.target.files[0]; ev.target.value = "";
+    if (!f) return;
+    try { metro = await H.api("/api/travel/metro/import", { method: "POST", body: JSON.stringify({ csv: await f.text() }) }); renderMetro(area);
+      H.toast(`Read ${metro.read} rows, ${metro.added} new`); } catch (e) { H.showError(e); }
+  };
+  H.$("mtForget")?.addEventListener("click", async () => {
+    if (!confirm("Remove every imported Metro trip from LifeTracker?")) return;
+    try { metro = await H.api("/api/travel/metro", { method: "DELETE" }); renderMetro(area); } catch (e) { H.showError(e); }
   });
-  wishSort?.destroy(); wishSort = null;
-  if (H.$("aptWish") && window.Sortable) {
-    wishSort = Sortable.create(H.$("aptWish"), { handle: ".apt-rank", animation: 150, onEnd: () => {
-      const ids = [...H.$("aptWish").children].map((el) => el.dataset.id);
-      H.api("/api/apartments/order", { method: "PUT", body: JSON.stringify({ ids }) }).then(setApts).catch(H.showError);
-    } });
+}
+
+function openBenefit(area) {
+  let d = document.getElementById("benDialog");
+  if (!d) {
+    d = Object.assign(document.createElement("dialog"), { id: "benDialog", className: "dialog" });
+    d.innerHTML = `<form class="dialog-form" method="dialog"><h3>Transit benefit</h3>
+      <p class="hint span-2">The amount loaded onto your SmarTrip card each month, for example through your school's SmartBenefits program.</p>
+      <label class="span-2">Name<input class="input" name="label" placeholder="School SmartBenefits" maxlength="60" /></label>
+      <label class="span-2">Amount per month<input class="input" name="monthly" inputmode="decimal" placeholder="Blank until you enter it" /></label>
+      <label>Starts<input class="input" type="date" name="start" /></label><label>Ends (optional)<input class="input" type="date" name="end" /></label>
+      <div class="span-2 dialog-actions"><button class="btn btn-primary" value="save">Save</button><button class="btn btn-secondary" value="cancel" formnovalidate>Cancel</button></div></form>`;
+    document.body.append(d);
   }
-  drawMap(A.listings.filter((a) => a.lat != null && a.lon != null && a.status !== "passed"), new Set(A.wishlist));
-}
-
-function drawMap(rows, wish) {
-  aptMap?.remove(); aptMap = null;
-  if (!rows.length || !window.L || !H.$("aptMap")) return;
-  aptMap = L.map("aptMap", { scrollWheelZoom: false, attributionControl: true });
-  H.tileLayer().addTo(aptMap);
-  const pts = rows.map((a) => {
-    const on = wish.has(a.id);
-    L.circleMarker([a.lat, a.lon], { radius: on ? 8 : 6, weight: 2, color: getComputedStyle(document.body).getPropertyValue(on ? "--accent" : "--text-3").trim(),
-      fillOpacity: on ? 0.9 : 0.35 }).addTo(aptMap)
-      .bindPopup(`<strong>${H.esc(a.address || a.title)}</strong><br>${H.esc(facts(a))}`);
-    return [a.lat, a.lon];
-  });
-  aptMap.fitBounds(pts, { padding: [28, 28], maxZoom: 15 });
-}
-
-async function patch(id, body) {
-  try { setApts(await H.api(`/api/apartments/${id}`, { method: "PATCH", body: JSON.stringify(body) })); } catch (e) { H.showError(e); }
-}
-
-async function importApts(ev) {
-  const file = ev.target.files[0];
-  ev.target.value = "";
-  if (!file) return;
-  try {
-    let body = JSON.parse(await file.text());
-    if (Array.isArray(body)) body = { listings: body };
-    const r = await H.api("/api/apartments/import", { method: "POST", body: JSON.stringify(body) });
-    setApts(r);
-    H.toast(`Imported: ${r.added} new, ${r.updated} updated${r.skipped.length ? `, ${r.skipped.length} skipped` : ""}`);
-  } catch (e) { H.showError(e instanceof SyntaxError ? new Error("That file isn't valid JSON.") : e); }
-}
-
-function openCriteria() {
-  const dlg = H.$("aptDialog"), f = dlg.querySelector("form"), C = apts.criteria || {};
-  for (const k of ["city", "max_rent", "stretch_rent", "min_beds", "big_sqft", "move_in"]) f.elements[k].value = C[k] ?? "";
+  const f = d.querySelector("form"), B = metro.benefit || {};
+  f.elements.label.value = B.label || ""; f.elements.monthly.value = B.monthly ?? ""; f.elements.start.value = B.start || ""; f.elements.end.value = B.end || "";
   f.onsubmit = async (e) => {
     e.preventDefault();
-    if (e.submitter?.value === "cancel") return dlg.close();
-    try {
-      setApts(await H.api("/api/apartments/criteria", { method: "PUT", body: JSON.stringify(Object.fromEntries(new FormData(f))) }));
-      dlg.close(); H.toast("Criteria saved");
-    } catch (err) { H.showError(err); }
+    if (e.submitter?.value === "cancel") return d.close();
+    try { metro = await H.api("/api/travel/metro/benefit", { method: "PUT", body: JSON.stringify(Object.fromEntries(new FormData(f))) }); d.close(); renderMetro(area); H.toast("Benefit saved"); }
+    catch (err) { H.showError(err); }
   };
-  dlg.showModal();
+  d.showModal();
 }

@@ -1,4 +1,4 @@
-"""Travel: Capital Bikeshare at your saved stations, and an apartment search with a wishlist.
+"""Travel → Commute: Capital Bikeshare (live stations, rides from receipts) and Metro (SmarTrip trips, transit benefit).
 
 Bikeshare (live data from the system's public GBFS feed, no key):
   GET  /api/travel/bike                    saved stations with live bikes / e-bikes / docks, plus bikeshare spend
@@ -13,25 +13,20 @@ Bikeshare rides (from the "Ride Receipt" emails the system sends after each ride
   DELETE /api/travel/bike/rides            forget every imported ride
 Miles are an estimate: the straight line from the start station to the end station (receipts carry no route).
 
-Apartments (listings arrive from the weekly digest, or a file you import):
-  GET    /api/apartments                   listings, criteria, digests
-  POST   /api/apartments/import            {digest_date?, listings: [...]}  owner sign-in, or X-Ingest-Key
-  PATCH  /api/apartments/<id>              {status?, notes?, rank?}
-  DELETE /api/apartments/<id>
-  PUT    /api/apartments/criteria          {city, max_rent, stretch_rent, min_beds, move_in, big_sqft}
-  PUT    /api/apartments/order             {ids: [...]}  wishlist order
+Metro (SmarTrip has no API; trips come from the card's usage history CSV, and fares from bank charges):
+  GET    /api/travel/metro                 trips, monthly fares vs the transit benefit, bank charges
+  POST   /api/travel/metro/import          {csv: "<SmarTrip usage history>"} or {trips: [...]}
+  PUT    /api/travel/metro/benefit         {monthly, start, end, label}  e.g. a school or employer SmartBenefits amount
+  DELETE /api/travel/metro                 forget imported Metro trips
+  GET    /api/travel/commute               both modes by month (rides and money), for the Commute overview
 
-Firestore (users/{uid}/...): travel/settings {bike_stations, apt_criteria, membership, bike_gmail}, bike_rides/{id},
-apartments/{id}, apartment_digests/{date}.
-A listing keeps what you added (status, notes, rank) when the digest sends it again. Nothing is guessed:
-a field the listing didn't give stays blank.
-
-The digest can post without a browser sign-in by sending header X-Ingest-Key equal to env APARTMENTS_INGEST_KEY
-(Secret Manager: apartments-ingest-key). Those writes go to the ALLOWED_EMAIL owner's data. No key set = off.
+Firestore (users/{uid}/...): travel/settings {bike_stations, membership, bike_gmail, transit_benefit, apt_criteria},
+bike_rides/{id}, metro_trips/{id}.
 """
 import base64
+import csv
+import io
 import hashlib
-import hmac
 import html
 import math
 import os
@@ -42,7 +37,7 @@ from collections import Counter
 from datetime import date, datetime
 
 import requests
-from flask import Blueprint, g, jsonify, request
+from flask import Blueprint, jsonify, request
 
 bp = Blueprint("travel", __name__)
 db = firestore = require_owner = user_ref = None
@@ -53,12 +48,6 @@ STATUS_TTL = 60
 MAX_SAVED = 12
 BIKE_MERCHANT = re.compile(r"CAPITAL BIKESHARE|CAPITALBIKESHARE|\bCABI\b|BIKESHARE", re.I)
 
-STATUSES = ("new", "saved", "touring", "applied", "passed")
-WISHLIST = ("saved", "touring", "applied")
-LISTING_NUM = ("rent", "sqft", "beds", "baths", "lat", "lon", "stop_mi", "score")
-LISTING_TXT = ("title", "address", "neighborhood", "available", "nearest_stop", "source", "summary", "unit")
-CRITERIA_NUM = ("max_rent", "stretch_rent", "min_beds", "big_sqft")
-MAX_IMPORT = 300
 
 
 def init(app, _db, _firestore, _require_owner, _user_ref):
@@ -356,13 +345,6 @@ def rides_view():
             "membership": membership_view(st.get("membership"), rides), "gmail": st.get("bike_gmail") or {}}
 
 
-# ---------------------------------------------------------------- apartments
-def listing_id(url):
-    u = re.sub(r"[?#].*$", "", (url or "").strip().lower()).rstrip("/")
-    u = re.sub(r"^https?://(www\.)?", "", u)
-    return hashlib.sha1(u.encode()).hexdigest()[:16]
-
-
 def _num(v):
     if v is None or v == "" or isinstance(v, bool):
         return None
@@ -372,85 +354,150 @@ def _num(v):
     return float(m.group(0).replace(",", "")) if m else None
 
 
-def clean_listing(x):
-    """Validate one listing from the digest. Returns (listing, error)."""
-    if not isinstance(x, dict):
-        return None, "not an object"
-    url = str(x.get("url") or "").strip()
-    if not re.match(r"^https?://", url) or len(url) > 1000:
-        return None, "needs an http(s) url"
-    out = {"url": url}
-    for k in LISTING_NUM:
-        v = _num(x.get(k))
-        if v is not None:
-            out[k] = int(v) if k in ("rent", "sqft") else round(v, 6 if k in ("lat", "lon") else 2)
-    for k in LISTING_TXT:
-        v = str(x.get(k) or "").strip()
-        if v:
-            out[k] = v[:300]
-    am = x.get("amenities") or []
-    if isinstance(am, str):
-        am = [a.strip() for a in am.split(",")]
-    out["amenities"] = [str(a).strip()[:40] for a in am if str(a).strip()][:12]
-    if "lat" in out and not -90 <= out["lat"] <= 90 or "lon" in out and not -180 <= out["lon"] <= 180:
-        out.pop("lat", None), out.pop("lon", None)
-    if not (out.get("title") or out.get("address")):
-        out["title"] = re.sub(r"^https?://(www\.)?", "", url).split("/")[0]
+
+# ---------------------------------------------------------------- Metro (SmarTrip usage history)
+METRO_BANK = re.compile(r"WMATA|SMARTRIP|SMART TRIP|WASHINGTON METRO", re.I)
+_COLS = {"time": ("time", "date", "transaction date"), "desc": ("description", "transaction", "type"),
+         "operator": ("operator", "agency"), "entry": ("entry", "bus route", "location", "route"), "exit": ("exit",),
+         "change": ("change", "amount", "fare", "value"), "balance": ("balance",)}
+
+
+def _col(headers, key):
+    hs = [h.lower().strip() for h in headers]
+    for want in _COLS[key]:
+        for i, h in enumerate(hs):
+            if want in h and not (key == "entry" and "exit" in h) and not (key == "change" and "balance" in h):
+                return i
+    return None
+
+
+def _when(v):
+    v = (v or "").strip()
+    for fmt in ("%m/%d/%y %I:%M %p", "%m/%d/%Y %I:%M %p", "%m/%d/%Y %I:%M:%S %p", "%m/%d/%y %H:%M", "%m/%d/%Y %H:%M",
+                "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S", "%m/%d/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(v, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def metro_kind(desc, change, entry, exit_):
+    d = (desc or "").lower()
+    if re.search(r"benefit", d):
+        return "benefit"
+    if (change or 0) > 0 or re.search(r"load|add value|purchase|reload|autoload|value added", d):
+        return "load"
+    if re.search(r"bus", d) or (entry and re.match(r"^[A-Z]?\d{1,3}[A-Z]?$", entry.strip()) and not exit_):
+        return "bus"
+    if re.search(r"exit", d) or exit_:
+        return "rail"
+    if re.search(r"entry|entr", d):
+        return "entry"
+    return "other"
+
+
+def parse_smartrip_csv(text):
+    """SmarTrip card usage history -> trip dicts. Column names vary, so they're matched by keyword."""
+    rows = list(csv.reader(io.StringIO(text or "")))
+    head_i = next((i for i, r in enumerate(rows[:15]) if r and _col(r, "time") is not None and _col(r, "change") is not None), None)
+    if head_i is None:
+        return [], "Couldn't find the date and amount columns. Export the card's usage history as CSV and try again."
+    h = rows[head_i]
+    ci = {k: _col(h, k) for k in _COLS}
+    out = []
+    for r in rows[head_i + 1:]:
+        if not r or all(not c.strip() for c in r):
+            continue
+        get = lambda k: (r[ci[k]].strip() if ci[k] is not None and ci[k] < len(r) else "")
+        w = _when(get("time"))
+        if not w:
+            continue
+        change = _num(get("change"))
+        if change is not None and "(" in get("change"):
+            change = -abs(change)
+        t = {"date": w.date().isoformat(), "time": w.strftime("%H:%M"), "desc": get("desc")[:80], "operator": get("operator")[:40],
+             "entry": get("entry")[:80], "exit": get("exit")[:80], "change": change, "balance": _num(get("balance"))}
+        t["kind"] = metro_kind(t["desc"], change, t["entry"], t["exit"])
+        out.append(t)
     return out, None
 
 
-def import_listings(items, digest_date=None):
-    digest_date = digest_date or date.today().isoformat()
-    col = user_ref().collection("apartments")
-    added, updated, bad = 0, 0, []
-    for i, x in enumerate(items[:MAX_IMPORT]):
-        lst, err = clean_listing(x)
-        if err:
-            bad.append({"index": i, "error": err})
-            continue
-        ref = col.document(listing_id(lst["url"]))
-        snap = ref.get()
-        old = (snap.to_dict() if snap.exists else None) or {}
-        seen = sorted(set(old.get("seen_in") or []) | {digest_date})
-        keep = {k: old[k] for k in ("status", "notes", "rank", "first_seen") if k in old}
-        doc = {**lst, "status": "new", "notes": "", "first_seen": digest_date, **keep,
-               "last_seen": max(seen), "seen_in": seen[-26:]}
-        ref.set(doc)
-        added, updated = (added, updated + 1) if old else (added + 1, updated)
-    user_ref().collection("apartment_digests").document(digest_date).set(
-        {"date": digest_date, "new": added, "updated": updated, "received": len(items)}, merge=True)
-    return {"added": added, "updated": updated, "skipped": bad}
+def _metro_id(t):
+    key = "|".join(str(t.get(k) or "") for k in ("date", "time", "desc", "entry", "exit", "change"))
+    return hashlib.sha1(key.encode()).hexdigest()[:16]
 
 
-def apartments_view():
-    crit = _settings().get("apt_criteria") or {}
-    rows = [d.to_dict() | {"id": d.id} for d in user_ref().collection("apartments").stream()]
-    digests = sorted((d.to_dict() for d in user_ref().collection("apartment_digests").stream()),
-                     key=lambda d: d.get("date") or "", reverse=True)
-    latest = digests[0]["date"] if digests else None
-    mx, st, big = crit.get("max_rent"), crit.get("stretch_rent"), crit.get("big_sqft")
-    for r in rows:
-        rent = r.get("rent")
-        r["fit"] = None if rent is None or mx is None else "in_budget" if rent <= mx else \
-            "stretch" if st is not None and rent <= st else "over"
-        r["big"] = bool(big and (r.get("sqft") or 0) >= big)
-        r["is_new"] = bool(latest and r.get("first_seen") == latest)
-    rows.sort(key=lambda r: (r.get("last_seen") or "", r.get("sqft") or 0), reverse=True)
-    wish = sorted((r for r in rows if r.get("status") in WISHLIST), key=lambda r: (r.get("rank") is None, r.get("rank") or 0))
-    return {"listings": rows, "wishlist": [r["id"] for r in wish], "criteria": crit, "digests": digests[:12],
-            "latest_digest": latest, "statuses": list(STATUSES)}
+def clean_metro(x):
+    if not isinstance(x, dict) or not re.match(r"^\d{4}-\d{2}-\d{2}$", str(x.get("date") or "")):
+        return None
+    t = {"date": x["date"], "time": str(x.get("time") or "")[:5]}
+    for k in ("desc", "operator", "entry", "exit"):
+        t[k] = str(x.get(k) or "")[:80]
+    for k in ("change", "balance"):
+        v = _num(x.get(k))
+        t[k] = None if v is None else round(v, 2)
+    t["kind"] = x.get("kind") if x.get("kind") in ("rail", "bus", "entry", "load", "benefit", "other") else \
+        metro_kind(t["desc"], t["change"], t["entry"], t["exit"])
+    return t
 
 
-def _ingest_ok():
-    key = os.environ.get("APARTMENTS_INGEST_KEY", "")
-    got = request.headers.get("X-Ingest-Key", "")
-    return bool(key) and len(key) >= 24 and hmac.compare_digest(key, got)
+def metro_view(today=None):
+    import ledger
+    today = today or date.today()
+    trips = sorted((d.to_dict() | {"id": d.id} for d in user_ref().collection("metro_trips").stream()),
+                   key=lambda t: (t["date"], t.get("time") or ""), reverse=True)
+    ben = _settings().get("transit_benefit") or {}
+    months = {}
+    for t in trips:
+        m = months.setdefault(t["date"][:7], {"rides": 0, "rail": 0, "bus": 0, "fares": 0.0, "loaded": 0.0, "benefit_loaded": 0.0})
+        ch = t.get("change") or 0
+        if t["kind"] in ("rail", "bus"):
+            m["rides"] += 1
+            m[t["kind"]] += 1
+            m["fares"] = round(m["fares"] + max(0.0, -ch), 2)
+        elif t["kind"] == "load":
+            m["loaded"] = round(m["loaded"] + max(0.0, ch), 2)
+        elif t["kind"] == "benefit":
+            m["benefit_loaded"] = round(m["benefit_loaded"] + max(0.0, ch), 2)
+    start = date(today.year - 1, today.month, 1).isoformat()
+    bank = [t for t in ledger.load_transactions(start, today.isoformat())
+            if METRO_BANK.search(f"{t.get('merchant') or ''} {t.get('name') or ''}") and (t.get("amount") or 0) > 0]
+    bank_by_month = {}
+    for t in bank:
+        bank_by_month[t["date"][:7]] = round(bank_by_month.get(t["date"][:7], 0) + t["amount"], 2)
+    amt, b0, b1 = _num(ben.get("monthly")), ben.get("start") or "", ben.get("end") or ""
+    cur = today.isoformat()[:7]
+    keys = sorted(set(months) | set(bank_by_month) | ({cur} if amt else set()))
+    for k in keys:
+        m = months.setdefault(k, {"rides": 0, "rail": 0, "bus": 0, "fares": 0.0, "loaded": 0.0, "benefit_loaded": 0.0})
+        m["bank"] = bank_by_month.get(k, 0.0)
+        active = amt is not None and (not b0 or k >= b0[:7]) and (not b1 or k <= b1[:7])
+        m["benefit"] = amt if active else None
+        if active:
+            m["benefit_left"] = round(amt - m["fares"], 2)
+    latest_balance = next((t["balance"] for t in trips if t.get("balance") is not None), None)
+    return {"trips": trips[:200], "by_month": dict(sorted(months.items())), "benefit": ben or {},
+            "balance": latest_balance, "balance_date": next((t["date"] for t in trips if t.get("balance") is not None), None),
+            "totals": {"rides": sum(m["rides"] for m in months.values()), "fares": round(sum(m["fares"] for m in months.values()), 2),
+                       "first": trips[-1]["date"] if trips else None, "last": trips[0]["date"] if trips else None},
+            "top_stations": [{"name": n, "visits": c} for n, c in Counter(
+                s for t in trips if t["kind"] in ("rail", "entry") for s in (t.get("entry"), t.get("exit")) if s).most_common(6)],
+            "bank_total": round(sum(t["amount"] for t in bank), 2)}
 
 
-def owner_uid():
-    """The uid of the one allowed account, for writes that arrive with the ingest key."""
-    from firebase_admin import auth as fb_auth
-    return fb_auth.get_user_by_email(os.environ.get("ALLOWED_EMAIL", "")).uid
+def commute_view():
+    m = metro_view()
+    r = rides_view()
+    months = sorted(set(m["by_month"]) | set(r["by_month"]))[-12:]
+    return {"months": [{"month": k, "metro_rides": m["by_month"].get(k, {}).get("rides", 0),
+                        "metro_fares": m["by_month"].get(k, {}).get("fares", 0.0),
+                        "benefit": m["by_month"].get(k, {}).get("benefit"),
+                        "bike_rides": r["by_month"].get(k, {}).get("rides", 0),
+                        "bike_spent": r["by_month"].get(k, {}).get("spent", 0.0),
+                        "bike_miles": r["by_month"].get(k, {}).get("miles", 0.0)} for k in months],
+            "metro": {"totals": m["totals"], "benefit": m["benefit"], "balance": m["balance"]},
+            "bike": {"totals": r["totals"], "membership": r["membership"]}}
 
 
 # ---------------------------------------------------------------- routes
@@ -583,77 +630,52 @@ def _register_routes():
         _settings_ref().set({"membership": {"price": price, **dates}}, merge=True)
         return jsonify(rides_view())
 
-    @bp.get("/api/apartments")
+    @bp.get("/api/travel/metro")
     @require_owner
-    def apartments():
-        return jsonify(apartments_view())
+    def metro():
+        return jsonify(metro_view())
 
-    @bp.post("/api/apartments/import")
-    def apartments_import():
-        body = request.get_json(silent=True) or {}
-        items = body.get("listings")
-        if not isinstance(items, list):
-            return jsonify(error="listings must be a list"), 400
-        dd = str(body.get("digest_date") or "")[:10] or None
-        if dd and not re.match(r"^\d{4}-\d{2}-\d{2}$", dd):
-            return jsonify(error="digest_date must be YYYY-MM-DD"), 400
-        if request.headers.get("X-Ingest-Key"):
-            if not _ingest_ok():
-                return jsonify(error="forbidden"), 403
-            try:
-                g.uid = owner_uid()
-            except Exception:
-                return jsonify(error="owner account not found"), 500
-            return jsonify(import_listings(items, dd))
-        return require_owner(lambda: jsonify(import_listings(items, dd) | apartments_view()))()
-
-    @bp.patch("/api/apartments/<aid>")
+    @bp.post("/api/travel/metro/import")
     @require_owner
-    def apartment_patch(aid):
-        ref = user_ref().collection("apartments").document(aid)
-        if not ref.get().exists:
-            return jsonify(error="not found"), 404
+    def metro_import():
         b = request.get_json(silent=True) or {}
-        upd = {}
-        if "status" in b:
-            if b["status"] not in STATUSES:
-                return jsonify(error="unknown status"), 400
-            upd["status"] = b["status"]
-        if "notes" in b:
-            upd["notes"] = str(b["notes"] or "")[:2000]
-        if "rank" in b:
-            upd["rank"] = None if b["rank"] is None else int(_num(b["rank"]) or 0)
-        if upd:
-            ref.set(upd, merge=True)
-        return jsonify(apartments_view())
+        if isinstance(b.get("csv"), str):
+            trips, err = parse_smartrip_csv(b["csv"][:2_000_000])
+            if err:
+                return jsonify(error=err), 400
+        elif isinstance(b.get("trips"), list):
+            trips = [t for t in (clean_metro(x) for x in b["trips"][:5000]) if t]
+        else:
+            return jsonify(error="send csv text or a trips list"), 400
+        col, added = user_ref().collection("metro_trips"), 0
+        for t in trips:
+            ref = col.document(_metro_id(t))
+            if not ref.get().exists:
+                added += 1
+            ref.set(t)
+        return jsonify(metro_view() | {"added": added, "read": len(trips)})
 
-    @bp.delete("/api/apartments/<aid>")
+    @bp.put("/api/travel/metro/benefit")
     @require_owner
-    def apartment_delete(aid):
-        user_ref().collection("apartments").document(aid).delete()
-        return jsonify(apartments_view())
-
-    @bp.put("/api/apartments/order")
-    @require_owner
-    def apartment_order():
-        ids = (request.get_json(silent=True) or {}).get("ids")
-        if not isinstance(ids, list):
-            return jsonify(error="ids must be a list"), 400
-        col = user_ref().collection("apartments")
-        for n, aid in enumerate(ids[:200]):
-            ref = col.document(str(aid))
-            if ref.get().exists:
-                ref.set({"rank": n}, merge=True)
-        return jsonify(apartments_view())
-
-    @bp.put("/api/apartments/criteria")
-    @require_owner
-    def apartment_criteria():
+    def metro_benefit():
         b = request.get_json(silent=True) or {}
-        crit = {k: _num(b.get(k)) for k in CRITERIA_NUM}
-        crit = {k: (int(v) if v is not None else None) for k, v in crit.items()}
-        crit["city"] = str(b.get("city") or "").strip()[:60]
-        mv = str(b.get("move_in") or "").strip()[:10]
-        crit["move_in"] = mv if re.match(r"^\d{4}-\d{2}-\d{2}$", mv) else ""
-        _settings_ref().set({"apt_criteria": crit}, merge=True)
-        return jsonify(apartments_view())
+        amt = _num(b.get("monthly"))
+        if amt is not None and amt < 0:
+            return jsonify(error="amount can't be negative"), 400
+        dates = {k: str(b.get(k) or "")[:10] for k in ("start", "end")}
+        if any(v and not re.match(r"^\d{4}-\d{2}-\d{2}$", v) for v in dates.values()):
+            return jsonify(error="dates must be YYYY-MM-DD"), 400
+        _settings_ref().set({"transit_benefit": {"monthly": amt, **dates, "label": str(b.get("label") or "").strip()[:60]}}, merge=True)
+        return jsonify(metro_view())
+
+    @bp.delete("/api/travel/metro")
+    @require_owner
+    def metro_forget():
+        for d in list(user_ref().collection("metro_trips").stream()):
+            user_ref().collection("metro_trips").document(d.id).delete()
+        return jsonify(metro_view())
+
+    @bp.get("/api/travel/commute")
+    @require_owner
+    def commute():
+        return jsonify(commute_view())

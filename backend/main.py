@@ -557,6 +557,10 @@ sports.init(app, db, firestore, require_owner, user_ref)
 # ---------------------------------------------------------------- Travel (bikeshare stations, apartment search)
 import travel
 travel.init(app, db, firestore, require_owner, user_ref)
+import apartments
+apartments.init(app, db, firestore, require_owner, user_ref)
+import trips
+trips.init(app, db, firestore, require_owner, user_ref)
 
 # ---------------------------------------------------------------- Earnings (paychecks, withholding, year-end tax)
 import earnings
