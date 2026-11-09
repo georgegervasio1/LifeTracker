@@ -8,7 +8,7 @@ os.environ.update(DEV_SKIP_AUTH="1", PLAID_CLIENT_ID="x", PLAID_SECRET="y", PLAI
 # ---- tiny in-memory Firestore ------------------------------------------------
 DATA = {}
 class Snap:
-    def __init__(s, path): s.path = path; s.exists = path in DATA; s.id = path.split("/")[-1]
+    def __init__(s, path): s.path = path; s.exists = path in DATA; s.id = path.split("/")[-1]; s.reference = DocRef(path)
     def to_dict(s): return dict(DATA[s.path]) if s.exists else None
     def get(s, k): return DATA[s.path].get(k)
 class DocRef:
@@ -76,3 +76,40 @@ main.plaid_client.link_token_create = boom
 r = c.post("/api/plaid/link-token", json={"kind": "bank"})
 assert r.status_code == 502 and "status 0, SSLError bad handshake" in r.json["error"], r.json
 print("plaid error text: ok")
+
+# Plaid investment subtypes come in many spellings; dividends must not land as deposits.
+k = main.plaid_inv_kind
+assert k("cash", "qualified dividend", -12.0) == "dividend"
+assert k("cash", "long-term capital gain", -5.0) == "dividend"
+assert k("buy", "dividend reinvestment", 12.0) == "buy"
+assert k("fee", "management fee", 3.0) == "fee"
+assert k("cash", "deposit", -100.0) == "deposit"
+assert k("transfer", "transfer", -100.0) == "transfer_in"
+print("plaid investment types: ok")
+
+# Removing a repeat connection disconnects it at Plaid and drops it here.
+removed = []
+main.plaid_client.item_remove = lambda req: removed.append(req.to_dict()["access_token"])
+assert c.delete("/api/plaid/items/new").json["ok"] and removed == ["access-production-1"]
+assert "users/dev/items/new" not in DATA
+c.delete("/api/plaid/items/old")                       # a sandbox item: nothing to call at Plaid
+assert removed == ["access-production-1"] and "users/dev/items/old" not in DATA
+print("plaid remove connection: ok")
+
+# A production sync records which Plaid accounts are live and tags what it writes.
+class R(dict):
+    def to_dict(s): return dict(s)
+DATA["users/dev/items/chase"] = {"access_token": "access-production-2", "kind": "bank", "env": "production", "institution": "Chase"}
+main.plaid_client.accounts_get = lambda req: R(accounts=[{"account_id": "pa1", "mask": "9876", "type": "depository", "subtype": "checking",
+                                                          "name": "Total Checking", "balances": {"current": 2500.0}}])
+main.plaid_client.transactions_sync = lambda req: R(added=[{"transaction_id": "t1", "account_id": "pa1", "date": "2026-11-08", "amount": 4.5,
+                                                            "name": "Coffee", "pending": False}], modified=[], removed=[], next_cursor="c", has_more=False)
+r = c.post("/api/sync").json["results"]
+assert r == [{"item": "chase", "added": 1, "removed": 0}], r
+links = DATA["users/dev/fin_meta/plaid_links"]["links"]
+assert links["pa1"]["env"] == "production" and links["pa1"]["item"] == "chase", links
+t = DATA["users/dev/transactions/t1"]
+assert t["plaid_env"] == "production" and t["account_id"] == "pa1"
+nw = c.get("/api/fin/overview").json
+assert nw["net_worth"] == 2500.0 and [a["account"] for a in nw["accounts"]] == ["chase_checking"], nw["accounts"]
+print("plaid sync is the only source: ok")

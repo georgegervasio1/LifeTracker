@@ -225,3 +225,78 @@ def test_net_worth_and_taxes_compute(app):
             r = P.roth_detail(roth, fintax.settings())
             form = next(d.to_dict() for d in L.col("tax_docs").stream() if d.to_dict()["form"] == "1099-R")
             assert any(x["amount"] == form["gross_distribution"] for x in r["conversions"])
+
+
+# ---------------------------------------------------------------- Plaid as the only source
+def _bal(acct, d, v, src, env=None):
+    doc = {"account": acct, "date": d, "balance": v, "src": src}
+    if env:
+        doc["plaid_env"] = env
+    L.col("fin_balances").document(f"{acct}_{d}_{src}_{env}").set(doc)
+
+
+def test_plaid_only_counts_live_plaid_and_leaves_imports_out(app, monkeypatch):
+    monkeypatch.setenv("PLAID_ENV", "production")
+    c = app.test_client()
+    with app.app_context():
+        L.ensure_defaults()
+        # imported before Plaid: a Chase CSV, a UBS statement balance, a hand-entered account
+        add_tx("csv1", "chase_checking", "2026-10-01", 30.0, "chase_csv", "GROCER")
+        _bal("chase_checking", "2026-10-31", 1000.0, "csv")
+        _bal("ubs_brokerage_1234", "2026-10-31", 50000.0, "ubs_pdf")
+        L.col("fin_accounts").document("ubs_brokerage_1234").set({"name": "UBS Brokerage", "institution": "UBS", "type": "brokerage", "mask": "1234"})
+        # left over from Plaid sandbox: a test bank on the same Chase account
+        L.col("items").document("sb").set({"institution": "Chase", "kind": "bank"})          # no env = sandbox
+        L.col("fin_meta").document("plaid_links").set({"links": {"sbacct": {"item": "sb", "env": "sandbox", "canon": "chase_savings",
+                                                                             "linked_at": "2026-10-01T00:00:00+00:00"}}})
+        add_tx("sb1", "chase_savings", "2026-10-02", 500.0, "plaid"); L.col("transactions").document("sb1").set({"account_id": "sbacct"}, merge=True)
+        _bal("chase_savings", "2026-10-15", 43200.0, "plaid")
+        L.forget_policy()
+        assert L.policy()["mode"] == "all"                      # nothing linked in production yet: everything counts
+        assert P.net_worth()["net_worth"] == 1000.0 + 50000.0 + 43200.0
+
+        # production: Chase linked twice (a repeat connection), UBS once
+        for iid in ("chase1", "chase2", "ubs"):
+            L.col("items").document(iid).set({"institution": "Chase" if iid != "ubs" else "UBS", "kind": "bank", "env": "production"})
+        L.forget_policy()
+        links = L.plaid_links()
+        for pid, iid, canon, at in (("c1", "chase1", "chase_checking_9876", "2026-11-09T10"), ("c2", "chase2", "chase_checking_9876", "2026-11-09T11"),
+                                    ("u1", "ubs", "ubs_brokerage_1234", "2026-11-09T12")):
+            links[pid] = {"item": iid, "env": "production", "canon": canon, "linked_at": at}
+        L.col("fin_meta").document("plaid_links").set({"links": links})
+        L.col("fin_accounts").document("chase_checking_9876").set({"name": "Total Checking", "institution": "Chase", "type": "checking", "mask": "9876"})
+        for tid, pid in (("p1", "c1"), ("p2", "c2")):          # the same coffee from both connections
+            add_tx(tid, "chase_checking_9876", "2026-11-08", 4.5, "plaid", "Coffee")
+            L.col("transactions").document(tid).set({"account_id": pid, "plaid_env": "production"}, merge=True)
+        L.forget_policy()
+        L.set_balance("chase_checking_9876", "2026-11-09", 2500.0, src="plaid")
+        L.set_balance("ubs_brokerage_1234", "2026-11-09", 61000.0, src="plaid")
+        L.forget_policy()
+
+        p = L.policy()
+        assert p["plaid_only"] and p["live_ids"] == {"c2", "u1"}
+        nw = P.net_worth()
+        assert nw["net_worth"] == 2500.0 + 61000.0, nw["accounts"]
+        assert sorted(a["id"] for a in L.accounts()) == ["chase_checking_9876", "ubs_brokerage_1234"]
+        assert [t["id"] for t in L.load_transactions("2026-01-01", "2026-12-31")] == ["p2"]
+
+        v = c.get("/api/fin/sources").json
+        left = {x["label"]: x["records"] for x in v["left_out"]}
+        assert left["Plaid sandbox test data"] == 2 and left["Plaid, repeat connection"] == 1
+        assert left["Chase CSV files"] == 1 and left["UBS statement PDFs"] == 1
+        chase1 = next(x for x in v["connections"] if x["id"] == "chase1")
+        assert chase1["repeat"] and not next(x for x in v["connections"] if x["id"] == "chase2")["repeat"]
+
+        # "count imported files too" brings everything back without deleting anything
+        c.put("/api/fin/sources", json={"mode": "all"})
+        assert L.policy()["mode"] == "all" and sorted(t["id"] for t in L.load_transactions("2026-01-01", "2026-12-31")) == ["csv1", "p2"]
+        c.put("/api/fin/sources", json={"mode": "plaid"})
+
+        assert c.post("/api/fin/sources/purge", json={}).status_code == 400
+        r = c.post("/api/fin/sources/purge", json={"confirm": "DELETE"}).json
+        assert r["deleted"]["transactions"] == 3 and r["deleted"]["sandbox_connections"] == 1
+        assert r["sources"]["left_out_total"] == 0
+        L.forget_policy()
+        assert P.net_worth()["net_worth"] == 63500.0
+        ids = {d.id for d in L.col("fin_accounts").stream()}
+        assert ids == {"chase_checking_9876", "ubs_brokerage_1234"}, ids

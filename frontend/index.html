@@ -223,13 +223,43 @@
 
         <!-- Accounts & imports -->
         <div class="panel wrap" data-panel="accounts">
+          <p class="hint flag hidden" id="plaidEnv">Plaid is in sandbox mode: only Plaid's test banks connect, not Chase or UBS.</p>
+          <div class="card card-flush">
+            <div class="card-head padded"><h3>Connected through Plaid</h3>
+              <span class="conn-actions"><button class="btn btn-secondary btn-sm" data-link="bank">Connect a bank</button><button class="btn btn-secondary btn-sm" data-link="investments">Connect a brokerage</button></span></div>
+            <div id="connList" class="conn-list"></div>
+          </div>
+          <div class="card hidden" id="leftOutCard"></div>
+          <div class="card card-flush" id="acctCard">
+            <div class="card-head padded"><h3>Accounts</h3><button class="btn btn-secondary btn-sm" id="addAcctBtn">Add account</button></div>
+            <div id="acctAdmin" class="acct-list"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Details the documents don't show</h3><span class="card-meta">Used by Investments and Taxes</span></div>
+            <form id="finSettingsForm" class="settings-grid"></form>
+          </div>
+          <div class="grid-2">
+            <div class="card"><div class="card-head"><h3>Tax forms on file</h3></div><div id="taxDocs"></div></div>
+            <div class="card upload">
+            <h3>Import a finance profile</h3>
+            <p>A LifeTracker finance file with your paycheck job, tax settings and other jobs. Importing again updates the same details.</p>
+            <label class="dropzone">
+              <input type="file" id="profile-file" accept=".json,application/json" />
+              <span id="profileLabel">Choose a JSON file</span>
+            </label>
+            <button id="profile-upload" class="btn btn-primary">Import</button>
+          </div>
+          </div>
           <div class="card upload upload-wide">
-            <h3>Upload UBS statements and tax forms</h3>
-            <p>Monthly or household statement PDFs (every account inside is read) and tax-form PDFs (1099, 1099-R, 5498). Upload as many as you like, in any order, as often as you like: a statement already on file, or activity Plaid already has, is never counted twice.</p>
+            <h3 id="pdfTitle">Upload UBS statements and tax forms</h3>
+            <p id="pdfHint">Monthly or household statement PDFs (every account inside is read) and tax-form PDFs (1099, 1099-R, 5498). Upload as many as you like, in any order, as often as you like: a statement already on file, or activity Plaid already has, is never counted twice.</p>
             <label class="dropzone"><input type="file" id="pdf-files" accept=".pdf" multiple /><span id="pdfLabel">Choose PDFs</span></label>
             <button id="pdf-upload" class="btn btn-primary">Upload</button>
             <div id="pdfResults"></div>
           </div>
+          <details class="legacy" id="legacyImports">
+            <summary>Statement and CSV imports</summary>
+            <p class="hint" id="legacyHint"></p>
           <div class="card">
             <div class="card-head"><h3>Coverage</h3><span class="card-meta">Which source covers which dates</span></div>
             <div id="covTimeline"></div>
@@ -238,32 +268,8 @@
             <div class="card-head padded"><h3>Statement reconciliation</h3><span class="card-meta" id="recMeta"></span></div>
             <div class="table-scroll"><table class="table" id="recTable"></table></div>
           </div>
-          <div class="grid-2">
             <div class="card"><div class="card-head"><h3>Duplicates caught</h3><button class="text-btn" id="reconcileBtn">Re-check</button></div><div id="dupReport"></div></div>
-            <div class="card"><div class="card-head"><h3>Tax forms on file</h3></div><div id="taxDocs"></div></div>
-          </div>
-          <div class="card card-flush">
-            <div class="card-head padded"><h3>Accounts</h3><button class="btn btn-secondary btn-sm" id="addAcctBtn">Add account</button></div>
-            <div id="acctAdmin" class="acct-list"></div>
-          </div>
-          <div class="card">
-            <div class="card-head"><h3>Details the documents don't show</h3><span class="card-meta">Used by Investments and Taxes</span></div>
-            <form id="finSettingsForm" class="settings-grid"></form>
-          </div>
-          <h3 class="section-label">Connect and import</h3>
-          <p class="hint flag hidden" id="plaidEnv">Plaid is in sandbox mode: only Plaid's test banks connect, not Chase or UBS.</p>
-          <div class="grid-2">
-            <button class="card card-action" data-link="bank">
-              <h3>Bank and credit cards</h3>
-              <p>Chase checking, savings and credit cards through Plaid. Log in once and select every account you want tracked.</p>
-              <span class="link">Connect →</span>
-            </button>
-            <button class="card card-action" data-link="investments">
-              <h3>Brokerage</h3>
-              <p>UBS or other investment accounts through Plaid Investments: holdings and portfolio value.</p>
-              <span class="link">Connect →</span>
-            </button>
-          </div>
+            <div class="grid-2">
           <div class="card upload">
             <h3>Import bank or card activity</h3>
             <p>Chase CSV exports (checking or credit card) or LifeTracker import files. Choose several files at once. Re-importing the same dates never creates duplicates.</p>
@@ -283,16 +289,8 @@
             </label>
             <button id="venmo-upload" class="btn btn-primary">Upload</button>
           </div>
-          <div class="card upload">
-            <h3>Import a finance profile</h3>
-            <p>A LifeTracker finance file with your paycheck job, tax settings and other jobs. Importing again updates the same details.</p>
-            <label class="dropzone">
-              <input type="file" id="profile-file" accept=".json,application/json" />
-              <span id="profileLabel">Choose a JSON file</span>
-            </label>
-            <button id="profile-upload" class="btn btn-primary">Import</button>
-          </div>
-        
+            </div>
+          </details>
         </div>
       </section>
 
@@ -308,6 +306,16 @@
         </div>
       </aside>
 
+      <dialog id="purgeDialog" class="dialog">
+        <form method="dialog" id="purgeForm" class="dialog-form" autocomplete="off">
+          <h3>Delete imported data</h3>
+          <p class="span-2" id="purgeText"></p>
+          <label class="span-2">Type DELETE to confirm<input class="input" name="confirm" autocomplete="off" /></label>
+          <div class="dialog-actions span-2"><span style="flex:1"></span>
+            <button type="button" class="btn btn-secondary" id="purgeCancel">Cancel</button>
+            <button class="btn btn-danger" id="purgeGo">Delete</button></div>
+        </form>
+      </dialog>
       <dialog id="acctDialog" class="dialog">
         <form method="dialog" id="acctForm" class="dialog-form" autocomplete="off">
           <h3 id="acctDialogTitle">Add account</h3>

@@ -9,6 +9,9 @@
   POST   /api/fin/upload                        UBS statement / tax-form PDFs (several at once)
   GET    /api/fin/imports                       coverage timeline, reconciliation, duplicates, files on record
   POST   /api/fin/reconcile                     re-run cross-source matching and transfer pairing
+  GET    /api/fin/sources                       Plaid connections, which accounts count, imported data left out
+  PUT    /api/fin/sources {mode}                "plaid" (only Plaid counts) or "all"
+  POST   /api/fin/sources/purge {confirm}       delete the imported data that no longer counts (irreversible)
   PATCH  /api/fin/accounts/<id>, POST /api/fin/accounts, POST /api/fin/balances
   PATCH  /api/fin/activity/<id>, PATCH /api/fin/transactions/<id>
   POST/PATCH/DELETE /api/fin/income/jobs[/<id>]
@@ -176,6 +179,112 @@ def imports_view():
             "tax_settings": fintax.settings()}
 
 
+# ---------------------------------------------------------------- sources: Plaid connections and what's left out
+COLLECTIONS = ("transactions", "inv_activity", "inv_snapshots", "fin_balances", "inv_statements")
+SRC_LABEL = {"ubs_pdf": "UBS statement PDFs", "chase_csv": "Chase CSV files", "venmo_csv": "Venmo CSV files",
+             "csv": "Other CSV files", "manual": "Entered by hand"}
+
+
+def _iso(v):
+    return v.isoformat() if hasattr(v, "isoformat") else (str(v) if v else None)
+
+
+def _left_out(coll, r, p):
+    """Why a record doesn't count while Plaid is the only source (None = it counts, or it's Plaid data that the
+    next sync refreshes)."""
+    if not p["plaid_only"]:
+        return None
+    if coll == "transactions":
+        ok = L.counts_tx(r, p) or r.get("superseded_by")
+    elif coll == "inv_activity":
+        ok = L.counts_activity(r, p) or r.get("superseded_by")
+    elif coll == "inv_statements":
+        ok = False
+    else:
+        ok = L.counts_point(r, p)
+    if ok:
+        return None
+    if r.get("src") != "plaid":
+        return SRC_LABEL.get(r.get("src"), "Other imports")
+    pid = r.get("account_id")
+    link = p["links"].get(pid) if pid else None
+    env = r.get("plaid_env") or (link or {}).get("env")
+    if env and env != p["env"]:
+        return "Plaid sandbox test data"
+    if link and pid not in p["live_ids"]:
+        return "Plaid, repeat connection"
+    if r.get("account") in p["live_accounts"]:
+        return None            # Plaid data synced before this version: the next sync tags it
+    return "Plaid sandbox test data" if not env else "Plaid, repeat connection"
+
+
+def sources_view():
+    p = L.policy()
+    bal = L.balances()
+    accts = L.accounts(include_hidden=True)
+    names = {a["id"]: a["name"] for a in accts}
+    conns = []
+    for iid, it in p["items"].items():
+        env = it.get("env") or "sandbox"
+        rows = []
+        for pid, l in p["links"].items():
+            if l.get("item") != iid:
+                continue
+            b = (bal.get(l["canon"]) or [None])[-1] if pid in p["live_ids"] else None
+            rows.append({"name": l.get("name"), "mask": l.get("mask"), "account": l["canon"], "account_name": names.get(l["canon"]),
+                         "type": l.get("type"), "counted": pid in p["live_ids"],
+                         "repeat": env == p["env"] and pid not in p["live_ids"],
+                         "balance": b[1] if b else None, "as_of": b[0] if b else None})
+        rows.sort(key=lambda r: (not r["counted"], r["name"] or ""))
+        conns.append({"id": iid, "institution": it.get("institution"), "kind": it.get("kind"), "env": env,
+                      "live": env == p["env"], "last_sync": _iso(it.get("last_sync")), "created": _iso(it.get("created")),
+                      "accounts": rows, "repeat": bool(rows) and all(r["repeat"] for r in rows)})
+    conns.sort(key=lambda c: (not c["live"], c["repeat"], c["institution"] or ""))
+    left = defaultdict(int)
+    for coll in COLLECTIONS:
+        for d in L.col(coll).stream():
+            why = _left_out(coll, d.to_dict() or {}, p)
+            if why:
+                left[why] += 1
+    old_accounts = [a["name"] for a in accts if not a["plaid_linked"] and not a.get("hidden")] if p["plaid_only"] else []
+    return {"mode": p["mode"], "plaid_only": p["plaid_only"], "env": p["env"], "connections": conns,
+            "left_out": [{"label": k, "records": v} for k, v in sorted(left.items(), key=lambda kv: -kv[1])],
+            "left_out_total": sum(left.values()), "old_accounts": old_accounts,
+            "accounts": [a for a in accts if a["counted"] or (a["plaid_linked"] and a.get("hidden"))]}
+
+
+def purge_left_out():
+    """Delete what doesn't count while Plaid is the only source. Tax forms are kept."""
+    p = L.policy()
+    if not p["plaid_only"]:
+        raise ValueError("Plaid isn't the only source, so nothing is left out")
+    out, batch, n = defaultdict(int), L.db.batch(), 0
+    for coll in COLLECTIONS:
+        for d in L.col(coll).stream():
+            r = d.to_dict() or {}
+            if _left_out(coll, r, p) or (coll == "transactions" and r.get("superseded_by")) or \
+               (coll == "inv_activity" and r.get("superseded_by")):
+                batch.delete(d.reference); out[coll] += 1; n += 1
+                if n % 400 == 0:
+                    batch.commit(); batch = L.db.batch()
+    batch.commit()
+    # Plaid connections from another environment (sandbox): their tokens no longer work
+    links = dict(p["links"])
+    for iid, it in p["items"].items():
+        if (it.get("env") or "sandbox") != p["env"]:
+            L.col("items").document(iid).delete(); out["sandbox_connections"] += 1
+            for pid in [k for k, l in links.items() if l.get("item") == iid]:
+                links.pop(pid)
+    L.col("fin_meta").document("plaid_links").set({"links": links})
+    # accounts that nothing points to any more (tax forms keep theirs)
+    keep = set(p["live_accounts"]) | {(d.to_dict() or {}).get("account") for d in L.col("tax_docs").stream()}
+    for d in L.col("fin_accounts").stream():
+        if d.id not in keep:
+            d.reference.delete(); out["accounts"] += 1
+    L.forget_policy()
+    return dict(out)
+
+
 def _routes():
     @bp.get("/api/fin/overview")
     @require_owner
@@ -334,6 +443,29 @@ def _routes():
         changed = L.dedupe_all()
         paired = L.pair_transfers()
         return jsonify(changed=changed, paired=paired, imports=imports_view())
+
+    @bp.get("/api/fin/sources")
+    @require_owner
+    def sources():
+        _ready()
+        return jsonify(sources_view())
+
+    @bp.put("/api/fin/sources")
+    @require_owner
+    def set_sources():
+        L.set_source_mode((request.get_json(force=True) or {}).get("mode"))
+        return jsonify(sources_view())
+
+    @bp.post("/api/fin/sources/purge")
+    @require_owner
+    def purge():
+        if (request.get_json(force=True) or {}).get("confirm") != "DELETE":
+            return jsonify(error='send {"confirm": "DELETE"} to delete the imported data'), 400
+        try:
+            deleted = purge_left_out()
+        except ValueError as e:
+            return jsonify(error=str(e)), 400
+        return jsonify(deleted=deleted, sources=sources_view())
 
     @bp.post("/api/fin/accounts")
     @require_owner

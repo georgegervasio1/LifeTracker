@@ -322,8 +322,9 @@ def tax_picture(job):
 def bank_tax_activity():
     """Tax payments and refunds that show up in the bank feed (IRS, state tax agencies)."""
     out = []
-    for d in user_ref().collection("transactions").where("date", ">=", "2025-01-01").stream():
-        t = d.to_dict(); m = (t.get("merchant") or "")
+    import ledger
+    for t in ledger.load_transactions("2025-01-01", "2999-12-31"):
+        m = (t.get("merchant") or "")
         if re.search(r"\birs\b|usataxpymt|treas tax|tax ?rfd|taxrfd|tax refund|dept of revenue|state tax|comptroller", m, re.I) or t.get("category") == "Taxes And Government":
             out.append({"date": t["date"], "merchant": m.split(" PPD")[0].strip(), "amount": r2(-t["amount"]),
                         "kind": "refund" if t["amount"] < 0 else "payment"})
@@ -376,7 +377,8 @@ def bank_payroll(start, end):
     bank feed between the first day and three weeks after the last. Money in is negative in the feed."""
     lo = (_d(start) - dt.timedelta(days=7)).isoformat()
     hi = (_d(end) + dt.timedelta(days=21)).isoformat()
-    txs = [d.to_dict() for d in user_ref().collection("transactions").where("date", ">=", lo).where("date", "<=", hi).stream()]
+    import ledger
+    txs = ledger.load_transactions(lo, hi)
     inflow = [t for t in txs if (t.get("amount") or 0) < 0]
     pay = [t for t in inflow if "payroll" in (t.get("merchant") or "").lower()]
     if not pay:

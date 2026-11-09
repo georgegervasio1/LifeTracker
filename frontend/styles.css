@@ -1908,3 +1908,27 @@ tr.ff-cut td { border-bottom: 2px solid var(--line-strong); }
   .ff-hide-sm { display: none; }
   .ff-totals { gap: 18px; }
 }
+
+/* Finances → Accounts & Imports: Plaid connections */
+.btn-danger { background: var(--neg); color: #fff; border: 1px solid var(--neg); }
+.conn-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.conn { padding: 4px 22px 10px; border-top: 1px solid var(--line); }
+.conn:first-child { border-top: none; }
+.conn-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 12px 0 4px; }
+.conn-head strong { font-size: 15px; }
+.conn-head .tag { margin-left: 8px; }
+.conn-off { opacity: .62; }
+.conn-acct { display: grid; grid-template-columns: minmax(0, 1fr) auto 56px; gap: 12px; align-items: center; padding: 9px 0; font-size: 14px; }
+.conn-acct .tag { display: block; }
+.conn-acct .num { font-variant-numeric: tabular-nums; }
+.conn-empty { padding: 4px 22px 18px; }
+.left-out .mini-row strong { font-variant-numeric: tabular-nums; }
+.left-out-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+details.legacy { margin-top: 8px; }
+details.legacy > summary { cursor: pointer; font-size: 15px; font-weight: 600; color: var(--text-2); padding: 12px 0; list-style-position: inside; }
+@media (max-width: 640px) {
+  .card-head.padded:has(.conn-actions) { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .conn { padding: 4px 16px 10px; }
+  .conn-head { flex-direction: column; gap: 4px; }
+  .conn-head .tag { display: block; margin-left: 0; }
+}

@@ -35,6 +35,11 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
 - `ledger.py`: **the finance data model.** One canonical record per real account and transaction across Plaid,
   UBS statement PDFs, Chase CSV, Venmo CSV and manual entry (`src`, canonical `account`); deterministic ids and
   cross-source matching so nothing is double counted; transfer pairing; statement reconciliation.
+  **Plaid is the only source once linked:** `policy()` reads `fin_meta/plaid_links` (written on every sync) and the
+  `items`; when a Plaid account is live in the server's `PLAID_ENV`, only Plaid records tagged with that env (and, for a
+  bank linked twice, the newest connection's copy) count. Statement PDFs, CSVs, Venmo, manual balances and sandbox
+  leftovers stay in Firestore but sit out of every total (`fin_settings/sources` `{mode: "all"}` brings imports back).
+  `/api/fin/sources` lists connections + what's left out; `/api/fin/sources/purge` deletes it (typed confirm).
 - `ubs_parser.py`: UBS statement and tax-form PDFs → dicts (pages assigned by footer account code; rotated pages).
 - `portfolio.py`: investments and net worth from the ledger; modified-Dietz / time-weighted returns; S&P 500
   comparison from the index returns printed on UBS statements.

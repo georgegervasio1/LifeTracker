@@ -862,8 +862,12 @@ async function loadFinTaxes(t) {
 }
 
 // ---- Accounts & imports
+let finSources = null;
 async function loadImports(v) {
+  const srcP = api("/api/fin/sources").catch(() => null);
   v = v || await api("/api/fin/imports");
+  finSources = await srcP;
+  renderSources(finSources, v);
   api("/health").then((h) => $("plaidEnv").classList.toggle("hidden", h.plaid_env !== "sandbox" || isDemo())).catch(() => {});
   finAccounts = v.accounts.map((a) => ({ ...a, account: a.id }));
   // coverage timeline
@@ -911,6 +915,84 @@ async function loadImports(v) {
     } catch (err) { toast(err.message); }
   };
 }
+// Plaid connections, what counts, and the imported data left out once Plaid is the only source
+function renderSources(S, v) {
+  const plaidOnly = !!(S && S.plaid_only);
+  $("acctCard").classList.toggle("hidden", plaidOnly);
+  $("legacyImports").open = !plaidOnly && !!(v.coverage || []).some((r) => Object.keys(r.sources).some((k) => k !== "plaid"));
+  $("legacyHint").textContent = plaidOnly
+    ? "Plaid is the only source, so nothing imported here is counted. These tools stay for reference."
+    : "Statement PDFs and CSV files count alongside Plaid. Where both have the same transaction, Plaid's copy is the one counted.";
+  $("pdfTitle").textContent = plaidOnly ? "Upload tax forms" : "Upload UBS statements and tax forms";
+  $("pdfHint").textContent = plaidOnly
+    ? "Tax-form PDFs (1099, 1099-R, 5498) for the Taxes tab. Statements are still read, but Plaid supplies balances and activity."
+    : "Monthly or household statement PDFs (every account inside is read) and tax-form PDFs (1099, 1099-R, 5498). A statement already on file, or activity Plaid already has, is never counted twice.";
+  if (!S) { $("connList").innerHTML = `<div class="conn-empty"><p class="hint">Couldn't load connections.</p></div>`; return; }
+  const conns = S.connections || [];
+  $("connList").innerHTML = conns.length ? conns.map((c) => {
+    const off = !c.live || c.repeat;
+    const note = !c.live ? `<span class="pill pill-missing">Test connection, not counted</span>`
+      : c.repeat ? `<span class="pill pill-missing">Repeat connection, not counted</span>` : "";
+    const synced = c.last_sync ? `Synced ${fdate(c.last_sync.slice(0, 10))}` : "Not synced yet";
+    return `<div class="conn${off ? " conn-off" : ""}"><div class="conn-head"><span><strong>${esc(c.institution || "Connection")}</strong><span class="tag">${c.kind === "investments" ? "Investments" : "Bank"} · ${synced}</span></span>
+      <span>${note} ${off ? `<button class="text-btn danger" data-rmitem="${esc(c.id)}" data-live="${c.live ? 1 : 0}">Remove</button>` : ""}</span></div>
+      ${(c.accounts || []).map((a) => {
+        const acct = (S.accounts || []).find((x) => x.id === a.account) || {};
+        const hidden = !!acct.hidden;
+        return `<div class="conn-acct"><span><strong>${esc(a.name || acct.name || "Account")}</strong><span class="tag">${esc(acct.type_label || "")}${a.mask ? ` ··${esc(a.mask)}` : ""}${hidden ? " · hidden, not counted" : ""}</span></span>
+          <span class="num">${a.counted && !hidden ? (a.balance == null ? "—" : m2(acct.liability ? -Math.abs(a.balance) : a.balance)) : ""}</span>
+          <span>${a.counted ? `<button class="text-btn" data-hideacct="${esc(a.account)}" data-hide="${hidden ? 0 : 1}">${hidden ? "Show" : "Hide"}</button>` : ""}</span></div>`;
+      }).join("") || `<p class="hint">Sync to load this connection's accounts.</p>`}</div>`;
+  }).join("") : `<div class="conn-empty"><p class="hint">Nothing connected yet. Connect Chase as a bank and UBS as a brokerage.</p></div>`;
+  const card = $("leftOutCard");
+  const n = S.left_out_total || 0, old = S.old_accounts || [];
+  const anyLive = conns.some((c) => c.live && !c.repeat);
+  card.classList.toggle("hidden", plaidOnly ? !(n || old.length) : !(S.mode === "all" && anyLive));
+  if (plaidOnly) {
+    card.innerHTML = `<div class="card-head"><h3>Imported data not counted</h3><span class="card-meta">Plaid is the only source</span></div>
+      <div class="left-out">${(S.left_out || []).map((x) => `<div class="mini-row"><span>${esc(x.label)}</span><strong>${x.records.toLocaleString()} records</strong></div>`).join("")}
+      ${old.length ? `<div class="mini-row"><span>Older accounts <span class="tag">${esc(old.join(", "))}</span></span><strong>${old.length}</strong></div>` : ""}</div>
+      <p class="hint">Kept in your account but left out of net worth, spending and investments. Tax forms are always kept.</p>
+      <div class="left-out-actions"><button class="btn btn-secondary btn-sm" id="srcAll">Count imports too</button><button class="btn btn-secondary btn-sm" id="srcPurge">Delete imported data…</button></div>`;
+  } else {
+    card.innerHTML = `<div class="card-head"><h3>Imported files are counted</h3></div>
+      <p class="hint">Statement PDFs and CSV files count next to Plaid, which can double up accounts that Plaid also has.</p>
+      <div class="left-out-actions"><button class="btn btn-primary btn-sm" id="srcPlaid">Use Plaid only</button></div>`;
+  }
+  const setMode = async (mode) => {
+    try { await api("/api/fin/sources", { method: "PUT", body: JSON.stringify({ mode }) }); toast(mode === "plaid" ? "Plaid is the only source" : "Imports count too"); loadImports(); }
+    catch (e) { toast(e.message); }
+  };
+  if ($("srcAll")) $("srcAll").onclick = () => setMode("all");
+  if ($("srcPlaid")) $("srcPlaid").onclick = () => setMode("plaid");
+  if ($("srcPurge")) $("srcPurge").onclick = () => {
+    $("purgeText").textContent = `This permanently deletes ${n.toLocaleString()} records that aren't counted (${(S.left_out || []).map((x) => x.label.toLowerCase()).join(", ")}), Plaid sandbox test connections and accounts nothing points to any more. Plaid data and tax forms stay. It can't be undone.`;
+    $("purgeForm").reset(); $("purgeDialog").showModal();
+  };
+  $$("[data-hideacct]").forEach((b) => (b.onclick = async () => {
+    try { await api(`/api/fin/accounts/${encodeURIComponent(b.dataset.hideacct)}`, { method: "PATCH", body: JSON.stringify({ hidden: b.dataset.hide === "1" }) }); loadImports(); }
+    catch (e) { toast(e.message); }
+  }));
+  $$("[data-rmitem]").forEach((b) => (b.onclick = async () => {
+    const msg = b.dataset.live === "1" ? "Disconnect this repeat connection at Plaid? The other connection to the same bank keeps syncing." : "Remove this test connection?";
+    if (!confirm(msg)) return;
+    try { await api(`/api/plaid/items/${encodeURIComponent(b.dataset.rmitem)}`, { method: "DELETE" }); toast("Connection removed"); loadImports(); }
+    catch (e) { toast(e.message); }
+  }));
+}
+$("purgeCancel").onclick = () => $("purgeDialog").close();
+$("purgeForm").onsubmit = async (e) => {
+  e.preventDefault();
+  if (e.target.elements.confirm.value.trim() !== "DELETE") return toast("Type DELETE to confirm");
+  try {
+    const r = await api("/api/fin/sources/purge", { method: "POST", body: JSON.stringify({ confirm: "DELETE" }) });
+    $("purgeDialog").close();
+    const d = r.deleted || {};
+    const recs = ["transactions", "inv_activity", "inv_snapshots", "fin_balances", "inv_statements"].reduce((a, k) => a + (d[k] || 0), 0);
+    toast(`Deleted ${recs.toLocaleString()} records`);
+    loadImports();
+  } catch (err) { toast(err.message); }
+};
 $("pdf-files").onchange = () => {
   const fs = $("pdf-files").files;
   $("pdfLabel").textContent = fs.length ? (fs.length === 1 ? fs[0].name : `${fs.length} PDFs selected`) : "Choose PDFs";

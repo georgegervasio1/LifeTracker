@@ -98,6 +98,7 @@ from plaid.model.investments_holdings_get_request import InvestmentsHoldingsGetR
 from plaid.model.investments_transactions_get_request import InvestmentsTransactionsGetRequest
 from plaid.model.investments_transactions_get_request_options import InvestmentsTransactionsGetRequestOptions
 from plaid.model.item_public_token_exchange_request import ItemPublicTokenExchangeRequest
+from plaid.model.item_remove_request import ItemRemoveRequest
 from plaid.model.link_token_create_request import LinkTokenCreateRequest
 from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser
 from plaid.model.link_token_transactions import LinkTokenTransactions
@@ -154,6 +155,27 @@ def exchange_public_token():
     return jsonify(ok=True, item_id=resp["item_id"])
 
 
+@app.delete("/api/plaid/items/<item_id>")
+@require_owner
+def remove_item(item_id):
+    """Disconnect a Plaid connection (e.g. a repeat link to the same bank). Its synced records stay until the
+    left-out data is deleted in Accounts & Imports."""
+    ref = user_ref().collection("items").document(item_id)
+    snap = ref.get()
+    if not snap.exists:
+        return jsonify(error="connection not found"), 404
+    item = snap.to_dict() or {}
+    if (item.get("env") or "sandbox") == PLAID_ENV:
+        try:
+            plaid_client.item_remove(ItemRemoveRequest(access_token=item["access_token"]))
+        except plaid.ApiException as e:
+            if "ITEM_NOT_FOUND" not in str(e.body or ""):
+                raise
+    ref.delete()
+    ledger.forget_policy()
+    return jsonify(ok=True)
+
+
 PLAID_TYPES = {("depository", "checking"): "checking", ("depository", "savings"): "savings", ("depository", "money market"): "savings",
                ("depository", "cd"): "savings", ("credit", None): "credit_card", ("loan", None): "loan",
                ("investment", "roth"): "roth_ira", ("investment", "roth 401k"): "roth_401k", ("investment", "401k"): "401k",
@@ -171,6 +193,8 @@ def _plaid_accounts(item_doc):
         canon = ledger.resolve_account(item.get("institution") or "Bank", kind, mask=a.get("mask"),
                                        name=a.get("official_name") or a.get("name"), alias="plaid:" + a["account_id"])
         ledger.map_plaid_account(a["account_id"], canon)
+        ledger.record_plaid_link(a["account_id"], item_doc.id, canon, mask=a.get("mask"),
+                                 name=a.get("official_name") or a.get("name"), institution=item.get("institution"), acct_type=kind)
         bal = (a.get("balances") or {}).get("current")
         if bal is not None:
             ledger.set_balance(canon, date.today().isoformat(), float(bal), src="plaid")
@@ -197,7 +221,7 @@ def _sync_transactions(item_doc):
             touched[canon] = (min(lo, str(t["date"])), max(hi, str(t["date"])))
             batch.set(tx_col.document(t["transaction_id"]), {
                 "source": item["institution"],
-                "account_id": t["account_id"], "account": canon, "src": "plaid",
+                "account_id": t["account_id"], "account": canon, "src": "plaid", "plaid_env": PLAID_ENV,
                 "date": str(t["date"]),
                 # Plaid: positive = money out. We store spending as positive too.
                 "amount": float(t["amount"]),
@@ -222,6 +246,36 @@ def _sync_transactions(item_doc):
 
 PLAID_INV_TYPES = {"buy": "buy", "sell": "sell", "fee": "fee", "dividend": "dividend", "interest": "interest",
                    "deposit": "deposit", "contribution": "contribution", "withdrawal": "withdrawal", "distribution": "distribution"}
+
+
+def plaid_inv_kind(typ, sub, amount):
+    """Plaid investment transaction (type, subtype) -> ledger activity type. Subtypes come in many spellings
+    ('qualified dividend', 'long-term capital gain', 'management fee', 'dividend reinvestment'), so match words.
+    Plaid amount: positive = cash out of the account."""
+    sub, typ = str(sub or "").lower(), str(typ or "").lower()
+    if sub in PLAID_INV_TYPES:
+        return PLAID_INV_TYPES[sub]
+    if "reinvest" in sub or typ == "buy" or sub.startswith("buy"):
+        return "buy"
+    if typ == "sell" or sub.startswith("sell"):
+        return "sell"
+    if "dividend" in sub or "capital gain" in sub:
+        return "dividend"
+    if "interest" in sub:
+        return "interest"
+    if "fee" in sub or typ == "fee" or "tax" in sub:
+        return "fee"
+    if "contribution" in sub:
+        return "contribution"
+    if "distribution" in sub:
+        return "distribution"
+    if "withdraw" in sub:
+        return "withdrawal"
+    if "deposit" in sub:
+        return "deposit"
+    if typ in PLAID_INV_TYPES:
+        return PLAID_INV_TYPES[typ]
+    return "transfer_in" if amount < 0 else "transfer_out"
 
 
 def _sync_holdings(item_doc):
@@ -251,7 +305,8 @@ def _sync_holdings(item_doc):
         hs = by_acct.get(canon, [])
         total = round(sum(x["value"] for x in hs) + cash.get(canon, 0), 2)
         user_ref().collection("inv_snapshots").document(f"{canon}_{today}_plaid").set(
-            {"account": canon, "date": today, "src": "plaid", "holdings": hs, "cash": round(cash.get(canon, 0), 2), "total": total})
+            {"account": canon, "date": today, "src": "plaid", "plaid_env": PLAID_ENV, "holdings": hs,
+             "cash": round(cash.get(canon, 0), 2), "total": total})
         ledger.set_balance(canon, today, total, src="plaid")
     # investment transactions (up to 24 months)
     start = date.today() - timedelta(days=730)
@@ -266,13 +321,13 @@ def _sync_holdings(item_doc):
             canon = amap.get(t["account_id"])
             if not canon:
                 continue
-            sub, typ = str(t.get("subtype") or ""), str(t.get("type") or "")
-            kind = PLAID_INV_TYPES.get(sub) or PLAID_INV_TYPES.get(typ) or ("transfer_in" if float(t["amount"]) < 0 else "transfer_out")
+            kind = plaid_inv_kind(t.get("type"), t.get("subtype"), float(t["amount"]))
             desc = t.get("name") or ""
             if kind in ("deposit", "transfer_in"):
                 kind = ledger.classify_inflow(desc)
             batch.set(user_ref().collection("inv_activity").document("plaid_" + t["investment_transaction_id"]), {
-                "account": canon, "date": str(t["date"]), "type": kind, "description": desc,
+                "account": canon, "account_id": t["account_id"], "plaid_env": PLAID_ENV,
+                "date": str(t["date"]), "type": kind, "description": desc,
                 "symbol": (secs.get(t.get("security_id")) or {}).get("ticker_symbol"),
                 "quantity": abs(float(t.get("quantity") or 0)) or None, "price": float(t.get("price") or 0) or None,
                 "amount": -float(t["amount"]), "src": "plaid", "pending": False}, merge=True)

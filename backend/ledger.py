@@ -23,6 +23,7 @@ Data (per user, under users/{uid}/):
   tax_docs/{id}         parsed tax forms (1099-DIV/INT/B/R, 5498)
 """
 import hashlib
+import os
 import re
 from datetime import date, datetime, timedelta, timezone
 
@@ -54,6 +55,111 @@ DEFAULT_ACCOUNTS = [
     {"id": "venmo", "name": "Venmo", "institution": "Venmo", "type": "p2p", "aliases": ["venmo"]},
 ]
 TYPE_NAMES = {"brokerage": "Brokerage", "roth_ira": "Roth IRA", "rollover_ira": "Rollover IRA", "traditional_ira": "Traditional IRA"}
+
+
+# ---------------------------------------------------------------- which sources count
+# Once a bank or brokerage is linked through Plaid (in the Plaid environment the server runs in), Plaid is the only
+# source that counts: statement PDFs, CSVs, Venmo files, manual balances and anything left over from Plaid's sandbox
+# stay in Firestore but are left out of every total. fin_settings/sources {mode: "all"} brings them back.
+# Each Plaid account the server has synced is recorded in fin_meta/plaid_links. When the same real account is
+# linked twice (two connections to one bank), only the newest connection's copy counts.
+
+def plaid_env():
+    return os.environ.get("PLAID_ENV", "sandbox")
+
+
+def _cache():
+    try:
+        from flask import g, has_app_context
+        if has_app_context():
+            return g.__dict__.setdefault("_fin_policy", {})
+    except ImportError:
+        pass
+    return {}
+
+
+def forget_policy():
+    _cache().pop("p", None)
+
+
+def plaid_links():
+    d = col("fin_meta").document("plaid_links").get()
+    return ((d.to_dict() or {}).get("links") or {}) if d.exists else {}
+
+
+def record_plaid_link(plaid_account_id, item_id, canon, mask=None, name=None, institution=None, acct_type=None):
+    links = plaid_links()
+    cur = links.get(plaid_account_id) or {}
+    links[plaid_account_id] = {"item": item_id, "env": plaid_env(), "canon": canon, "mask": mask, "name": name,
+                               "institution": institution, "type": acct_type,
+                               "linked_at": cur.get("linked_at") or now_iso(), "last_seen": now_iso()}
+    col("fin_meta").document("plaid_links").set({"links": links})
+    forget_policy()
+
+
+def policy():
+    c = _cache()
+    if "p" in c:
+        return c["p"]
+    env = plaid_env()
+    items = {}
+    for d in col("items").stream():
+        it = d.to_dict() or {}
+        items[d.id] = it
+    links = plaid_links()
+    # per canonical account, the newest live connection wins
+    best = {}
+    for pid, l in links.items():
+        it = items.get(l.get("item"))
+        if l.get("env") != env or it is None or (it.get("env") or "sandbox") != env:
+            continue
+        cur = best.get(l["canon"])
+        if not cur or (l.get("linked_at") or "", pid) > (cur[1].get("linked_at") or "", cur[0]):
+            best[l["canon"]] = (pid, l)
+    live_ids = {pid for pid, _ in best.values()}
+    s = col("fin_settings").document("sources").get()
+    mode = ((s.to_dict() or {}).get("mode") if s.exists else None) or ("plaid" if live_ids else "all")
+    if not live_ids:
+        mode = "all"                       # nothing linked: there is nothing else to count
+    p = {"mode": mode, "env": env, "live_ids": live_ids, "live_accounts": set(best), "links": links, "items": items,
+         "plaid_only": mode == "plaid"}
+    c["p"] = p
+    return p
+
+
+def _plaid_tagged(r, p):
+    return r.get("src") == "plaid" and r.get("plaid_env") == p["env"] and r.get("account") in p["live_accounts"]
+
+
+def counts_tx(t, p=None):
+    p = p or policy()
+    if t.get("superseded_by") or t.get("excluded"):
+        return False
+    if t.get("src") == "plaid" and p["live_ids"]:      # sandbox leftovers and repeat connections never count
+        return t.get("account_id") in p["live_ids"]
+    return not p["plaid_only"]
+
+
+def counts_activity(a, p=None):
+    p = p or policy()
+    if a.get("superseded_by"):
+        return False
+    if a.get("src") == "plaid" and p["live_ids"]:
+        return a.get("account_id") in p["live_ids"]
+    return not p["plaid_only"]
+
+
+def counts_point(r, p=None):
+    """A balance or holdings snapshot."""
+    p = p or policy()
+    if r.get("src") == "plaid" and p["live_ids"]:
+        return _plaid_tagged(r, p)
+    return not p["plaid_only"]
+
+
+def set_source_mode(mode):
+    col("fin_settings").document("sources").set({"mode": "plaid" if mode == "plaid" else "all"}, merge=True)
+    forget_policy()
 
 
 def init(_db, _firestore, _user_ref):
@@ -97,13 +203,19 @@ def accounts(include_hidden=False):
         a.setdefault("tax", kind.get("tax"))
         a["liability"] = bool(a.get("liability", kind.get("liability", False)))
         a["type_label"] = kind["label"]
-    rows = [a for a in rows if include_hidden or not a.get("hidden")]
+    p = policy()
+    for a in rows:
+        a["plaid_linked"] = a["id"] in p["live_accounts"]
+        a["counted"] = not a.get("hidden") and (a["plaid_linked"] or not p["plaid_only"])
+    rows = [a for a in rows if include_hidden or a["counted"]]
     order = ["cash", "credit", "investment", "retirement", "loan"]
     rows.sort(key=lambda a: (order.index(a["group"]) if a["group"] in order else 9, a.get("name", "")))
     return rows
 
 
 def ensure_defaults():
+    if policy()["plaid_only"]:            # the CSV placeholders aren't needed once Plaid is the source
+        return
     for a in DEFAULT_ACCOUNTS:
         ref = col("fin_accounts").document(a["id"])
         if not ref.get().exists:
@@ -124,7 +236,9 @@ def resolve_account(institution, acct_type, mask=None, name=None, alias=None, no
         if hit:
             _add_alias(hit, alias)
             return hit["id"]
-    same = [a for a in rows if (a.get("institution") or "").lower() == inst and a.get("type") == acct_type and not a.get("mask")]
+    taken = policy()["live_accounts"] if alias and alias.startswith("plaid:") else set()
+    same = [a for a in rows if (a.get("institution") or "").lower() == inst and a.get("type") == acct_type and not a.get("mask")
+            and a["id"] not in taken]
     if len(same) == 1:
         upd = {"mask": mask} if mask else {}
         col("fin_accounts").document(same[0]["id"]).set(upd, merge=True)
@@ -159,10 +273,10 @@ def account_for_label(label):
 # ---------------------------------------------------------------- reading the cash ledger
 def load_transactions(start, end, account=None, include_superseded=False):
     q = col("transactions").where("date", ">=", start).where("date", "<=", end)
-    out = []
+    out, p = [], policy()
     for d in q.stream():
         t = d.to_dict() | {"id": d.id}
-        if t.get("superseded_by") and not include_superseded:
+        if not include_superseded and not counts_tx(t, p):
             continue
         if account and t.get("account") != account:
             continue
@@ -171,10 +285,10 @@ def load_transactions(start, end, account=None, include_superseded=False):
 
 
 def load_activity(start="1900-01-01", end="2999-12-31", account=None, include_superseded=False):
-    out = []
+    out, p = [], policy()
     for d in col("inv_activity").where("date", ">=", start).where("date", "<=", end).stream():
         a = d.to_dict() | {"id": d.id}
-        if a.get("superseded_by") and not include_superseded:
+        if not include_superseded and not counts_activity(a, p):
             continue
         if account and a.get("account") != account:
             continue
@@ -378,9 +492,11 @@ def import_tax_forms(parsed, file_name=None):
 
 # ---------------------------------------------------------------- snapshots, balances, coverage
 def latest_snapshots():
-    best = {}
+    best, p = {}, policy()
     for d in col("inv_snapshots").stream():
         s = d.to_dict()
+        if not counts_point(s, p):
+            continue
         cur = best.get(s["account"])
         if not cur or (s["date"], SOURCE_RANK.get(s["src"], 0)) > (cur["date"], SOURCE_RANK.get(cur["src"], 0)):
             best[s["account"]] = s
@@ -399,13 +515,17 @@ def latest_snapshots():
 
 
 def snapshots(account=None):
-    rows = [d.to_dict() for d in col("inv_snapshots").stream()]
+    p = policy()
+    rows = [r for r in (d.to_dict() for d in col("inv_snapshots").stream()) if counts_point(r, p)]
     rows = [r for r in rows if not account or r["account"] == account]
     rows.sort(key=lambda r: (r["date"], SOURCE_RANK.get(r["src"], 0)))
     return rows
 
 
-def statements(account=None):
+def statements(account=None, include_uncounted=False):
+    """Statement totals. They come from PDFs, so they sit out while Plaid is the only source."""
+    if policy()["plaid_only"] and not include_uncounted:
+        return []
     rows = [d.to_dict() | {"id": d.id} for d in col("inv_statements").stream()]
     rows = [r for r in rows if not account or r["account"] == account]
     rows.sort(key=lambda r: r["closing_date"])
@@ -414,9 +534,11 @@ def statements(account=None):
 
 def balances():
     """account -> sorted [(date, balance, src)], best source per date."""
-    out = {}
+    out, p = {}, policy()
     for d in col("fin_balances").stream():
         b = d.to_dict()
+        if not counts_point(b, p):
+            continue
         out.setdefault(b["account"], {})
         cur = out[b["account"]].get(b["date"])
         if not cur or SOURCE_RANK.get(b["src"], 0) > SOURCE_RANK.get(cur[2], 0):
@@ -425,7 +547,10 @@ def balances():
 
 
 def set_balance(account, day, balance, src="manual"):
-    col("fin_balances").document(f"{account}_{day}_{src}").set({"account": account, "date": day, "balance": float(balance), "src": src})
+    doc = {"account": account, "date": day, "balance": float(balance), "src": src}
+    if src == "plaid":
+        doc["plaid_env"] = plaid_env()
+    col("fin_balances").document(f"{account}_{day}_{src}").set(doc)
 
 
 def coverage():
@@ -441,7 +566,7 @@ def coverage():
         t = d.to_dict()
         if t.get("account") and t.get("date"):
             add(t["account"], t.get("src") or "csv", t["date"])
-    for st in statements():
+    for st in statements(include_uncounted=True):
         r = rows.setdefault(st["account"], {"account": st["account"], "name": st["account"], "sources": {}})
         cur = r["sources"].setdefault("ubs_pdf", {"start": st["opening_date"], "end": st["closing_date"], "records": 0, "periods": []})
         cur["start"], cur["end"] = min(cur["start"], st["opening_date"]), max(cur["end"], st["closing_date"])
