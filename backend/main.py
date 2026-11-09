@@ -691,7 +691,9 @@ def handle_error(e):
             detail = json.loads(e.body)
             return jsonify(error=f"Plaid: {detail.get('error_code')} — {detail.get('error_message')}"), 502
         except Exception:
-            pass
+            # No JSON body (e.g. a connection or TLS failure): show what Plaid's client reported.
+            why = " ".join(str(e.reason or "").split())[:200] or "no response"
+            return jsonify(error=f"Plaid ({PLAID_ENV}) request failed: status {e.status}, {why}"), 502
     if e.__class__.__module__.startswith("anthropic"):
         return jsonify(error=f"AI assistant error: {e.__class__.__name__}"), 502
     return jsonify(error=f"Server error: {e.__class__.__name__}"), 500

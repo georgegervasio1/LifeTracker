@@ -68,3 +68,11 @@ main.plaid_client.item_public_token_exchange = lambda req: {"item_id": "new", "a
 c.post("/api/plaid/exchange", json={"public_token": "p", "kind": "bank", "institution": "Bank"})
 assert DATA["users/dev/items/new"]["env"] == "production"
 print("plaid env: ok")
+
+# A Plaid error without a JSON body still says what went wrong.
+import plaid
+def boom(req): raise plaid.ApiException(status=0, reason="SSLError\nbad handshake")
+main.plaid_client.link_token_create = boom
+r = c.post("/api/plaid/link-token", json={"kind": "bank"})
+assert r.status_code == 502 and "status 0, SSLError bad handshake" in r.json["error"], r.json
+print("plaid error text: ok")
