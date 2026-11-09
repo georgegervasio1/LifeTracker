@@ -26,7 +26,7 @@ const SECTIONS = {
   education: { title: "Education", tabs: [
     ["today", "Today"], ["tasks", "Tasks"], ["plan", "Academic plan"], ["syllabi", "Syllabi"], ["calendar", "Calendar"]] },
   goals: { title: "Goals", tabs: [] },
-  sports: { title: "Sports", tabs: [["teams", "My Teams"], ["schedule", "Schedule"], ["standings", "Standings"], ["find", "Find Teams"]] },
+  sports: { title: "Sports", tabs: [] },   // dashboard + areas, drawn by sports.js
   travel: { title: "Travel", tabs: [] },
 };
 
@@ -65,7 +65,7 @@ function parseRoute() {
   const [section, tab] = path.split("/");
   routeQuery = new URLSearchParams(query || "");
   if (section === "health") return parseHealth(path.split("/").slice(1));
-  if (section === "travel") return { section, parts: path.split("/").slice(1) };
+  if (section === "travel" || section === "sports") return { section, parts: path.split("/").slice(1) };
   if (!SECTIONS[section]) return { section: "home" };
   const tabs = SECTIONS[section].tabs;
   const alias = section === "finances" ? { overview: "networth", transactions: "cash", paychecks: "income", assistant: "networth" }[tab] : null;
@@ -87,6 +87,11 @@ function render() {
     $("askBtn").classList.add("hidden"); $("chatDrawer").classList.add("hidden");
     window.scrollTo({ top: 0 });
     return travelModule().then((m) => m.renderTravel(route.parts)).catch(showError);
+  }
+  if (section === "sports") {             // Sports draws its own dashboard, heroes and tabs (sports.js)
+    $("askBtn").classList.add("hidden"); $("chatDrawer").classList.add("hidden");
+    window.scrollTo({ top: 0 });
+    return sportsModule().then((m) => m.renderSports(route.parts)).catch(showError);
   }
 
   const cfg = SECTIONS[section];
@@ -188,7 +193,6 @@ async function load(section, tab) {
 
   if (section === "education") return loadEducation(tab);
   if (section === "goals") return (await goalsModule()).loadGoals();
-  if (section === "sports") return (await sportsModule()).loadSports(tab);
   if (section !== "finances") return;
   setChatPlace(tab);
   if (tab === "networth") return loadNetWorth();
@@ -212,12 +216,12 @@ async function goalsModule() {
   return goalsMod;
 }
 
-// Sports (favorite teams, schedules, standings) live in sports.js, loaded on first use.
+// Sports (Teams, Fantasy Football, Betting) live in sports.js + teams.js + fantasy.js, loaded on first use.
 let sportsMod = null;
 async function sportsModule() {
   if (!sportsMod) {
     sportsMod = await import("./sports.js");
-    sportsMod.initSports({ api, $, esc, toast, showError, API_BASE, routeQuery: () => routeQuery });
+    sportsMod.initSports({ api, $, esc, toast, showError, API_BASE, routeQuery: () => routeQuery, isDemo });
   }
   return sportsMod;
 }

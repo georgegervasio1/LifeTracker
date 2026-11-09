@@ -66,7 +66,12 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
 - `sports.py`: Sports section. Starred teams (`sports/favorites`), team schedules (venue, local time, TV, results),
   records, standings, team search across NFL/NBA/MLB/NHL/WNBA/MLS/EPL/college, from ESPN's public site API (unofficial,
   no key; cached in memory). `/api/sports/calendar.ics?teams=nfl:13,...` is public (public schedules only) so it can be
-  downloaded or subscribed to (webcal). Frontend in `frontend/sports.js` (loaded on first visit).
+  downloaded or subscribed to (webcal). Frontend in `frontend/teams.js`.
+- `fantasy.py`: Sports → Fantasy Football. Reads the user's ESPN league from the unofficial
+  `lm-api-reads.fantasy.espn.com` endpoint (views mTeam/mRoster/mMatchup/mMatchupScore/mSettings/mStandings/mStatus).
+  Private leagues need the `espn_s2` + `SWID` cookies the user pastes once (ESPN sign-in can't be automated); stored in
+  `integrations/espn_fantasy`, never returned to the browser. "My team" is found from SWID. League-mate data is read
+  live, never stored or committed. Connecting is blocked in the demo.
 - `food.py`: Health → Food diary (MyFitnessPal-style): search USDA FoodData Central (`FDC_API_KEY`, else DEMO_KEY)
   + Open Food Facts, normalized per 100 g; entries store nutrients when logged; custom foods (per serving), quick
   add, copy a meal, recent foods, goals (blank until the user sets them), 30-day history.
@@ -121,7 +126,8 @@ Income, Taxes, Accounts & Imports (chat on every tab). Health opens on a dashboa
 Food; Unsplash photos hotlinked with credit); `#/health/<area>/<tab>` maps to a panel; old `#/health/<tab>` links are aliased.
 The card photo morphs into the area banner with a View Transition (`viewSwap` from the shared `motion.js`).
 Calendar and Connections hang off the dashboard.
-Sports: My Teams, Schedule (month calendar), Standings, Find Teams (`sports.js`).
+Sports: a dashboard of three photo cards like Travel (`sports.js`): Teams (`teams.js`: My Teams, Schedule calendar,
+Standings, Find Teams), Fantasy Football (`fantasy.js`: Matchup, Roster, Standings, League), Betting (in development, plan only).
 Travel opens on a dashboard of three photo cards like Health (Apartments, Commute, Trips); `#/travel/<area>/<tab>`;
 `travel.js` (loaded on first visit) draws its own heroes and tabs, with `apartments.js` and `trips.js`.
 Education: Overview, Syllabi, Grades & GPA, Degree Audit, Planner, Calendar. Goals: `goals.js` (loaded on first

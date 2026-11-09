@@ -1464,7 +1464,8 @@ body.is-demo .owner-only { display: none !important; }
 @media (max-width: 600px) { .demo-bar-inner { padding: 8px 16px; font-size: 12px; } }
 
 /* ── Sports (sports.js): favorite teams, schedule calendar, standings ───── */
-.sports { padding-top: 40px; padding-bottom: 64px; }
+.sports { padding-bottom: 64px; }
+.sports > .hd-head { margin-top: 48px; }
 .sp-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
 .sp-head .eyebrow { margin-bottom: 4px; }
 .sp-h2 { font-family: var(--font-display); font-size: 32px; font-weight: 600; letter-spacing: -0.03em; line-height: 1.15; }
@@ -1557,7 +1558,6 @@ body.is-demo .owner-only { display: none !important; }
 .sp-find-row .sp-opp { white-space: normal; }
 
 @media (max-width: 760px) {
-  .sports { padding-top: 24px; }
   .sp-h2 { font-size: 26px; }
   .sp-grid { grid-template-columns: 1fr; gap: 12px; }
   .sp-calendar .cal-cell { min-height: 54px; padding: 6px 4px; align-items: center; }
@@ -1845,4 +1845,66 @@ body.is-demo .owner-only { display: none !important; }
   .sub-amt { grid-column: 2; grid-row: 1; }
   .sub-next { grid-column: 1; grid-row: 2; flex-direction: row; gap: 6px; align-items: baseline; }
   .sub-row > button { grid-column: 2; grid-row: 2; }
+}
+
+/* Sports round 2: Fantasy Football (fantasy.js) and the Betting placeholder */
+.ff-connect .card + .card, .bt-plan .card + .card, .grid-2 .card + .card { margin-top: 0; }
+.ff-field { display: block; margin-top: 14px; }
+.ff-field > span { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 6px; }
+.ff-field .input, .ff-field .select { width: 100%; }
+.ff-select { border-radius: var(--radius-sm); padding: 10px 30px 10px 14px; font-size: 14px; }
+.ff-private { margin-top: 16px; font-size: 14px; }
+.ff-private summary { cursor: pointer; color: var(--accent); }
+.ff-actions { display: flex; align-items: center; gap: 12px; margin-top: 20px; }
+.ff-err { color: var(--neg) !important; }
+.ff-steps ol { margin: 12px 0 0 18px; display: grid; gap: 10px; font-size: 14px; color: var(--text-2); }
+.ff-steps b { color: var(--text); font-weight: 600; }
+.ff-steps code, .ff-connect code { font-size: 12px; background: var(--bg-alt); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+.ff-steps .hint { margin-top: 16px; font-size: 13px; color: var(--text-3); }
+.ff-logo, .ff-logo-lg { object-fit: cover; border-radius: 50%; flex: none; }
+.ff-logo { width: 40px; height: 40px; } .ff-logo-lg { width: 64px; height: 64px; font-size: 13px; }
+.sp-logo-sm.sp-logo-txt { font-size: 8px; }
+.ff-board { padding: 24px 28px 28px; }
+.ff-board-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+.ff-board-head .eyebrow { margin: 0; }
+.ff-vs { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px; }
+.ff-at { color: var(--text-3); font-size: 13px; }
+.ff-side { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 4px; min-width: 0; }
+.ff-team { font-size: 17px; font-weight: 600; letter-spacing: -0.02em; margin-top: 8px; }
+.ff-rec { font-size: 12px; }
+.ff-score { font-family: var(--font-display); font-size: 52px; font-weight: 600; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; line-height: 1.1; margin-top: 8px; }
+.ff-side.me .ff-score { color: var(--accent); }
+.ff-side .muted { font-size: 13px; }
+.ff-h3 { font-size: 19px; font-weight: 600; letter-spacing: -0.02em; margin: 32px 0 12px; }
+.ff-others { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.ff-mini { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px 16px; display: grid; gap: 8px; }
+.ff-mini > div { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 14px; }
+.ff-mini b { font-variant-numeric: tabular-nums; }
+.ff-mini .sp-opp { white-space: normal; min-width: 0; }
+tr.ff-cur td { background: var(--accent-soft); }
+.ff-totals { display: flex; gap: 28px; }
+.ff-totals div { display: flex; flex-direction: column; align-items: flex-end; font-size: 12px; }
+.ff-totals b { font-family: var(--font-display); font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ff-slot { color: var(--text-3); font-size: 12px; font-weight: 600; width: 60px; }
+.ff-pname { font-weight: 500; }
+.ff-pmeta { display: block; font-size: 12px; }
+.ff-inj { font-size: 10px; font-weight: 700; color: var(--neg); border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; vertical-align: 1px; }
+tr.ff-bench td { color: var(--text-2); }
+tr.ff-divider td { font-size: 12px; color: var(--text-3); background: var(--bg-alt); padding-top: 8px; padding-bottom: 8px; }
+.ff-stand .sp-opp { white-space: normal; }
+tr.ff-cut td { border-bottom: 2px solid var(--line-strong); }
+.bt-dev { margin-bottom: 20px; }
+.bt-dev .sp-h2 { margin-top: 12px; }
+.bt-dev p { max-width: 640px; font-size: 15px; }
+.bt-plan { gap: 20px; }
+.bt-plan .eyebrow { margin-bottom: 6px; }
+@media (max-width: 760px) {
+  .sports > .hd-head { margin-top: 24px; }
+  .ff-board { padding: 20px 16px 22px; }
+  .ff-score { font-size: 38px; }
+  .ff-logo-lg { width: 48px; height: 48px; }
+  .ff-team { font-size: 15px; }
+  .ff-vs { gap: 8px; }
+  .ff-hide-sm { display: none; }
+  .ff-totals { gap: 18px; }
 }
