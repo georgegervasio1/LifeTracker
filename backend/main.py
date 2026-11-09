@@ -100,13 +100,15 @@ from plaid.model.investments_transactions_get_request_options import Investments
 from plaid.model.item_public_token_exchange_request import ItemPublicTokenExchangeRequest
 from plaid.model.link_token_create_request import LinkTokenCreateRequest
 from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser
+from plaid.model.link_token_transactions import LinkTokenTransactions
 from plaid.model.products import Products
 from plaid.model.transactions_sync_request import TransactionsSyncRequest
 
 _PLAID_HOSTS = {"sandbox": plaid.Environment.Sandbox,
                 "production": plaid.Environment.Production}
+PLAID_ENV = os.environ.get("PLAID_ENV", "sandbox").strip().lower()
 plaid_client = plaid_api.PlaidApi(plaid.ApiClient(plaid.Configuration(
-    host=_PLAID_HOSTS[os.environ.get("PLAID_ENV", "sandbox")],
+    host=_PLAID_HOSTS[PLAID_ENV],
     api_key={"clientId": os.environ.get("PLAID_CLIENT_ID", ""),
              "secret": os.environ.get("PLAID_SECRET", "")},
 )))
@@ -118,12 +120,17 @@ def create_link_token():
     # kind=bank -> Chase (transactions); kind=investments -> UBS
     kind = (request.get_json(silent=True) or {}).get("kind", "bank")
     products = [Products("investments")] if kind == "investments" else [Products("transactions")]
+    extra = {}
+    if kind != "investments":
+        # Ask for the most history Plaid allows (24 months). Only honored when the Item is first linked.
+        extra["transactions"] = LinkTokenTransactions(days_requested=730)
     req = LinkTokenCreateRequest(
         user=LinkTokenCreateRequestUser(client_user_id=g.uid),
         client_name="LifeTracker",
         products=products,
         country_codes=[CountryCode("US")],
         language="en",
+        **extra,
     )
     return jsonify(link_token=plaid_client.link_token_create(req)["link_token"])
 
@@ -140,6 +147,7 @@ def exchange_public_token():
         "access_token": resp["access_token"],
         "institution": body.get("institution", "Unknown"),
         "kind": body.get("kind", "bank"),
+        "env": PLAID_ENV,
         "cursor": None,
         "created": firestore.SERVER_TIMESTAMP,
     })
@@ -285,6 +293,12 @@ def sync_all():
     results = []
     for item_doc in user_ref().collection("items").stream():
         kind = item_doc.get("kind")
+        # Access tokens only work in the Plaid environment that issued them. Items linked before
+        # "env" was stored all came from sandbox.
+        item_env = (item_doc.to_dict() or {}).get("env") or "sandbox"
+        if item_env != PLAID_ENV:
+            results.append({"item": item_doc.id, "skipped": f"linked in Plaid {item_env}"})
+            continue
         try:
             if kind == "investments":
                 results.append({"item": item_doc.id, "holdings": _sync_holdings(item_doc)})
@@ -683,7 +697,7 @@ def handle_error(e):
 
 @app.get("/health")
 def health():
-    return jsonify(ok=True, time=datetime.utcnow().isoformat())
+    return jsonify(ok=True, time=datetime.utcnow().isoformat(), plaid_env=PLAID_ENV)
 
 
 if __name__ == "__main__":

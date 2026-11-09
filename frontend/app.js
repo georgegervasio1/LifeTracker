@@ -860,6 +860,7 @@ async function loadFinTaxes(t) {
 // ---- Accounts & imports
 async function loadImports(v) {
   v = v || await api("/api/fin/imports");
+  api("/health").then((h) => $("plaidEnv").classList.toggle("hidden", h.plaid_env !== "sandbox" || isDemo())).catch(() => {});
   finAccounts = v.accounts.map((a) => ({ ...a, account: a.id }));
   // coverage timeline
   const all = v.coverage.flatMap((r) => Object.values(r.sources).flatMap((s) => [s.start, s.end]));
