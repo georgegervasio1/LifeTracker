@@ -120,6 +120,13 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
 - `trips.py`: Travel → Trips. Trips with dates, places, travelers, notes and bookings (flight / stay / car / other);
   prefilled Google Flights, Airbnb and Google Hotels searches and airline links (no airline/Flights booking API exists for
   personal apps). Home airport + airlines in `travel/trip_settings`. Frontend `frontend/trips.js`.
+- `social.py`: Social → Events (Partiful). Partiful has **no API**; it gives each user a private calendar sync link (the one
+  Google/Apple Calendar subscribe to). The user pastes it once (`POST /api/social/partiful`, webcal:// → https://, public
+  hosts only); it's stored in `integrations/partiful` and never returned. `parse_ics` is pure (folding, TZID/UTC/floating/
+  all-day, DURATION, GEO). Events upsert into `social_events` keyed by UID hash; ones that leave the feed are kept with
+  `in_feed: false`. RSVP only when the feed names exactly one ATTENDEE PARTSTAT (never guessed). Re-read at most every 3 h on
+  page load, or "Sync now". `.ics` import for single events. Frontend `frontend/social.js` (Upcoming / Past / Connect; event
+  detail has Directions and "Plan a trip", which creates a Travel → Trips trip). Connecting is blocked in the demo.
 - `earnings.py`: paychecks (feeds Income/Taxes). Pub 15-T (2026) Worksheet 1A withholding, SS/Medicare, Illinois IL-700-T,
   year-end federal / IL nonresident / DC resident with credit for other-state tax. `SEED` holds the owner's past
   summer job (no employer name); payroll deposits are matched from the bank feed. `/api/taxes` builds the
@@ -130,7 +137,7 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
 `transactions` (ledger), `items` (Plaid), `inv_snapshots`, `inv_activity`, `holdings` (legacy), `health_days`, `workouts`, `integrations/whoop`, `oauth_states`,
 `training` (state/template/sessions), `education/profile`, `edu_courses`, `edu_syllabi`, `edu_syllabus_files`,
 `earnings/settings`, `paychecks`, `integrations/strava`, `strava_activities`, `race_plans`, `food_log/{date}`, `food_custom`, `food/goals`, `sports/favorites`,
-`travel/settings`, `bike_rides`, `metro_trips`, `apartments`, `apartment_digests`, `apartment_photos`, `trips`, `travel/trip_settings`.
+`travel/settings`, `bike_rides`, `metro_trips`, `apartments`, `apartment_digests`, `apartment_photos`, `trips`, `travel/trip_settings`, `integrations/partiful`, `social_events`.
 
 ### Frontend map (`frontend/app.js`)
 Hash routes `#/section/tab`, `SECTIONS` config at the top. Finances: Net Worth, Cash & Cards, Investments,
@@ -142,6 +149,7 @@ Sports: a dashboard of three photo cards like Travel (`sports.js`): Teams (`team
 Standings, Find Teams), Fantasy Football (`fantasy.js`: Matchup, Roster, Trades, Standings, League; league switcher), Betting (in development, plan only).
 Travel opens on a dashboard of three photo cards like Health (Apartments, Commute, Trips); `#/travel/<area>/<tab>`;
 `travel.js` (loaded on first visit) draws its own heroes and tabs, with `apartments.js` and `trips.js`.
+Social: `social.js` (Partiful events; tabs Upcoming, Past, Connect).
 Education: Overview, Syllabi, Grades & GPA, Degree Audit, Planner, Calendar. Goals: `goals.js` (loaded on first
 visit; widgets, detail, editor, library, coach drawer).
 Design tokens on `:root` in `styles.css` (`--accent`, `--pos`, `--neg`, `--warn`, `--exam`, `--done`, …).

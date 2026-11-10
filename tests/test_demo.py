@@ -27,7 +27,7 @@ PAGES = ["/api/fin/overview", "/api/fin/cash", "/api/fin/investments", "/api/fin
          "/api/fin/imports", f"/api/earnings?year={y}", f"/api/taxes?year={y}", "/api/health/summary", "/api/workouts",
          "/api/training", "/api/training/history", f"/api/running?year={y}", f"/api/runs?start={s90}&end={s}", "/api/raceplans",
          f"/api/food/day?date={s}", "/api/food/history", "/api/food/goals", "/api/food/recent", "/api/edu", f"/api/edu/today?date={s}",
-         "/api/edu/tasks", "/api/goals", "/api/goals/metrics", "/api/goals/library", "/api/transactions", "/api/summary", "/api/holdings"]
+         "/api/edu/tasks", "/api/goals", "/api/goals/metrics", "/api/goals/library", "/api/social/events", "/api/transactions", "/api/summary", "/api/holdings"]
 for p in PAGES:
     r = c.get(p, headers=A)
     assert r.status_code == 200, (p, r.status_code, r.get_data(as_text=True)[:300])
@@ -36,6 +36,9 @@ ov = c.get("/api/fin/overview", headers=A).get_json()
 assert ov["net_worth"] > 10000 and all(a["balance"] is None or a["balance"] > -5000 for a in ov["accounts"]), ov["accounts"]
 assert not any(a["account"].startswith("chase") for a in ov["accounts"])          # the built-in defaults stay hidden
 assert c.get(f"/api/earnings?year={y}", headers=A).get_json()["ready"]
+soc = c.get("/api/social/events", headers=A).get_json()
+assert len(soc["upcoming"]) == 4 and len(soc["past"]) == 2 and soc["upcoming"][0]["rsvp"] == "going" and not soc["connected"]
+assert soc["upcoming"][0]["location"].endswith("Washington, DC")
 subs = c.get("/api/fin/subscriptions", headers=A).get_json()
 names = {x["name"] for x in subs["active"]}
 assert {"Streamflix Subscription", "Morning Ledger Digital", "Codedesk Pro Annual", "Freshface Razor Club"} <= names, names
@@ -84,7 +87,8 @@ assert not [p for p in DATA if "/workouts/" in p]
 for m, p in [("post", "/api/chat"), ("post", "/api/goals/coach"), ("post", "/api/plaid/link-token"), ("post", "/api/sync"),
              ("post", "/api/whoop/connect"), ("post", "/api/whoop/sync"), ("delete", "/api/whoop"), ("post", "/api/strava/connect"),
              ("post", "/api/strava/sync"), ("delete", "/api/strava"), ("post", "/api/edu/gmail/scan"), ("post", "/api/edu/plan"),
-             ("post", "/api/edu/syllabi/upload"), ("post", "/api/demo/schedule"), ("delete", "/api/demo/schedule")]:
+             ("post", "/api/edu/syllabi/upload"), ("post", "/api/demo/schedule"), ("delete", "/api/demo/schedule"),
+             ("post", "/api/social/partiful"), ("post", "/api/social/sync")]:
     r = getattr(c, m)(p, json={}, headers=A)
     assert r.status_code == 403 and r.get_json().get("demo"), (m, p, r.status_code)
 # the assistant client refuses in the demo even if a route were missed

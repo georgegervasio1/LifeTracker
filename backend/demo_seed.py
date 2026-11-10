@@ -670,6 +670,27 @@ def trips(c, today):
                                "bookings": [{"kind": "flight", "airline": "Alaska", "from": "PDX", "to": "AUS", "date": _iso(p), "cost": 388}]})
 
 
+def social(c, today):
+    """Made-up Partiful-style events, sent through the .ics import so the demo exercises the real parser."""
+    rows = [(-40, 19, "Housewarming on the Hill", "Sample Ave SE, Washington, DC", "going"),
+            (-12, 20, "Friendsgiving potluck", "Sample St NW, Washington, DC", "going"),
+            (3, 19, "Trivia night", "Sample Tavern, Washington, DC", "going"),
+            (9, 18, "Winter formal", "Sample Hall, Washington, DC", "maybe"),
+            (16, 21, "Holiday party", "Sample Loft, Washington, DC", "invited"),
+            (34, 20, "Birthday dinner in Chicago", "Sample Rooftop, Chicago, IL", "going")]
+    stat = {"going": "ACCEPTED", "maybe": "TENTATIVE", "invited": "NEEDS-ACTION"}
+    ev = []
+    for i, (days, hour, title, place, rsvp) in enumerate(rows):
+        st = datetime.combine(today + timedelta(days=days), datetime.min.time()).replace(hour=hour)
+        en = st + timedelta(hours=3)
+        ev.append("\r\n".join([
+            "BEGIN:VEVENT", f"UID:demo-social-{i}@example.com", f"DTSTART;TZID=America/New_York:{st:%Y%m%dT%H%M%S}",
+            f"DTEND;TZID=America/New_York:{en:%Y%m%dT%H%M%S}", f"SUMMARY:{title}", f"LOCATION:{place.replace(',', chr(92) + ',')}",
+            "DESCRIPTION:A made-up demo event.", "ORGANIZER;CN=Sample Host:mailto:host@example.com",
+            f"ATTENDEE;PARTSTAT={stat[rsvp]}:mailto:you@example.com", "END:VEVENT"]))
+    c.post("/api/social/import", json={"ics": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" + "\r\n".join(ev) + "\r\nEND:VCALENDAR\r\n"})
+
+
 def build(app, store, schedule=None, today=None):
     """Fill `store` with the demo profile. Runs the app's endpoints through a test client as the seed session."""
     import demo
@@ -689,4 +710,5 @@ def build(app, store, schedule=None, today=None):
     bike_rides(c, today, rng)
     metro(c, today, rng)
     trips(c, today)
+    social(c, today)
     return store

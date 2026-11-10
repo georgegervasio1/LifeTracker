@@ -28,6 +28,7 @@ const SECTIONS = {
   goals: { title: "Goals", tabs: [] },
   sports: { title: "Sports", tabs: [] },   // dashboard + areas, drawn by sports.js
   travel: { title: "Travel", tabs: [] },
+  social: { title: "Social", tabs: [] },   // Partiful events, drawn by social.js
 };
 
 // Health opens on a dashboard of five areas; each area has its own tabs. A tab maps to a panel in index.html.
@@ -65,7 +66,7 @@ function parseRoute() {
   const [section, tab] = path.split("/");
   routeQuery = new URLSearchParams(query || "");
   if (section === "health") return parseHealth(path.split("/").slice(1));
-  if (section === "travel" || section === "sports") return { section, parts: path.split("/").slice(1) };
+  if (section === "travel" || section === "sports" || section === "social") return { section, parts: path.split("/").slice(1) };
   if (!SECTIONS[section]) return { section: "home" };
   const tabs = SECTIONS[section].tabs;
   const alias = section === "finances" ? { overview: "networth", transactions: "cash", paychecks: "income", assistant: "networth" }[tab] : null;
@@ -87,6 +88,11 @@ function render() {
     $("askBtn").classList.add("hidden"); $("chatDrawer").classList.add("hidden");
     window.scrollTo({ top: 0 });
     return travelModule().then((m) => m.renderTravel(route.parts)).catch(showError);
+  }
+  if (section === "social") {             // Social (Partiful events) draws its own tabs (social.js)
+    $("askBtn").classList.add("hidden"); $("chatDrawer").classList.add("hidden");
+    window.scrollTo({ top: 0 });
+    return socialModule().then((m) => m.renderSocial(route.parts)).catch(showError);
   }
   if (section === "sports") {             // Sports draws its own dashboard, heroes and tabs (sports.js)
     $("askBtn").classList.add("hidden"); $("chatDrawer").classList.add("hidden");
@@ -224,6 +230,16 @@ async function sportsModule() {
     sportsMod.initSports({ api, $, esc, toast, showError, API_BASE, routeQuery: () => routeQuery, isDemo });
   }
   return sportsMod;
+}
+
+// Social (Partiful events) lives in social.js, loaded on first use.
+let socialMod = null;
+async function socialModule() {
+  if (!socialMod) {
+    socialMod = await import("./social.js");
+    socialMod.initSocial({ api, $, esc, toast, showError, isDemo, routeQuery: () => routeQuery });
+  }
+  return socialMod;
 }
 
 // Travel (apartments, commute, trips) lives in travel.js, loaded on first use.

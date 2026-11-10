@@ -21,6 +21,7 @@ Endpoints (all require a Firebase ID token for ALLOWED_EMAIL):
   Race training: /api/raceplans[/<id>], /api/raceplans/preview  (see raceplan.py)
   Sports: /api/sports, /api/sports/{teams,favorites,team,schedule,standings,calendar.ics}  (see sports.py); /api/fantasy/*  (see fantasy.py)
   Travel: /api/travel/bike, /api/travel/bike/stations, /api/apartments  (see travel.py)
+  Social: /api/social/{events,partiful,sync,import}  (see social.py)
   Food: /api/food/{day,entries,copy,search,barcode,recent,custom,goals,history}  (see food.py)
 """
 import csv
@@ -643,6 +644,10 @@ import apartments
 apartments.init(app, db, firestore, require_owner, user_ref)
 import trips
 trips.init(app, db, firestore, require_owner, user_ref)
+
+# ---------------------------------------------------------------- Social (Partiful events from its calendar link)
+import social
+social.init(app, db, firestore, require_owner, user_ref)
 
 # ---------------------------------------------------------------- Earnings (paychecks, withholding, year-end tax)
 import earnings

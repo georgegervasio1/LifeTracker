@@ -6,7 +6,7 @@ How it stays separate from real data:
     Firestore client was, so module code is unchanged and a demo request can never reach real Firestore.
   * Each visitor gets a private copy of the seeded demo (demo_seed.py), so edits are theirs only, and are lost
     when the session ends or the server restarts. At most MAX_SESSIONS copies are kept (least recently used go).
-  * Features that cost money or touch real accounts (Plaid, WHOOP/Strava/Gmail connections, the AI assistant
+  * Features that cost money or touch real accounts (Plaid, WHOOP/Strava/Gmail/Partiful connections, the AI assistant
     and coach, syllabus reading with Claude) answer 403 in the demo.
 The one real thing a demo can read: the owner's course schedule without grades, copied on purpose with
 POST /api/demo/schedule (owner only) to Firestore demo/education. DELETE removes it.
@@ -41,6 +41,7 @@ BLOCKED = [
     ("PATCH", r"/api/edu/syllabi/[^/]+"),
     ("*", r"/api/whoop(/.*)?"), ("*", r"/api/strava/(connect|sync)"), ("DELETE", r"/api/strava"),
     ("*", r"/api/demo/.*"), ("POST", r"/api/travel/bike/rides/scan"), ("*", r"/api/fantasy/connect"),
+    ("POST", r"/api/social/(partiful|sync)"),
 ]
 _BLOCKED = [(m, re.compile(p + r"/?")) for m, p in BLOCKED]
 NOT_IN_DEMO = ("This is turned off in the demo: it connects real accounts or uses the AI assistant. "
