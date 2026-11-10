@@ -180,7 +180,7 @@ Design tokens on `:root` in `styles.css` (`--accent`, `--pos`, `--neg`, `--warn`
 
 ### Environment & secrets (Cloud Run)
 Env `ADMIN_EMAILS` (developer account, comma-separated), optional `SIGNUP_OPEN=0|1` (overrides the Developer page switch). Secrets: `plaid-client-id`, `plaid-secret`, `allowed-email`, `anthropic-api-key`, `whoop-client-id`,
-`whoop-client-secret`, `strava-client-id`, `strava-client-secret`. Env: `PLAID_ENV` (sandbox until Plaid production is approved), `CLAUDE_MODEL`,
+`whoop-client-secret`, `strava-client-id`, `strava-client-secret`, `google-maps-key` (→ env `GOOGLE_MAPS_KEY`, a browser key restricted to the Pages site and the Maps JavaScript API; served to signed-in users by `/api/maps/config`, never the demo; without it maps use OpenStreetMap tiles). Env: `PLAID_ENV` (sandbox until Plaid production is approved), `CLAUDE_MODEL`,
 `WHOOP_REDIRECT_URI`, `STRAVA_REDIRECT_URI`, `FDC_API_KEY` (optional), `FRONTEND_URL`, `FRONTEND_ORIGIN`. Local dev: `DEV_SKIP_AUTH=1`.
 
 ## Testing
