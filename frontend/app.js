@@ -4,6 +4,7 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChang
 import { API_BASE, FIREBASE_CONFIG } from "./config.js";
 import { viewSwap, enter, panelIn } from "./motion.js";
 import { mountEduToday, loadToday, loadTasks, gmailToken } from "./edu-today.js";
+import { initSchool, renderSchoolSetup, openClassSearch, wireClassSearch } from "./school.js";
 
 const auth = getAuth(initializeApp(FIREBASE_CONFIG));
 const $ = (id) => document.getElementById(id);
@@ -29,6 +30,7 @@ const SECTIONS = {
   sports: { title: "Sports", tabs: [] },   // dashboard + areas, drawn by sports.js
   travel: { title: "Travel", tabs: [] },
   social: { title: "Social", tabs: [] },   // Partiful events, drawn by social.js
+  admin: { title: "Developer", tabs: [] }, // sign-ups and access (admin.js), developer and owner accounts only
 };
 
 // Health opens on a dashboard of five areas; each area has its own tabs. A tab maps to a panel in index.html.
@@ -80,6 +82,7 @@ function render() {
   if (!auth.currentUser && !isDemo()) return;
   const route = parseRoute();
   const { section, tab } = route;
+  if ((section === "finances" && me && !me.finances) || (section === "admin" && !me?.admin)) { location.hash = "#/"; return; }
   lastRoute = route;
   $$(".route").forEach((r) => r.classList.toggle("active", r.dataset.route === section));
   $$(".section-links a").forEach((a) => a.classList.toggle("active", a.dataset.section === section));
@@ -199,6 +202,7 @@ async function load(section, tab) {
 
   if (section === "education") return loadEducation(tab);
   if (section === "goals") return (await goalsModule()).loadGoals();
+  if (section === "admin") { const m = await import("./admin.js"); m.initAdmin({ api, $, esc, toast }); return m.loadAdmin(); }
   if (section !== "finances") return;
   setChatPlace(tab);
   if (tab === "networth") return loadNetWorth();
@@ -269,15 +273,31 @@ function exitDemo() {
   try { sessionStorage.removeItem(DEMO_KEY); } catch { /* nothing stored */ }
   location.href = location.pathname;          // a clean reload drops every page's demo state
 }
-function showApp() {
+// Who is signed in: owner (everything), developer (sign-ups page), approved member (no Finances) or waiting.
+let me = null;
+async function checkAccount() {
+  if (isDemo()) return (me = { role: "demo", finances: true, admin: false });
+  try { me = await fetch(API_BASE + "/api/me", { headers: { Authorization: await authHeader() } }).then((r) => r.json()); }
+  catch { me = { role: "owner", finances: true, admin: false }; }       // backend unreachable: the API still enforces access
+  return me;
+}
+async function showApp() {
   const signedIn = isDemo() || !!auth.currentUser;
   document.body.classList.toggle("is-demo", isDemo());
   $("demoBar").classList.toggle("hidden", !isDemo());
   $("signout").textContent = isDemo() ? "Exit demo" : "Sign out";
+  if (signedIn) await checkAccount(); else me = null;
+  const waiting = signedIn && me?.role === "pending";
+  document.body.classList.toggle("no-fin", !!me && !me.finances);
+  document.body.classList.toggle("is-admin", !!me?.admin);
+  document.body.classList.toggle("not-owner", !!me && me.role !== "owner" && me.role !== "demo");
+  if (waiting) $("pendingText").textContent = `${me.email} is waiting for access. You'll be able to use LifeTracker as soon as it's approved.`;
+  $("pending").classList.toggle("hidden", !waiting);
   $("login").classList.toggle("hidden", signedIn);
-  $("app").classList.toggle("hidden", !signedIn);
-  if (signedIn) render();
+  $("app").classList.toggle("hidden", !signedIn || waiting);
+  if (signedIn && !waiting) render();
 }
+$("pendingSignout").onclick = () => signOut(auth);
 async function authHeader() {
   return isDemo() ? `Demo ${demoSid}` : `Bearer ${await auth.currentUser.getIdToken()}`;
 }
@@ -406,7 +426,7 @@ async function loadHome() {
   $("homeDate").textContent = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
   if (!backendReady) return;
   const now = new Date();
-  try {
+  if (me && !me.finances) {} else try {
     const o = await api("/api/fin/overview");
     $("homeFinance").innerHTML = o.net_worth != null
       ? `${usd0.format(o.net_worth)}<small>net worth · ${usd0.format(o.month_spent || 0)} spent this month</small>`
@@ -425,7 +445,7 @@ async function loadHome() {
     const C = e.computed;
     $("homeEdu").classList.toggle("muted-stat", !e.courses.length);
     $("homeEdu").innerHTML = e.courses.length
-      ? `${C.gpa_actual?.toFixed(2) ?? "—"}<small>GPA · projected ${C.gpa_projected?.toFixed(2) ?? "—"} vs ${C.profile.target_gpa.toFixed(2)} target</small>`
+      ? `${C.gpa_actual?.toFixed(2) ?? "—"}<small>GPA · projected ${C.gpa_projected?.toFixed(2) ?? "—"}${C.profile.target_gpa != null ? ` vs ${C.profile.target_gpa.toFixed(2)} target` : ""}</small>`
       : "Import your courses";
   } catch { $("homeEdu").textContent = "Import your courses"; }
   try {
@@ -2128,6 +2148,11 @@ const PRIORITY = { 3: "Must take", 2: "High", 1: "Maybe", 0: "" };
 const STATUS_LABEL = { completed: "Completed", enrolled: "Enrolled", planned: "Planned", waitlisted: "Waitlisted", considering: "Considering", dropped: "Dropped" };
 const fmtGpa = (v) => (v == null ? "—" : v.toFixed(2));
 const r2 = (x) => Math.floor(x * 100 + 0.5 + 1e-9) / 100;
+const SCH = () => edu.computed.school;                 // the school pack (backend/schools.py public())
+const gmax = () => SCH().gpa_max;
+const passGrades = () => SCH().pass_grades;
+const fmtTarget = (t) => (t == null ? "—" : t.toFixed(2));
+initSchool({ api, $, esc, toast, getEdu: () => edu, setEdu: (v) => (edu = v), rerender: () => render() });
 
 async function loadEducation(tab) {
   if (tab === "today") return loadToday();
@@ -2135,9 +2160,17 @@ async function loadEducation(tab) {
   if (tab === "plan") tab = EDU_PLAN_SUBS.includes(routeQuery.get("sub")) ? routeQuery.get("sub") : "overview";
   edu = await api("/api/edu");
   const p = edu.computed.profile;
-  $("eduSchool").textContent = [p.school, p.program, p.grad_term ? `Expected ${p.grad_term}` : ""].filter(Boolean).join(" · ");
+  $("eduSchool").textContent = edu.needs_school ? "" : [p.school, p.program, p.grad_term ? `Expected ${p.grad_term}` : ""].filter(Boolean).join(" · ");
+  $("auditIntro").textContent = SCH().audit_intro;
+  $("findClass").classList.toggle("hidden", !SCH().catalog);
+  $("pfElectLabel").textContent = `Used my ${SCH().pf.label.split(" (")[0].toLowerCase()} (counts toward ${SCH().pf.cap})`;
+  $("targetGpa").max = gmax();
   const empty = !edu.courses.length;
-  $("eduEmpty").classList.toggle("hidden", !empty);
+  const setup = $("eduSchoolSetup");
+  if (edu.needs_school) { setup.classList.remove("hidden"); renderSchoolSetup(setup, { first: true }); }
+  else if (setup.dataset.open !== "1") setup.classList.add("hidden");
+  $("eduSchoolEdit").classList.toggle("hidden", !!edu.needs_school);
+  $("eduEmpty").classList.toggle("hidden", !empty || !!edu.needs_school);
   $("eduOverview").classList.toggle("hidden", empty);
   if (tab === "overview" && !empty) renderEduOverview();
   if (tab === "grades") { gradeDraft = {}; renderGrades(); }
@@ -2161,11 +2194,11 @@ function liveGpa() {
     if (gs === "actual") { aq += q; ag += cr; }
   });
   const rem = edu.courses.filter((c) => ["enrolled", "planned"].includes(c.status) && (gradeDraft[c.id]?.grade_status ?? c.grade_status) !== "actual"
-    && c.graded !== false && !c.pf_elected && !["P", "H", "CR"].includes(gradeDraft[c.id]?.grade ?? c.grade));
+    && c.graded !== false && !c.pf_elected && !passGrades().includes(gradeDraft[c.id]?.grade ?? c.grade));
   const remCr = rem.reduce((a, c) => a + (+c.credits || 0), 0);
   return { actual: ag ? r2(aq / ag) : null, projected: pg ? r2(pq / pg) : null,
            terms: Object.fromEntries(Object.entries(terms).map(([t, v]) => [t, v.g ? r2(v.q / v.g) : null])),
-           needed: remCr ? (target * (ag + remCr) - aq) / remCr : null, remCr, target };
+           needed: remCr && target ? (target * (ag + remCr) - aq) / remCr : null, remCr, target: target || null };
 }
 
 const pfStatus = (a) => (a.remaining < 0 ? "Over" : a.remaining === 0 ? "All used" : "Available");
@@ -2175,16 +2208,16 @@ function renderEduOverview() {
   $("e-gpa").textContent = fmtGpa(C.gpa_actual);
   $("e-gpa-sub").textContent = `${C.graded_credits_actual} graded credits`;
   $("e-proj").textContent = fmtGpa(C.gpa_projected);
-  $("e-proj").className = "kpi-value " + (C.gpa_projected != null ? (C.gpa_projected >= C.profile.target_gpa ? "pos" : "neg") : "");
-  $("e-proj-sub").textContent = `vs. ${C.profile.target_gpa.toFixed(2)} target`;
+  $("e-proj").className = "kpi-value " + (C.gpa_projected != null && C.profile.target_gpa != null ? (C.gpa_projected >= C.profile.target_gpa ? "pos" : "neg") : "");
+  $("e-proj-sub").textContent = C.profile.target_gpa != null ? `vs. ${C.profile.target_gpa.toFixed(2)} target` : "No target set";
   $("e-need").textContent = n ? (n.already_met ? "Met" : n.achievable ? n.average.toFixed(2) : "Out of reach") : "—";
-  $("e-need-sub").textContent = n ? `avg on ${n.graded_credits} remaining graded credits` : "No remaining graded courses";
+  $("e-need-sub").textContent = n ? `avg on ${n.graded_credits} remaining graded credits` : C.profile.target_gpa == null ? "Set a target GPA" : "No remaining graded courses";
   $("e-credits").textContent = `${C.credits.earned + C.credits.in_progress + C.credits.planned} / ${C.credits.required}`;
   $("e-credits-sub").textContent = `${C.credits.earned} earned · ${C.credits.in_progress} in progress · ${C.credits.planned} planned`;
 
   const terms = C.terms.filter((t) => t.gpa_projected != null);
   drawChart("chart-gpa", "bar", terms.map((t) => t.term), terms.map((t) => t.gpa_projected),
-    { tip: (v) => v.toFixed(2), tick: (v) => v.toFixed(1) }, { y: { min: 2.5, max: 4.33 } });
+    { tip: (v) => v.toFixed(2), tick: (v) => v.toFixed(1) }, { y: { min: 2.5, max: gmax() } });
   // dim projected bars
   const ch = charts["chart-gpa"]; const acc = cssVar("--accent");
   ch.data.datasets[0].backgroundColor = terms.map((t) => (t.gpa_actual != null ? acc : acc + "66"));
@@ -2201,19 +2234,20 @@ function renderEduOverview() {
       list.map((c) => `<div class="mini-row"><span>${esc(c.title)}</span><span class="tag">${c.credits ?? "—"} cr${c.graded === false ? " · P/F" : ""}</span></div>`).join("");
   }
   const hr = C.profile.honors_reference || [];
-  $("eduHonors").innerHTML = `<p class="honors-target">Your target: <strong>${C.profile.target_gpa.toFixed(2)}</strong>. Projected: <strong class="${(C.gpa_projected || 0) >= C.profile.target_gpa ? "pos" : "neg"}">${fmtGpa(C.gpa_projected)}</strong></p>
-    <p class="hint">Georgetown Law awards cum laude to the top third and magna cum laude to the top 10% of the class, so cutoffs move each year. Published examples:</p>
+  $("eduHonors").closest(".card").classList.toggle("hidden", !SCH().honors_note && !hr.length && C.profile.target_gpa == null);
+  $("eduHonors").innerHTML = `<p class="honors-target">Your target: <strong>${fmtTarget(C.profile.target_gpa)}</strong>. Projected: <strong class="${C.profile.target_gpa != null && (C.gpa_projected || 0) >= C.profile.target_gpa ? "pos" : "neg"}">${fmtGpa(C.gpa_projected)}</strong></p>
+    ${SCH().honors_note ? `<p class="hint">${esc(SCH().honors_note)}</p>` : ""}
     ${hr.map((h) => `<div class="mini-row"><span>${esc(h.label)}</span><span class="tag">${h.examples.map((e) => `${e.gpa.toFixed(2)} (${e.year})`).join(" · ")}</span></div>`).join("")}`;
 }
 
 function gradeOptions(selected, includeBlank = true) {
-  const opts = Object.keys(edu.computed.grade_points).concat(["P", "H", "CR"]);
+  const opts = Object.keys(edu.computed.grade_points).concat(passGrades());
   return (includeBlank ? `<option value="">—</option>` : "") + opts.map((g) => `<option ${g === selected ? "selected" : ""}>${g}</option>`).join("");
 }
 
 function renderGrades() {
   const C = edu.computed;
-  if (document.activeElement !== $("targetGpa")) $("targetGpa").value = C.profile.target_gpa.toFixed(2);
+  if (document.activeElement !== $("targetGpa")) $("targetGpa").value = C.profile.target_gpa != null ? C.profile.target_gpa.toFixed(2) : "";
   const live = liveGpa();
   $("gradeTerms").innerHTML = C.terms.filter((t) => t.status !== "empty").map((t) => {
     const rows = edu.courses.filter((c) => c.term === t.term && ["completed", "enrolled", "planned"].includes(c.status));
@@ -2246,16 +2280,17 @@ function renderGrades() {
 function renderSolver(live) {
   const n = live.needed, server = edu.computed.needed;
   let html = `<div class="solver-stats"><div><span class="kpi-label">Current</span><strong>${fmtGpa(live.actual)}</strong></div>
-    <div><span class="kpi-label">Projected</span><strong class="${(live.projected || 0) >= live.target ? "pos" : "neg"}">${fmtGpa(live.projected)}</strong></div>
-    <div><span class="kpi-label">Needed average</span><strong>${n == null ? "—" : n <= 0 ? "Met" : n > 4.33 ? "Out of reach" : n.toFixed(2)}</strong></div></div>`;
-  if (n != null && n > 0 && n <= 4.33) {
+    <div><span class="kpi-label">Projected</span><strong class="${live.target == null ? "" : (live.projected || 0) >= live.target ? "pos" : "neg"}">${fmtGpa(live.projected)}</strong></div>
+    <div><span class="kpi-label">Needed average</span><strong>${n == null ? "—" : n <= 0 ? "Met" : n > gmax() ? "Out of reach" : n.toFixed(2)}</strong></div></div>`;
+  if (live.target == null) html += `<p class="solver-text">Set a target GPA to see the average you need on your remaining courses.</p>`;
+  if (n != null && n > 0 && n <= gmax()) {
     html += `<p class="solver-text">To finish at <strong>${live.target.toFixed(2)}</strong>, you need a <strong>${n.toFixed(2)}</strong> average across your ${live.remCr} remaining graded credits.</p>`;
     if (server?.plan && !Object.keys(gradeDraft).length) {
-      const as = server.plan.filter((p) => ["A", "A+"].includes(p.grade)), rest = server.plan.filter((p) => !["A", "A+"].includes(p.grade));
-      html += `<p class="solver-text">One way to get there: <strong>${as.map((p) => `${p.grade} in ${esc(p.title.split(":")[0])}`).join(", ")}</strong>${rest.length ? `, and ${rest[0].grade} or better in the rest` : ""}.</p>
+      const top = SCH().top_grades, as = server.plan.filter((p) => top.includes(p.grade)), rest = server.plan.filter((p) => !top.includes(p.grade));
+      if (as.length) html += `<p class="solver-text">One way to get there: <strong>${as.map((p) => `${p.grade} in ${esc(p.title.split(":")[0])}`).join(", ")}</strong>${rest.length ? `, and ${rest[0].grade} or better in the rest` : ""}.</p>
         <button class="btn btn-secondary btn-sm" id="applyPlan">Try this plan</button>`;
     }
-  } else if (n != null && n > 4.33) {
+  } else if (n != null && n > gmax()) {
     html += `<p class="solver-text">That target isn't reachable with your remaining graded credits.</p>`;
   }
   $("solverOut").innerHTML = html;
@@ -2276,7 +2311,7 @@ $("gradeSave").onclick = async () => {
   try {
     for (const [id, d] of Object.entries(gradeDraft)) {
       const body = { ...d };
-      if ("grade" in d) body.graded = !["P", "H", "CR"].includes(d.grade);
+      if ("grade" in d) body.graded = !passGrades().includes(d.grade);
       edu = await api(`/api/edu/courses/${id}`, { method: "PATCH", body: JSON.stringify(body) });
     }
     gradeDraft = {}; toast("Grades saved"); renderGrades();
@@ -2285,6 +2320,7 @@ $("gradeSave").onclick = async () => {
 };
 
 function renderAudit() {
+  let prevGroup = null;
   $("auditList").innerHTML = edu.computed.audit.map((a) => {
     let body = "";
     if (a.type === "credits") {
@@ -2292,7 +2328,8 @@ function renderAudit() {
       body = `<div class="stack-bar"><span class="seg-done" style="width:${pct(a.done)}%"></span><span class="seg-prog" style="width:${pct(a.in_progress)}%"></span><span class="seg-plan" style="width:${pct(a.planned)}%"></span></div>
         <div class="stack-legend"><span><i class="lg lg-done"></i>${a.done} earned</span><span><i class="lg lg-prog"></i>${a.in_progress} in progress</span><span><i class="lg lg-plan"></i>${a.planned} planned</span>${a.short_by ? `<span class="neg">${a.short_by} short</span>` : ""}</div>`;
     }
-    if (a.type === "gpa") body = `<div class="audit-courses">Current GPA ${fmtGpa(a.value)}</div>`;
+    if (a.type === "gpa") body = `<div class="audit-courses">${a.key === "major_gpa" ? "Major" : "Current"} GPA ${fmtGpa(a.value)}${a.note ? ` · ${esc(a.note)}` : ""}</div>`;
+    if (a.type === "group") body = `<div class="audit-parts">${a.parts.map((p) => `<div class="audit-part"><span class="pill pill-${p.status}">${{ met: "Met", on_track: "On track", missing: "Missing" }[p.status]}</span><span><strong>${esc(p.label)}</strong>${p.count ? ` <span class="tag">${esc(p.count)}</span>` : ""}<small>${p.courses.length ? p.courses.map(esc).join(" · ") : "Nothing tagged yet"}</small></span></div>`).join("")}</div>`;
     if (a.type === "pf") {
       const cells = []; const push = (n, cls) => { for (let i = 0; i < n; i++) cells.push(cls); };
       push(a.used, "used"); push(a.in_progress, "prog"); push(a.planned, "plan");
@@ -2302,11 +2339,16 @@ function renderAudit() {
         <div class="stack-legend"><span><i class="lg lg-done"></i>${a.used} used${a.prior ? ` (${a.prior} from earlier terms)` : ""}</span>${a.in_progress ? `<span><i class="lg lg-prog"></i>${a.in_progress} this term</span>` : ""}<span><i class="lg lg-plan"></i>${a.planned} planned</span><span class="${a.remaining < 0 ? "neg" : ""}"><strong>${a.remaining < 0 ? `${-a.remaining} over the limit` : `${a.remaining} left`}</strong></span></div>
         <div class="pf-rows">${a.courses.map((c) => `<div><span>${esc(c.title)} <span class="tag">${esc(c.term)} · ${c.credits} cr</span>${c.inferred ? ` <button class="text-btn" data-pfmand="${c.id}" title="Required pass/fail courses don't use the option">Was a required P/F course</button>` : ""}</span><span>${c.outcome === "planned" ? "planned" : c.outcome === "P" ? "Pass" : esc(c.outcome) + " (above target)"}</span></div>`).join("")}</div>
         <form class="pf-prior" id="pfPriorForm"><label>Used in terms not listed here <input class="input mini" id="pfPrior" type="number" min="0" max="20" step="0.5" value="${a.prior || 0}" /> credits</label><button class="btn btn-secondary btn-sm">Save</button></form>
-        <p class="hint">Credits count against the limit whether you get a Pass or keep the letter grade. One P/F course per semester; not for required courses, writing seminars, clinics or supervised research.</p>`;
+        <p class="hint">${esc(SCH().pf.note)}</p>`;
       return `<div class="audit-row"><div class="audit-title"><span class="pill pill-${a.status}">${pfStatus(a)}</span><h3>${esc(a.label)}</h3></div>${body}</div>`;
     }
-    if (a.courses) body += `<div class="audit-courses">${a.courses.length ? a.courses.map(esc).join(" · ") : "No course tagged yet. Open a course in the Planner and check this requirement."}</div>`;
-    return `<div class="audit-row"><div class="audit-title"><span class="pill pill-${a.status}">${{ met: "Met", on_track: "On track", missing: "Missing" }[a.status]}</span><h3>${esc(a.label)}</h3></div>${body}</div>`;
+    if (a.courses) body += `<div class="audit-courses">${a.courses.length ? a.courses.map(esc).join(" · ") : a.group === "major" ? "None yet." : "No course tagged yet. Open a course in the Planner and check this requirement."}</div>`;
+    if (a.todo?.length) body += `<div class="audit-todo">Still to take: ${a.todo.map(esc).join(", ")}</div>`;
+    if (a.options && a.status !== "met") body += `<div class="audit-todo">${a.status === "info" ? "Choices" : "Choose from"}: ${a.options.map(esc).join(", ")}</div>`;
+    const pill = a.status === "info" ? `<span class="pill">Choices</span>` : `<span class="pill pill-${a.status}">${{ met: "Met", on_track: "On track", missing: "Missing" }[a.status]}</span>`;
+    const head = a.group && a.group !== prevGroup ? `<h3 class="audit-group">${a.group === "ge" ? "General Education" : `Major: ${esc(SCH().major?.label || "")}`}</h3>${a.group === "major" && SCH().major?.note ? `<p class="hint">${esc(SCH().major.note)}</p>` : ""}` : "";
+    prevGroup = a.group || prevGroup;
+    return `${head}<div class="audit-row"><div class="audit-title">${pill}<h3>${esc(a.label)}</h3>${a.count ? `<span class="tag">${esc(a.count)}</span>` : ""}</div>${body}</div>`;
   }).join("");
   const pf = $("pfPriorForm");
   if (pf) pf.onsubmit = async (e) => {
@@ -2332,23 +2374,24 @@ function renderPlanner() {
   $("plannerAlerts").innerHTML =
     pl.conflicts.map((c) => `<div class="alert ${c.both_committed ? "alert-bad" : ""}">Time conflict: ${esc(c.a_title)} and ${esc(c.b_title)}${c.both_committed ? " (both planned)" : ""}</div>`).join("") +
     (missing.length ? `<div class="alert">Still unmet after this plan: ${missing.map((m) => esc(m.label)).join(", ")}</div>` : "") +
-    ((pl.pf_elected || []).length > 1 ? `<div class="alert alert-bad">Only one P/F option course per semester. Checked: ${pl.pf_elected.map(esc).join(", ")}</div>` : "") +
+    (SCH().pf.one_per_term && (pl.pf_elected || []).length > 1 ? `<div class="alert alert-bad">Only one P/F option course per semester. Checked: ${pl.pf_elected.map(esc).join(", ")}</div>` : "") +
     (C.pass_fail.remaining < 0 ? `<div class="alert alert-bad">P/F option is ${-C.pass_fail.remaining} credit${C.pass_fail.remaining === -1 ? "" : "s"} over the ${C.pass_fail.cap}-credit limit.</div>` : "");
   const pfLeft = C.pass_fail.remaining;
   const pfBox = (c) => {
     if (c.status === "completed" || c.status === "dropped") return "";
     if (c.pf_mandatory || (c.graded === false && !c.pf_elected)) return "";   // mandatory P/F
-    if ((c.tags || []).some((t) => t === "pr" || t === "ulwr")) return "";      // not eligible
+    if ((c.tags || []).some((t) => SCH().pf.ineligible_tags.includes(t))) return "";      // not eligible
     const cr = +c.credits || 0;
     if (!cr) return "";
     const sameTerm = edu.courses.find((x) => x.pf_elected && x.id !== c.id && x.term === c.term && !["dropped", "waitlisted"].includes(x.status));
-    if (!c.pf_elected && sameTerm && sameTerm.status === "completed") return "";   // one P/F option course per semester
+    if (SCH().pf.one_per_term && !c.pf_elected && sameTerm && sameTerm.status === "completed") return "";   // one P/F option course per semester
     let swap = null;
     if (!c.pf_elected && cr > pfLeft) {   // budget used: offer to move it from another not-yet-taken course
       swap = edu.courses.find((x) => x.pf_elected && x.id !== c.id && !["completed", "dropped"].includes(x.status) && pfLeft + (+x.credits || 0) >= cr);
       if (!swap) return "";
     }
-    const label = c.pf_elected ? "Use P/F credit" : swap ? `Use P/F credit here instead of ${esc(swap.code || swap.title)}` : `Use P/F credit (${pfLeft} left)`;
+    const pfName = SCH().pf_grade === "PA" ? "Take PA/NP" : "Use P/F credit";
+    const label = c.pf_elected ? pfName : swap ? `${pfName} here instead of ${esc(swap.code || swap.title)}` : `${pfName} (${pfLeft} left)`;
     return `<label class="pf-check ${c.pf_elected ? "on" : ""}"><input type="checkbox" data-pf="${c.id}" ${swap ? `data-swap="${swap.id}"` : ""} ${c.pf_elected ? "checked" : ""} /> ${label}</label>`;
   };
   const conflictIds = new Set(pl.conflicts.flatMap((c) => [c.a, c.b]));
@@ -2359,11 +2402,11 @@ function renderPlanner() {
     const cr = list.reduce((a, c) => a + (+c.credits || 0), 0);
     return `<div class="board-col"><div class="board-col-head"><span>${label}</span><span class="tag">${list.length} · ${cr} cr</span></div>
       ${list.map((c) => `<div class="course-card ${conflictIds.has(c.id) ? "has-conflict" : ""}" data-course="${c.id}">
-        <div class="course-top">${c.priority ? `<span class="prio prio-${c.priority}">${PRIORITY[c.priority]}</span>` : ""}${(c.tags || []).map((t) => `<span class="req-tag">${{ pr: "PR", ulwr: "Writing", experiential: "Experiential", ilo8: "ILO #8" }[t]}</span>`).join("")}</div>
+        <div class="course-top">${c.priority ? `<span class="prio prio-${c.priority}">${PRIORITY[c.priority]}</span>` : ""}${(c.tags || []).map((t) => `<span class="req-tag">${esc(SCH().tag_short[t] || (t === "major" ? "Major" : t))}</span>`).join("")}</div>
         <div class="course-title">${esc(c.title)}</div>
         <div class="course-meta">${[c.code, c.credits != null ? `${c.credits} cr` : null, c.graded === false && !c.pf_elected ? "Mandatory P/F" : null, c.exam_type].filter(Boolean).map(esc).join(" · ")}${c.pf_elected ? ' <span class="pf-badge">P/F option</span>' : ""}</div>
         ${c.exam_date ? `<div class="course-meta">Final ${esc(fmtExam(c))}</div>` : ""}
-        ${c.meetings_text ? `<div class="course-meta">${esc(c.meetings_text)}</div>` : ""}
+        ${c.meetings_text ? `<div class="course-meta">${esc(c.meetings_text)}${c.location ? ` · ${esc(c.location)}` : ""}</div>` : ""}
         ${c.notes ? `<div class="course-note">${esc(c.notes)}</div>` : ""}
         ${pfBox(c)}
         <select class="select status-select" data-move="${c.id}" aria-label="Move course">${Object.entries(STATUS_LABEL).map(([v, l]) => `<option value="${v}" ${v === c.status ? "selected" : ""}>${l}</option>`).join("")}</select>
@@ -2399,6 +2442,9 @@ function renderPlanner() {
 const fmtExam = (c) => `${new Date(c.exam_date + "T00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}${c.exam_time ? `, ${c.exam_time}` : ""}`;
 $("plannerTerm").onchange = () => { plannerTerm = $("plannerTerm").value; renderPlanner(); };
 $("addCourse").onclick = () => openCourse(null);
+$("findClass").onclick = () => openClassSearch(plannerTerm);
+wireClassSearch();
+$("eduSchoolEdit").onclick = () => { const el = $("eduSchoolSetup"); el.classList.remove("hidden"); el.dataset.open = "1"; renderSchoolSetup(el); el.scrollIntoView({ behavior: "smooth", block: "nearest" }); };
 
 // Course editor dialog
 function openCourse(c) {
@@ -2408,13 +2454,15 @@ function openCourse(c) {
   $("courseTermSelect").innerHTML = edu.computed.profile.terms.map((t) => `<option>${esc(t)}</option>`).join("");
   $("courseGradeSelect").innerHTML = gradeOptions(c?.grade || "");
   const v = c || { term: plannerTerm, status: "considering", priority: 0, grade_status: "projected", tags: [] };
-  ["title", "code", "crn", "term", "credits", "status", "priority", "grade_status", "meetings_text", "professor", "exam_type", "exam_date", "exam_time", "category", "waitlist", "notes", "experiential_credits"]
+  const tags = { ...SCH().tags, ...(SCH().id === "osu" ? { major: "Counts toward my major" } : {}) };
+  $("courseTags").innerHTML = `<legend>Counts toward</legend>` + Object.entries(tags).map(([k, l]) => `<label class="check"><input type="checkbox" name="tag_${k}" /> ${esc(l)}${k === "experiential" ? ` <input class="input mini" name="experiential_credits" type="number" min="0" max="20" step="0.5" placeholder="cr" />` : ""}</label>`).join("");
+  ["title", "code", "crn", "term", "credits", "status", "priority", "grade_status", "meetings_text", "professor", "location", "exam_type", "exam_date", "exam_time", "category", "waitlist", "notes", "experiential_credits"]
     .forEach((k) => { if (f.elements[k]) f.elements[k].value = v[k] ?? (k === "grade_status" ? "projected" : ""); });
   f.elements.grade.value = v.grade || "";
   f.elements.pf.checked = !!v.pf_mandatory || (v.graded === false && !v.pf_elected && v.grade !== "P");
   f.elements.pf_elected.checked = !!v.pf_elected;
   f.elements.pf_eligible.checked = !!v.pf_eligible;
-  ["pr", "ulwr", "ilo8", "experiential"].forEach((t) => (f.elements[`tag_${t}`].checked = (v.tags || []).includes(t)));
+  Object.keys(tags).forEach((t) => (f.elements[`tag_${t}`].checked = (v.tags || []).includes(t)));
   $("courseDelete").classList.toggle("hidden", !c);
   $("courseDialog").showModal();
 }
@@ -2425,12 +2473,13 @@ $("courseForm").onsubmit = async (e) => {
   const body = {
     title: val("title"), code: val("code"), crn: val("crn"), term: val("term"), credits: val("credits") || null,
     status: val("status"), priority: +val("priority"), grade: val("grade") || null, grade_status: val("grade") ? val("grade_status") : null,
-    graded: !f.elements.pf.checked && !["P", "H", "CR"].includes(val("grade")), pf_eligible: f.elements.pf_eligible.checked,
-    pf_elected: (f.elements.pf_elected.checked || (val("grade") === "P" && val("status") === "completed")) && !f.elements.pf.checked,
+    graded: !f.elements.pf.checked && !passGrades().includes(val("grade")), pf_eligible: f.elements.pf_eligible.checked,
+    pf_elected: (f.elements.pf_elected.checked || (val("grade") === SCH().pf_grade && val("status") === "completed")) && !f.elements.pf.checked,
     pf_mandatory: f.elements.pf.checked, exam_date: val("exam_date") || null, exam_time: val("exam_time"),
     meetings_text: val("meetings_text"), professor: val("professor"), exam_type: val("exam_type"), category: val("category"),
-    waitlist: val("waitlist"), notes: val("notes"), experiential_credits: val("experiential_credits") || null,
-    tags: ["pr", "ulwr", "ilo8", "experiential"].filter((t) => f.elements[`tag_${t}`].checked),
+    waitlist: val("waitlist"), notes: val("notes"), location: val("location"),
+    experiential_credits: f.elements.experiential_credits ? val("experiential_credits") || null : null,
+    tags: [...f.querySelectorAll("#courseTags input[type=checkbox]")].filter((x) => x.checked).map((x) => x.name.slice(4)),
   };
   try {
     edu = editingCourse
@@ -2558,7 +2607,7 @@ $("sylImport").onchange = async () => {
   } catch (e) { toast(e instanceof SyntaxError ? "That file isn't valid JSON" : e.message); }
 };
 
-// Academic calendar: GULC key dates + your finals, one semester at a time
+// Academic calendar: your school's key dates + your finals, one semester at a time
 let acalTerm = null, acalMonth = null, acalDay = null;
 const KIND_LABEL = { assignment: "Due", classes: "Classes", deadline: "Deadline", holiday: "Holiday", break: "Break", exams: "Exam period", final: "Your final", other: "Other" };
 const dstr = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -2602,7 +2651,7 @@ function renderAcadCal() {
   $("acalFinals").innerHTML = `<h4>Your finals & papers</h4>` + (finals.length ? finals.map((e) => `<div class="acal-final"><span>${esc(e.label.replace(/^(Final|Paper due): /, ""))}${e.label.startsWith("Paper due") ? ' <span class="tag">paper</span>' : ""}${e.conflict ? ' <span class="neg" title="Same slot as ' + esc(e.conflict.join(", ")) + '">⚠</span>' : ""}</span><span>${new Date(e.date + "T00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}${e.time ? ` · ${esc(e.time)}` : ""}</span></div>`).join("") : `<p class="hint">No exam dates yet.</p>`) +
     pick.map((c) => `<div class="exam-pick"><p class="hint"><strong>${esc(c.title)}</strong> has ${c.exam_options.length} sections on the Registrar's schedule. Which is yours?</p>
       ${c.exam_options.map((o, i) => `<button class="btn btn-secondary btn-sm" data-pick="${c.id}:${i}">${esc(o.professor)} · ${sd(o.date)}, ${esc(o.time)}</button>`).join("")}</div>`).join("") +
-    (finals.some((e) => e.source === "registrar") ? `<p class="hint">Exam dates come from the Registrar's Fall 2026 schedule. Edit a course to change one.</p>` : "") +
+    (finals.some((e) => e.source === "registrar") ? `<p class="hint">${esc(SCH().finals_note)}</p>` : "") +
     (missingExam.length ? `<p class="hint">No exam on the schedule: ${missingExam.map((c) => `<button class="text-btn" data-examfix="${c.id}">${esc(c.title)}</button>`).join(", ")}</p>` : "");
   $$("[data-examfix]").forEach((b) => (b.onclick = () => openCourse(edu.courses.find((c) => c.id === b.dataset.examfix))));
   $$("[data-pick]").forEach((b) => (b.onclick = async () => {

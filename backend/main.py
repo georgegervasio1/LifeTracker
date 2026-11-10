@@ -1,6 +1,6 @@
 """LifeTracker API — Flask on Cloud Run.
 
-Endpoints (all require a Firebase ID token for ALLOWED_EMAIL):
+Endpoints (all require a Firebase ID token for an approved account; finance ones for ALLOWED_EMAIL, see access.py):
   POST /api/plaid/link-token        -> create a Plaid Link token
   POST /api/plaid/exchange          -> exchange public_token, store the Item
   POST /api/sync                    -> pull new transactions + investment holdings
@@ -60,12 +60,13 @@ from google.cloud import firestore
 if not firebase_admin._apps:
     firebase_admin.initialize_app()
 import demo
+import access
 real_db = firestore.Client()
 db = demo.Router(real_db)    # demo requests go to an in-memory store, never to Firestore (see demo.py)
 
 
 def require_owner(fn):
-    """Reject any request that isn't from the one allowed Google account."""
+    """Signed-in, approved accounts only (see access.py). Data is per uid; Finances are the owner's alone."""
     @wraps(fn)
     def wrapper(*args, **kwargs):
         header = request.headers.get("Authorization", "")
@@ -75,17 +76,25 @@ def require_owner(fn):
         if DEV_SKIP_AUTH:
             g.uid = "dev"
             return fn(*args, **kwargs)
-        if not header.startswith("Bearer "):
-            return jsonify(error="missing token"), 401
-        try:
-            claims = fb_auth.verify_id_token(header.removeprefix("Bearer "))
-        except Exception:
-            return jsonify(error="invalid token"), 401
-        if not claims.get("email_verified") or claims.get("email", "").lower() != ALLOWED_EMAIL:
-            return jsonify(error="forbidden"), 403
-        g.uid = claims["uid"]
-        return fn(*args, **kwargs)
+        claims = verify_token(header)
+        if not isinstance(claims, dict):
+            return claims
+        err = access.gate(claims)        # owner / developer / approved member; Finances stay owner-only
+        return err if err is not None else fn(*args, **kwargs)
     return wrapper
+
+
+def verify_token(header):
+    """The Firebase ID token's claims, or a 401 response."""
+    if not header.startswith("Bearer "):
+        return jsonify(error="missing token"), 401
+    try:
+        return fb_auth.verify_id_token(header.removeprefix("Bearer "))
+    except Exception:
+        return jsonify(error="invalid token"), 401
+
+
+access.init(app, real_db, verify_token)
 
 
 def user_ref():

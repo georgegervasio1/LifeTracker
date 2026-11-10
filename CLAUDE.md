@@ -24,7 +24,7 @@ handoff doc in the Claude project, not here: **this repo is public**.
 | Backend | `backend/` → Cloud Run `lifetracker-api`, region `us-east4`, project `lifetracker2001` | Flask. URL in `frontend/config.js` (`API_BASE`). |
 | Deploy | `cloudbuild.yaml` + root `Dockerfile` | Cloud Build trigger on push to `main` builds, pushes to Artifact Registry and deploys. Check Cloud Build → History (us-east4). |
 | Data | Firestore, `users/{uid}/...` | See collections below. |
-| Auth | Firebase Google sign-in (modular SDK 10.12.0) | Backend `require_owner` checks the ID token + `ALLOWED_EMAIL`. |
+| Auth | Firebase Google sign-in (modular SDK 10.12.0) | Backend `require_owner` checks the ID token, then `access.gate`: owner (`ALLOWED_EMAIL`, the only account with Finances), developer (`ADMIN_EMAILS`), approved members (Firestore `app/access`), else "pending". |
 | Security | `firestore.rules` (deny all: only the backend's Admin SDK touches Firestore), `tests/test_security.py` | Every `/api` route must need sign-in unless listed public in that test. API answers are `no-store`; CORS allows only `FRONTEND_ORIGIN`. |
 
 Libraries (cdnjs, pinned): Chart.js 4.4.1, marked, DOMPurify, Sortable 1.15.2, Leaflet 1.9.4 (CARTO basemap tiles); Plaid Link script.
@@ -89,6 +89,19 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
   add, copy a meal, recent foods, goals (blank until the user sets them), 30-day history.
 - `syllabus.py`: Education → Syllabi: upload a syllabus (Claude extracts sessions/deadlines) or import JSON;
   deadlines feed the calendar. Originals kept in `edu_syllabus_files`.
+- `access.py`: who may sign in. Roles owner / admin / member / pending (see Auth). Finance routes (`OWNER_ONLY`: Plaid, sync,
+  `/api/fin`, uploads, earnings, taxes, the finance chat, demo schedule) answer 403 "owner only" for everyone else. Every
+  sign-in is logged in top-level `signups/{uid}` (email, name, first/last seen). `/api/me` (works while pending),
+  `/api/admin/users` + `/api/admin/access` for the Developer page (`frontend/admin.js`, `#/admin`). `SIGNUP_OPEN=1` lets
+  any verified Google account in as a member.
+- `schools.py`: school packs for Education (`education/profile.school_id`; none = Georgetown Law, the original setup).
+  Each pack: grade points, non-GPA marks, P/F rules, tags, calendar, finals, audit text. Ohio State (`osu`): 4.0 scale
+  with E, PA/NP budget (20 h), GE (Bookends, 7 Foundations, Citizenship + one theme), 120 h / 30 h at Ohio State, majors
+  (`major_id`: Fisher Finance, Economics BA, Economics BS, other) as requirement groups matched by course code
+  (`all` / `choose` / `level` / `list`), 2026–27 calendar, Autumn 2026 finals by first meeting day + start time. Sources
+  in comments. Add a school by adding a pack. `osu_classes.py`: live Ohio State class search
+  (`content.osu.edu/v2/classes/search`, public, cached by query) behind `/api/edu/catalog/search`; the Planner's "Find a
+  class" (`frontend/school.js`) adds a course with its sections' times, rooms, instructors and GE tags.
 - `education.py`: GULC grade points, GPA engine (half-up `r2`), needed-average solver + grade plan, degree audit,
   planner conflicts, **P/F option budget** (7 credits, one course per semester, counted even if the letter grade
   is kept; a completed P course counts unless marked `pf_mandatory`; `pf_prior_credits` for untracked terms), **academic calendar** (GULC 2026–27 key dates) + **finals** (Registrar's Fall 2026 schedule matched to
@@ -138,6 +151,7 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
 `training` (state/template/sessions), `education/profile`, `edu_courses`, `edu_syllabi`, `edu_syllabus_files`,
 `earnings/settings`, `paychecks`, `integrations/strava`, `strava_activities`, `race_plans`, `food_log/{date}`, `food_custom`, `food/goals`, `sports/favorites`,
 `travel/settings`, `bike_rides`, `metro_trips`, `apartments`, `apartment_digests`, `apartment_photos`, `trips`, `travel/trip_settings`, `integrations/partiful`, `social_events`.
+Top level (not per user): `app/access` (approved emails), `signups/{uid}` (sign-in log), `demo/education`.
 
 ### Frontend map (`frontend/app.js`)
 Hash routes `#/section/tab`, `SECTIONS` config at the top. Finances: Net Worth, Cash & Cards, Investments,
@@ -155,7 +169,7 @@ visit; widgets, detail, editor, library, coach drawer).
 Design tokens on `:root` in `styles.css` (`--accent`, `--pos`, `--neg`, `--warn`, `--exam`, `--done`, …).
 
 ### Environment & secrets (Cloud Run)
-Secrets: `plaid-client-id`, `plaid-secret`, `allowed-email`, `anthropic-api-key`, `whoop-client-id`,
+Env `ADMIN_EMAILS` (developer account, comma-separated), optional `SIGNUP_OPEN=1`. Secrets: `plaid-client-id`, `plaid-secret`, `allowed-email`, `anthropic-api-key`, `whoop-client-id`,
 `whoop-client-secret`, `strava-client-id`, `strava-client-secret`. Env: `PLAID_ENV` (sandbox until Plaid production is approved), `CLAUDE_MODEL`,
 `WHOOP_REDIRECT_URI`, `STRAVA_REDIRECT_URI`, `FDC_API_KEY` (optional), `FRONTEND_URL`, `FRONTEND_ORIGIN`. Local dev: `DEV_SKIP_AUTH=1`.
 

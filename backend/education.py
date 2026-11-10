@@ -10,6 +10,7 @@ All GPA math lives in compute() so the API, the UI and (later) the AI assistant 
 import math
 import re
 from flask import Blueprint, jsonify, request
+import schools
 
 bp = Blueprint("education", __name__)
 db = firestore = require_owner = user_ref = None
@@ -24,6 +25,10 @@ STATUSES = ["completed", "enrolled", "planned", "waitlisted", "considering", "dr
 COUNTS_TOWARD_DEGREE = {"completed", "enrolled", "planned"}      # what the audit and projection assume you'll take
 TAGS = {"pr": "Professional Responsibility", "ulwr": "Upperclass Legal Writing",
         "experiential": "Experiential", "ilo8": "Critical perspectives (ILO #8)"}
+ALL_TAGS = {**schools.ALL_TAGS, "major": "Counts toward my major"}
+ALL_GRADES = set(GRADE_POINTS) | set(NON_GPA_GRADES)
+for _s in schools.SCHOOLS.values():
+    ALL_GRADES |= set(_s["grade_points"]) | set(_s["non_gpa_grades"])
 
 DEFAULT_PROFILE = {
     "school": "Georgetown University Law Center",
@@ -163,11 +168,13 @@ def exam_candidates(course):
     return found
 
 
-def calendar_for(courses):
+def calendar_for(courses, pack=None):
     """Key dates per term plus a 'final' event for every current/planned course with an exam date.
     Two finals in the same slot are flagged (GULC lets you reschedule an exam conflict)."""
+    pack = pack or schools.GULC
+    osu = pack["id"] == "osu"
     out = {}
-    for term, items in ACADEMIC_CALENDAR.items():
+    for term, items in (pack.get("calendar") or ACADEMIC_CALENDAR).items():
         out[term] = [{"date": d, "end": e, "label": l, "kind": k} for d, e, l, k in items]
     slots = {}
     for c in courses:
@@ -175,7 +182,11 @@ def calendar_for(courses):
             continue
         date, time, source = c.get("exam_date"), c.get("exam_time"), "you"
         paper = (c.get("exam_type") or "").lower() == "paper"
-        if not date and not paper and c.get("graded", True) is not False and c.get("term") in FINALS_SCHEDULE:
+        if osu and not date and not paper and c.get("status") != "completed" and (c.get("exam_type") or "") != "None":
+            slot = schools.osu_final_for(c.get("term"), (c.get("meetings") or [])[:1])
+            if slot:
+                date, time, source = slot["date"], slot["time"], "registrar"
+        elif not osu and not date and not paper and c.get("graded", True) is not False and c.get("term") in FINALS_SCHEDULE:
             cands = exam_candidates(c)
             if len(cands) == 1:
                 date, time, source = cands[0]["date"], cands[0]["time"], "registrar"
@@ -270,9 +281,22 @@ def _num(v, default=0.0):
         return default
 
 
+def school_defaults(pack):
+    if pack["id"] == "gulc":
+        return DEFAULT_PROFILE
+    return {"school": pack["name"], "program": pack["program"], "terms": pack["terms"], "target_gpa": None,
+            "transfer_credits": 0, "requirements": dict(pack["requirements"]), "honors_reference": []}
+
+
 def compute(profile, courses):
-    p = {**DEFAULT_PROFILE, **(profile or {})}
-    req = {**DEFAULT_PROFILE["requirements"], **(p.get("requirements") or {})}
+    pack = schools.get((profile or {}).get("school_id"))
+    base = school_defaults(pack)
+    p = {**base, **(profile or {})}
+    req = {**base["requirements"], **(p.get("requirements") or {})}
+    GRADE_POINTS = pack["grade_points"]
+    NON_GPA_GRADES = set(pack["non_gpa_grades"])
+    NO_CREDIT_GRADES = set(pack["no_credit_grades"])
+    pf_grade = pack["pf_grade"]
     terms = list(p["terms"])
     for c in courses:
         if c.get("term") and c["term"] not in terms:
@@ -282,7 +306,7 @@ def compute(profile, courses):
         """Elected explicitly, or a finished course graded P that isn't marked as a mandatory pass/fail course."""
         if c.get("pf_elected"):
             return True
-        return (c.get("status") == "completed" and (c.get("grade") or "").upper() == "P"
+        return (c.get("status") == "completed" and (c.get("grade") or "").upper() == pf_grade
                 and not c.get("pf_mandatory") and _num(c.get("credits")) > 0)
 
     def pf_pending(c):          # elected P/F, no final grade yet -> plan on a P (no GPA effect)
@@ -318,16 +342,17 @@ def compute(profile, courses):
     gpa_projected = r2(cum["proj_qp"] / cum["proj_gc"]) if cum["proj_gc"] else None
 
     # ---- what average do you need on the remaining graded credits to reach the target?
-    target = _num(p.get("target_gpa"), 3.7)
+    target = _num(p.get("target_gpa"), None) if p.get("target_gpa") is not None else None
+    gmax = pack["gpa_max"]
     remaining = [c for c in courses if c.get("status") in ("enrolled", "planned")
                  and c.get("grade_status") != "actual" and not pf_pending(c)
                  and (c.get("graded", True) and (c.get("grade") or "") not in NON_GPA_GRADES)]
     rem_gc = sum(_num(c.get("credits")) for c in remaining)
     needed = None
-    if rem_gc:
+    if rem_gc and target is not None:
         avg = (target * (cum["act_gc"] + rem_gc) - cum["act_qp"]) / rem_gc
-        needed = {"average": round(avg, 3), "graded_credits": rem_gc, "achievable": avg <= 4.33,
-                  "already_met": avg <= 0, "plan": _grade_plan(remaining, avg)}
+        needed = {"average": round(avg, 3), "graded_credits": rem_gc, "achievable": avg <= gmax,
+                  "already_met": avg <= 0, "plan": _grade_plan(remaining, avg, pack)}
 
     # ---- degree audit
     def status_of(cs):
@@ -341,7 +366,7 @@ def compute(profile, courses):
     planned = sum(_num(c.get("credits")) for c in active if c.get("status") == "planned")
     transfer = _num(p.get("transfer_credits"))
     total_req = _num(req["total_credits"], 85)
-    lc_req = _num(req["law_center_credits"], 54)
+    lc_req = _num(req.get("law_center_credits"), 54)
 
     def credit_item(key, label, have_done, have_prog, have_plan, need):
         total = have_done + have_prog + have_plan
@@ -350,27 +375,36 @@ def compute(profile, courses):
                 "status": "met" if have_done >= need else "on_track" if total >= need else "missing",
                 "short_by": max(0.0, need - total)}
 
-    audit = [credit_item("total", f"Total credits ({int(total_req)})", earned + transfer, in_prog, planned, total_req),
-             credit_item("law_center", f"Law Center credits ({int(lc_req)})", earned, in_prog, planned, lc_req)]
+    major = None
+    if pack["id"] == "osu":
+        major_id = p.get("major_id") or pack["default_major"]
+        major = pack["majors"].get(major_id) or pack["majors"]["other"]
+        total_req = _num(major.get("total_credits"), total_req) if not (profile or {}).get("requirements", {}).get("total_credits") else total_req
+        audit = osu_audit(pack, major, req, active, earned, in_prog, planned, transfer, total_req, credit_item,
+                          GRADE_POINTS, NON_GPA_GRADES)
+    else:
+        audit = [credit_item("total", f"Total credits ({int(total_req)})", earned + transfer, in_prog, planned, total_req),
+                 credit_item("law_center", f"Law Center credits ({int(lc_req)})", earned, in_prog, planned, lc_req)]
 
-    exp_courses = [c for c in active if "experiential" in (c.get("tags") or [])]
-    exp_val = lambda c: _num(c.get("experiential_credits"), _num(c.get("credits")))
-    e_item = credit_item("experiential", f"Experiential credits ({int(req['experiential_credits'])})",
-                         sum(exp_val(c) for c in exp_courses if c.get("status") == "completed"),
-                         sum(exp_val(c) for c in exp_courses if c.get("status") == "enrolled"),
-                         sum(exp_val(c) for c in exp_courses if c.get("status") == "planned"),
-                         _num(req["experiential_credits"], 6))
-    e_item["courses"] = [c.get("title") for c in exp_courses]
-    audit.append(e_item)
+    if pack["id"] == "gulc":
+        exp_courses = [c for c in active if "experiential" in (c.get("tags") or [])]
+        exp_val = lambda c: _num(c.get("experiential_credits"), _num(c.get("credits")))
+        e_item = credit_item("experiential", f"Experiential credits ({int(req['experiential_credits'])})",
+                             sum(exp_val(c) for c in exp_courses if c.get("status") == "completed"),
+                             sum(exp_val(c) for c in exp_courses if c.get("status") == "enrolled"),
+                             sum(exp_val(c) for c in exp_courses if c.get("status") == "planned"),
+                             _num(req["experiential_credits"], 6))
+        e_item["courses"] = [c.get("title") for c in exp_courses]
+        audit.append(e_item)
 
-    for key, flag in (("pr", "require_pr"), ("ulwr", "require_ulwr"), ("ilo8", "require_ilo8")):
-        if req.get(flag):
-            cs = [c for c in active if key in (c.get("tags") or [])]
-            audit.append({"key": key, "label": TAGS[key], "type": "course", "status": status_of(cs),
-                          "courses": [f"{c.get('title')} ({c.get('term')})" for c in cs]})
+        for key, flag in (("pr", "require_pr"), ("ulwr", "require_ulwr"), ("ilo8", "require_ilo8")):
+            if req.get(flag):
+                cs = [c for c in active if key in (c.get("tags") or [])]
+                audit.append({"key": key, "label": TAGS[key], "type": "course", "status": status_of(cs),
+                              "courses": [f"{c.get('title')} ({c.get('term')})" for c in cs]})
 
     # ---- pass/fail option budget (credits count whether you end up with a P or keep the letter grade)
-    cap = _num(req.get("pf_cap"), 7)
+    cap = _num(req.get("pf_cap"), pack["pf"]["cap"])
     pf = [c for c in courses if pf_option_used(c) and c.get("status") not in ("dropped", "waitlisted")]
     pf_prior = _num(p.get("pf_prior_credits"))      # option credits used in terms not tracked here
     pf_used = pf_prior + sum(_num(c.get("credits")) for c in pf if c.get("status") == "completed")
@@ -381,17 +415,18 @@ def compute(profile, courses):
     def pf_label(c):
         g = c.get("grade") if c.get("grade_status") == "actual" else None
         g = c.get("grade") if c.get("grade_status") == "actual" or c.get("status") == "completed" else None
-        outcome = ("kept " + g) if g in GRADE_POINTS else ("P" if g == "P" else "planned")
+        outcome = ("kept " + g) if g in GRADE_POINTS else ("P" if g == pf_grade else "planned")
         return {"id": c.get("id"), "title": c.get("title"), "term": c.get("term"), "credits": _num(c.get("credits")),
                 "status": c.get("status"), "outcome": outcome, "inferred": not c.get("pf_elected")}
     pass_fail = {"cap": cap, "used": pf_used, "prior": pf_prior, "in_progress": pf_prog, "planned": pf_plan,
                  "remaining": cap - pf_total, "courses": [pf_label(c) for c in pf]}
-    audit.append({"key": "pf", "label": f"Pass/fail option ({int(cap)} credits max)", "type": "pf",
+    audit.append({"key": "pf", "label": f"{pack['pf']['label']} ({int(cap)} credits max)", "type": "pf",
                   "status": "missing" if pf_total > cap else "met", **pass_fail})
 
-    min_gpa = _num(req["min_gpa"], 2.0)
+    min_gpa = _num(req.get("min_gpa"), 2.0)
     audit.append({"key": "min_gpa", "label": f"Minimum GPA ({min_gpa:.2f})", "type": "gpa",
-                  "status": "met" if (gpa_actual or 0) >= min_gpa else "missing", "value": gpa_actual})
+                  "status": ("on_track" if gpa_actual is None and pack["id"] != "gulc"
+                             else "met" if (gpa_actual or 0) >= min_gpa else "missing"), "value": gpa_actual})
 
     # ---- planner checks per term (credit totals + time conflicts)
     planner = {}
@@ -420,18 +455,154 @@ def compute(profile, courses):
         "gpa_actual": gpa_actual, "gpa_projected": gpa_projected,
         "graded_credits_actual": cum["act_gc"], "quality_points_actual": round(cum["act_qp"], 2),
         "needed": needed, "audit": audit, "planner": planner, "pass_fail": pass_fail,
-        "calendar": calendar_for(courses),
+        "calendar": calendar_for(courses, pack),
+        "school": schools.public(pack, p.get("major_id")), "schools": schools.school_list(),
         "credits": {"earned": earned + transfer, "in_progress": in_prog, "planned": planned,
                     "required": total_req, "remaining_after_plan": max(0.0, total_req - credits_after_plan)},
     }
 
 
-def _grade_plan(remaining, avg):
+def _status(cs):
+    if not cs:
+        return "missing"
+    return "met" if all(c.get("status") == "completed" for c in cs) else "on_track"
+
+
+def _ref(c):
+    return f"{c.get('code') or c.get('title')} ({c.get('term')})"
+
+
+def major_audit(major, active):
+    """Score a major's requirement groups against the student's courses (matched by course code). A course fills at
+    most one group; fixed lists go first, then level rules from the most specific to the broadest."""
+    used, out = set(), []
+    by_code = [c for c in active if schools.split_code(c.get("code"))]
+
+    def take(want, alts=()):
+        for w in [want, *alts]:
+            for c in by_code:
+                if id(c) not in used and schools.code_matches(c.get("code"), w):
+                    used.add(id(c))
+                    return c
+        return None
+
+    groups = list(major.get("groups") or [])
+    fixed = [g for g in groups if g["rule"] in ("all", "choose", "list")]
+    level = sorted((g for g in groups if g["rule"] == "level"),
+                   key=lambda g: (-g.get("min", 0), g.get("max") is None, -len(g.get("exclude") or [])))
+    results = {}
+    for g in fixed:
+        alts = g.get("alts") or {}
+        if g["rule"] == "all":
+            found = {w: take(w, alts.get(w, ())) for w in g["courses"]}
+            have = [c for c in found.values() if c]
+            todo = [w for w, c in found.items() if not c]
+            st = "missing" if todo else _status(have)
+            results[g["key"]] = {"status": st, "have": have, "todo": todo, "need": len(g["courses"])}
+        elif g["rule"] == "choose":
+            have = []
+            for w in g["courses"]:
+                if len(have) >= g["n"]:
+                    break
+                c = take(w)
+                if c:
+                    have.append(c)
+            st = "missing" if len(have) < g["n"] else _status(have)
+            results[g["key"]] = {"status": st, "have": have, "todo": [] if len(have) >= g["n"] else g["courses"], "need": g["n"]}
+        else:
+            have = [c for c in (take(w) for w in g["courses"]) if c]
+            results[g["key"]] = {"status": "info", "have": have, "todo": [], "need": None}
+    for g in level:
+        have = []
+        for c in by_code:
+            if len(have) >= g["n"]:
+                break
+            subj, num, _ = schools.split_code(c.get("code"))
+            if id(c) in used or subj != g["subject"] or num < g.get("min", 0) or (g.get("max") and num > g["max"]):
+                continue
+            if any(schools.code_matches(c.get("code"), x) for x in g.get("exclude") or []):
+                continue
+            used.add(id(c)); have.append(c)
+        st = "missing" if len(have) < g["n"] else _status(have)
+        results[g["key"]] = {"status": st, "have": have, "todo": [], "need": g["n"]}
+    for g in groups:
+        r = results[g["key"]]
+        item = {"key": "major_" + g["key"], "label": g["label"], "type": "course", "status": r["status"],
+                "courses": [_ref(c) for c in r["have"]], "group": "major"}
+        if g["rule"] == "all":
+            item["todo"] = r["todo"]
+        elif g["rule"] in ("choose", "list"):
+            item["options"] = g["courses"]
+        if r["need"]:
+            item["count"] = f"{len(r['have'])} of {r['need']}"
+        out.append(item)
+    return out, used
+
+
+def osu_audit(pack, major, req, active, earned, in_prog, planned, transfer, total_req, credit_item, GP, NON_GPA):
+    """Ohio State: total hours, hours at Ohio State, GE (Autumn 2022+ program), the major, GPA rules."""
+    outside = {"K", "EM"}             # transfer and exam credit don't count as Ohio State enrollment
+
+    def hrs(status, test=lambda c: True):
+        return sum(_num(c.get("credits")) for c in active if c.get("status") == status and test(c))
+    at_osu = lambda c: (c.get("grade") or "") not in outside
+    audit = [credit_item("total", f"Total credit hours ({int(total_req)})", earned + transfer, in_prog, planned, total_req)]
+    res = _num(req.get("residency_credits"), 30)
+    audit.append(credit_item("residency", f"Hours through Ohio State ({int(res)})", hrs("completed", at_osu),
+                             hrs("enrolled", at_osu), hrs("planned", at_osu), res))
+    tagged = lambda t: [c for c in active if t in (c.get("tags") or [])]
+
+    def course_part(tag):
+        cs = tagged(tag)
+        return {"label": pack["tags"][tag].split(": ", 1)[-1], "status": _status(cs), "courses": [_ref(c) for c in cs]}
+
+    def theme_part(tag, need=4):
+        cs = tagged(tag)
+        cr = sum(_num(c.get("credits")) for c in cs)
+        st = "missing" if cr < need else _status(cs)
+        return {"label": pack["tags"][tag].split(": ", 1)[-1] + f" ({need}+ hours)", "status": st,
+                "courses": [_ref(c) for c in cs], "count": f"{cr:g} of {need} hours"}
+
+    def group(key, label, parts):
+        sts = {p["status"] for p in parts}
+        st = "missing" if "missing" in sts else "on_track" if "on_track" in sts else "met"
+        done = sum(1 for p in parts if p["status"] == "met")
+        return {"key": key, "label": label, "type": "group", "status": st, "parts": parts,
+                "count": f"{done} of {len(parts)} done", "group": "ge"}
+
+    audit.append(group("ge_bookends", "GE Bookends: Launch and Reflection seminars",
+                       [course_part("ge_launch"), course_part("ge_reflect")]))
+    audit.append(group("ge_foundations", "GE Foundations: one course in each of seven areas",
+                       [course_part(t) for t in ("ge_redg", "ge_sbs", "ge_hcs", "ge_wil", "ge_lvpa", "ge_ns", "ge_mqr")]))
+    audit.append(group("ge_themes", "GE Themes: Citizenship plus one theme you choose",
+                       [theme_part("ge_cit"), theme_part("ge_theme")]))
+
+    m_items, used = major_audit(major, active)
+    extra = [c for c in active if "major" in (c.get("tags") or []) and id(c) not in used]
+    if extra or not major.get("groups"):
+        m_items.append({"key": "major_extra", "label": "Other major courses you marked", "type": "course",
+                        "status": _status(extra) if extra else ("missing" if not major.get("groups") else "met"),
+                        "courses": [_ref(c) for c in extra], "group": "major"})
+    audit.extend(m_items)
+    if major.get("major_gpa"):
+        mc = [c for c in active if (id(c) in used or "major" in (c.get("tags") or []))
+              and c.get("grade_status") == "actual" and (c.get("grade") or "") in GP]
+        qp, gc = sum(GP[c["grade"]] * _num(c.get("credits")) for c in mc), sum(_num(c.get("credits")) for c in mc)
+        v = r2(qp / gc) if gc else None
+        audit.append({"key": "major_gpa", "label": f"Major GPA ({major['major_gpa']:.2f})", "type": "gpa",
+                      "status": "met" if v is not None and v >= major["major_gpa"] else "on_track" if v is None else "missing",
+                      "value": v, "note": "Courses counted toward the major here."})
+    return audit
+
+
+def _grade_plan(remaining, avg, pack=None):
     """Turn a required average into concrete grades: start everything at the lowest letter that
     could work, then upgrade the biggest courses first until the target is covered."""
-    if avg > 4.33 or avg <= 0:
+    pack = pack or schools.GULC
+    GRADE_POINTS = pack["grade_points"]
+    if avg > pack["gpa_max"] or avg <= 0:
         return None
-    ladder = ["B", "B+", "A-", "A", "A+"]
+    ladder = pack["plan_ladder"]
     courses = sorted(remaining, key=lambda c: -_num(c.get("credits")))
     total_cr = sum(_num(c.get("credits")) for c in courses)
     need_qp = avg * total_cr
@@ -454,7 +625,8 @@ def _grade_plan(remaining, avg):
 # ---------------------------------------------------------------- storage helpers
 COURSE_FIELDS = {"term", "title", "code", "crn", "credits", "grade", "grade_status", "graded", "status", "tags",
                  "experiential_credits", "priority", "professor", "meetings_text", "exam_type", "category",
-                 "seats", "waitlist", "notes", "pf_eligible", "pf_elected", "pf_mandatory", "exam_date", "exam_time"}
+                 "seats", "waitlist", "notes", "pf_eligible", "pf_elected", "pf_mandatory", "exam_date", "exam_time",
+                 "location", "component"}
 
 
 def clean_course(b, partial=False):
@@ -471,7 +643,7 @@ def clean_course(b, partial=False):
                 raise ValueError("priority must be 0-3")
         elif k == "grade":
             v = (str(v).strip().upper() if v else None)
-            if v and v not in GRADE_POINTS and v not in NON_GPA_GRADES:
+            if v and v not in ALL_GRADES:
                 raise ValueError(f"unknown grade {v!r}")
         elif k == "grade_status":
             if v not in (None, "actual", "projected"):
@@ -480,7 +652,7 @@ def clean_course(b, partial=False):
             if v not in STATUSES:
                 raise ValueError(f"status must be one of {STATUSES}")
         elif k == "tags":
-            v = [t for t in (v or []) if t in TAGS]
+            v = [t for t in (v or []) if t in ALL_TAGS]
         elif k in ("graded", "pf_eligible", "pf_elected", "pf_mandatory"):
             v = bool(v)
         elif k == "exam_date":
@@ -503,6 +675,9 @@ def clean_course(b, partial=False):
     return out
 
 
+REQ_KEYS = set(DEFAULT_PROFILE["requirements"]) | set(schools.OSU["requirements"])
+
+
 def _profile_ref():
     return user_ref().collection("education").document("profile")
 
@@ -516,7 +691,7 @@ def load_all():
 
 def education_state():
     profile, courses = load_all()
-    order = {t: i for i, t in enumerate((profile or {}).get("terms") or DEFAULT_PROFILE["terms"])}
+    order = {t: i for i, t in enumerate((profile or {}).get("terms") or schools.get((profile or {}).get("school_id"))["terms"])}
     courses.sort(key=lambda c: (order.get(c.get("term"), 99), STATUSES.index(c.get("status", "considering")),
                                 -int(c.get("priority") or 0), c.get("title", "")))
     computed = compute(profile, courses)
@@ -527,7 +702,8 @@ def education_state():
         finals = {(e.get("course_id"), e["date"]) for e in cal if e["kind"] == "final"}
         cal.extend(e for e in evs if (e.get("course_id"), e["date"]) not in finals)   # don't repeat a final already shown
         cal.sort(key=lambda x: (x["date"], x["kind"] != "final", _time_key(x.get("time"))))
-    return {"courses": courses, "computed": computed, "syllabi": syllabi, "has_data": bool(courses or profile)}
+    return {"courses": courses, "computed": computed, "syllabi": syllabi, "has_data": bool(courses or profile),
+            "needs_school": not (profile or {}).get("school_id") and not courses}
 
 
 # ---------------------------------------------------------------- routes
@@ -542,11 +718,28 @@ def _register_routes():
     def put_profile():
         b = request.get_json(force=True) or {}
         upd = {}
+        cur = (_profile_ref().get().to_dict() or {})
+        pack = schools.get(b.get("school_id") or cur.get("school_id"))
+        if "school_id" in b:
+            if b["school_id"] not in schools.SCHOOLS:
+                return jsonify(error="unknown school"), 400
+            upd["school_id"] = b["school_id"]
+            if b["school_id"] != (cur.get("school_id") or "gulc"):     # switching: drop the old school's defaults
+                d = school_defaults(pack)
+                upd.update(school=d["school"], program=d["program"], terms=d["terms"], requirements={})
+        if "major_id" in b:
+            if not pack.get("majors") or b["major_id"] not in pack["majors"]:
+                return jsonify(error="unknown major"), 400
+            upd["major_id"] = b["major_id"]
+            upd["program"] = pack["majors"][b["major_id"]]["program"]
         if "target_gpa" in b:
-            t = float(b["target_gpa"])
-            if not 0 < t <= 4.33:
-                return jsonify(error="target GPA must be between 0 and 4.33"), 400
-            upd["target_gpa"] = t
+            if b["target_gpa"] in (None, ""):
+                upd["target_gpa"] = None
+            else:
+                t = float(b["target_gpa"])
+                if not 0 < t <= pack["gpa_max"]:
+                    return jsonify(error=f"target GPA must be between 0 and {pack['gpa_max']:.2f}"), 400
+                upd["target_gpa"] = t
         if "transfer_credits" in b:
             upd["transfer_credits"] = float(b["transfer_credits"] or 0)
         if "pf_prior_credits" in b:
@@ -560,9 +753,22 @@ def _register_routes():
             if k in b:
                 upd[k] = str(b[k])[:120]
         if "requirements" in b and isinstance(b["requirements"], dict):
-            upd["requirements"] = {k: b["requirements"][k] for k in DEFAULT_PROFILE["requirements"] if k in b["requirements"]}
+            upd["requirements"] = {k: b["requirements"][k] for k in REQ_KEYS if k in b["requirements"]}
         _profile_ref().set(upd, merge=True)
         return jsonify(education_state())
+
+    @bp.get("/api/edu/catalog/search")
+    @require_owner
+    def catalog_search():
+        """Live class search for schools that publish one (Ohio State). Public catalog data, nothing stored."""
+        import osu_classes
+        profile, _ = load_all()
+        if schools.get(profile.get("school_id")).get("catalog") != "osu":
+            return jsonify(error="class search isn't available for your school"), 400
+        try:
+            return jsonify(courses=osu_classes.search(request.args.get("q"), request.args.get("term")))
+        except Exception as e:
+            return jsonify(error=f"Ohio State's class search didn't answer ({type(e).__name__}). Try again in a minute."), 502
 
     @bp.post("/api/edu/courses")
     @require_owner
@@ -614,7 +820,7 @@ def _register_routes():
             batch.set(col.document(), c)
         batch.commit()
         if isinstance(b.get("profile"), dict):
-            prof = {k: v for k, v in b["profile"].items() if k in DEFAULT_PROFILE or k in ("grad_term", "pf_prior_credits")}
+            prof = {k: v for k, v in b["profile"].items() if k in DEFAULT_PROFILE or k in ("grad_term", "pf_prior_credits", "school_id", "major_id")}
             _profile_ref().set(prof, merge=True)
         return jsonify(education_state() | {"imported": len(courses)})
 
@@ -636,8 +842,8 @@ def _merge_import(b):
     except ValueError as e:
         return jsonify(error=f"Import failed: {e}"), 400
     if isinstance(b.get("profile"), dict):
-        prof = {k: v for k, v in b["profile"].items() if k in DEFAULT_PROFILE or k in ("grad_term", "pf_prior_credits")}
+        prof = {k: v for k, v in b["profile"].items() if k in DEFAULT_PROFILE or k in ("grad_term", "pf_prior_credits", "school_id", "major_id")}
         if isinstance(prof.get("requirements"), dict):
-            prof["requirements"] = {k: v for k, v in prof["requirements"].items() if k in DEFAULT_PROFILE["requirements"]}
+            prof["requirements"] = {k: v for k, v in prof["requirements"].items() if k in REQ_KEYS}
         _profile_ref().set(prof, merge=True)
     return jsonify(education_state() | {"imported": updated + added, "updated": updated, "added": added})

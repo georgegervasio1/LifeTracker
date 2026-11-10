@@ -49,6 +49,24 @@ claims = {}
 fb_auth.verify_id_token = lambda tok, *a, **k: dict(claims)
 claims.update(uid="u2", email="someone@example.com", email_verified=True)
 assert c.get("/api/fin/overview", headers={"Authorization": "Bearer t"}).status_code == 403
+# A second approved account (a member, or the developer account) gets its own data but never the owner's Finances.
+import access, time as _time
+access._approved.update(at=_time.time() + 3600, emails={"someone@example.com"})
+os.environ["ADMIN_EMAILS"] = "dev@example.com"
+for who in ("someone@example.com", "dev@example.com"):
+    claims.update(uid="u2", email=who, email_verified=True)
+    for m, path in (("GET", "/api/fin/overview"), ("POST", "/api/plaid/link-token"), ("POST", "/api/sync"),
+                    ("POST", "/api/chat"), ("GET", "/api/taxes"), ("GET", "/api/earnings"), ("POST", "/api/fin/upload")):
+        r = c.open(path, method=m, json={}, headers={"Authorization": "Bearer t"})
+        assert r.status_code == 403 and r.get_json()["error"] == "owner only", (who, path, r.status_code)
+    with main.app.test_request_context("/api/edu"):
+        assert access.gate(dict(claims)) is None and main.g.uid == "u2"      # their own Education, under their own uid
+assert access.role_for("owner@example.com") == "owner" and access.role_for("dev@example.com") == "admin"
+assert access.role_for("stranger@example.com") == "pending"
+claims.update(uid="u3", email="stranger@example.com", email_verified=True)
+assert c.get("/api/edu", headers={"Authorization": "Bearer t"}).get_json()["error"] == "pending"
+assert c.get("/api/admin/users", headers={"Authorization": "Bearer t"}).status_code == 403   # not the developer
+access._approved.update(at=0, emails=set())
 claims.update(uid="u1", email="owner@example.com", email_verified=False)
 assert c.get("/api/fin/overview", headers={"Authorization": "Bearer t"}).status_code == 403
 def bad(*a, **k): raise ValueError("bad token")

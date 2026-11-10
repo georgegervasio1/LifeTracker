@@ -119,7 +119,7 @@ function drawSuggestions() {
   const ago = g.last_scan ? relTime(g.last_scan) : "";
   $("mdMail").innerHTML = g.connected
     ? `<div class="mail-row"><span>School email checked ${esc(ago)}</span><button class="text-btn" id="mdScan">Check now</button></div>`
-    : `<div class="mail-card"><h4>Bring in school email</h4><p>LifeTracker reads your recent Georgetown email (read-only) and suggests events, deadlines and messages to answer. Nothing is sent, changed or kept besides the suggestions.</p><button class="btn btn-primary btn-sm" id="mdScan">Connect Gmail</button></div>`;
+    : `<div class="mail-card"><h4>Bring in school email</h4><p>LifeTracker reads your recent school email (read-only) and suggests events, deadlines and messages to answer. Nothing is sent, changed or kept besides the suggestions.</p><button class="btn btn-primary btn-sm" id="mdScan">Connect Gmail</button></div>`;
   $("mdScan").onclick = scanMail;
   const groups = [["email", "From school email"], ["syllabus", "From your syllabi"], ["upcoming", "Due soon"]];
   $("mdSugg").innerHTML = groups.map(([k, label]) => {

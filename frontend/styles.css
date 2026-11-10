@@ -2019,3 +2019,61 @@ details.legacy > summary { cursor: pointer; font-size: 15px; font-weight: 600; c
   .so-row { padding: 12px 14px; gap: 10px; }
   .so-side .pill { font-size: 10px; }
 }
+
+/* ---------- Accounts: owner / developer / approved member (access.py) ---------- */
+.admin-only { display: none !important; }
+body.is-admin .admin-only { display: inline-flex !important; }
+body.no-fin [data-section="finances"], body.no-fin .home-card[href="#/finances"] { display: none !important; }
+body.not-owner .owner-only { display: none !important; }
+.admin-head { margin: 0 0 24px; padding-top: 48px; }
+.admin-add { display: flex; align-items: flex-end; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
+.admin-add label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-2); flex: 1; min-width: 220px; }
+.admin-table td small { display: block; color: var(--text-3); font-size: 12px; }
+@media (max-width: 640px) {
+  .admin-table th:nth-child(3), .admin-table td:nth-child(3), .admin-table th:nth-child(4), .admin-table td:nth-child(4) { display: none; }
+  .admin-table td small { word-break: break-all; }
+  .admin-table th, .admin-table td { padding: 12px 14px; }
+}
+
+/* ---------- Education: school and major, class search, Ohio State audit ---------- */
+.edu-school-row { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.edu-school-row .text-btn { font-size: 13px; }
+#eduSchoolSetup { margin-bottom: 24px; }
+.school-setup h3 { margin-bottom: 6px; }
+.school-form { display: flex; flex-direction: column; gap: 16px; margin-top: 16px; }
+.school-opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.school-opt { display: flex; gap: 12px; align-items: flex-start; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-sm); cursor: pointer; transition: border-color .2s; }
+.school-opt.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.school-opt input { margin-top: 3px; accent-color: var(--accent); }
+.school-opt small { display: block; color: var(--text-3); font-size: 13px; margin-top: 2px; }
+.school-major, .school-target { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-2); }
+.school-major .select { max-width: 460px; }
+.school-target .input { max-width: 120px; }
+.school-form .dialog-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.dialog-wide { width: min(760px, calc(100vw - 32px)); }
+.class-search { display: block; }
+.class-form { display: flex; gap: 10px; margin: 12px 0 16px; flex-wrap: wrap; }
+.class-form .input { flex: 1; min-width: 180px; }
+.class-results { max-height: 60vh; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+.class-hit { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px 14px; }
+.class-hit summary { display: flex; justify-content: space-between; gap: 12px; cursor: pointer; list-style: none; }
+.class-hit summary::-webkit-details-marker { display: none; }
+.class-hit[open] summary { margin-bottom: 10px; }
+.sec-group { margin-top: 10px; }
+.sec-head { font-size: 12px; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
+.dialog-form label.sec-row, .sec-row { display: grid; font-size: 14px; color: var(--text); grid-template-columns: auto 1fr auto; gap: 10px; align-items: start; padding: 8px 0; border-top: 1px solid var(--line); cursor: pointer; }
+.sec-row input { margin-top: 3px; accent-color: var(--accent); }
+.sec-main small { display: block; color: var(--text-3); font-size: 12px; margin-top: 2px; }
+.sec-status { font-size: 12px; white-space: nowrap; }
+.class-add { display: flex; gap: 10px; justify-content: flex-end; margin-top: 12px; flex-wrap: wrap; }
+.audit-group { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3); margin: 28px 0 4px; font-weight: 600; }
+.audit-parts { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.audit-part { display: grid; grid-template-columns: 84px 1fr; gap: 12px; align-items: start; font-size: 14px; }
+.audit-part small { display: block; color: var(--text-3); font-size: 12px; margin-top: 2px; }
+.audit-todo { font-size: 13px; color: var(--text-2); margin-top: 6px; }
+.audit-title .tag { margin-left: auto; }
+@media (max-width: 640px) {
+  .audit-part { grid-template-columns: 1fr; gap: 4px; }
+  .sec-row { grid-template-columns: auto 1fr; }
+  .sec-status { grid-column: 2; }
+}
