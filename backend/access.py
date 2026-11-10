@@ -4,7 +4,9 @@ Roles (from the verified Google email on the Firebase ID token):
   owner    ALLOWED_EMAIL. Everything, including Finances (Plaid, bank data, taxes, the finance chat).
   admin    ADMIN_EMAILS (comma-separated env). The developer account: sees and approves sign-ups at /api/admin/*,
            and has its own ordinary (empty) data like any member. No Finances.
-  member   An email the owner or an admin approved (Firestore app/access {emails}), or anyone when SIGNUP_OPEN=1.
+  member   Any verified Google account while sign-up is open (the default since 2026-11-10, the owner's call;
+           Firestore app/access {open: false} or env SIGNUP_OPEN=0 closes it), else an email the owner or an admin
+           approved (app/access {emails}).
            Every section except Finances, each with their own data under users/{uid}.
   pending  Anyone else with a verified Google account: recorded in signups/{uid} so the developer page can approve
            them, and refused (403 "pending") everywhere except /api/me.
@@ -19,7 +21,7 @@ from flask import g, jsonify, request
 real_db = None
 OWNER_ONLY = ("/api/plaid", "/api/sync", "/api/fin", "/api/transactions", "/api/summary", "/api/holdings",
               "/api/venmo", "/api/import/csv", "/api/earnings", "/api/taxes", "/api/chat", "/api/demo/schedule")
-_approved = {"at": 0.0, "emails": set()}
+_approved = {"at": 0.0, "emails": set(), "open": True}
 _seen = {}                  # uid -> last time we wrote last_seen (throttles writes; keyed by uid)
 SEEN_EVERY = 600
 
@@ -40,11 +42,20 @@ def approved_emails(fresh=False):
     if fresh or time.time() - _approved["at"] > 60:
         try:
             snap = _access_doc().get()
-            emails = set((snap.to_dict() or {}).get("emails") or []) if snap.exists else set()
+            doc = (snap.to_dict() or {}) if snap.exists else {}
+            emails, is_open = set(doc.get("emails") or []), doc.get("open", True) is not False
         except Exception:
-            emails = _approved["emails"]          # keep the last good list if Firestore hiccups
-        _approved.update(at=time.time(), emails={e.lower() for e in emails})
+            emails, is_open = _approved["emails"], _approved["open"]     # keep the last good state if Firestore hiccups
+        _approved.update(at=time.time(), emails={e.lower() for e in emails}, open=is_open)
     return _approved["emails"]
+
+
+def signup_open():
+    env = os.environ.get("SIGNUP_OPEN")
+    if env in ("0", "1"):
+        return env == "1"
+    approved_emails()
+    return _approved["open"]
 
 
 def role_for(email):
@@ -55,7 +66,7 @@ def role_for(email):
         return "owner"
     if email in admin_emails():
         return "admin"
-    if os.environ.get("SIGNUP_OPEN") == "1" or email in approved_emails():
+    if signup_open() or email in approved_emails():
         return "member"
     return "pending"
 
@@ -147,7 +158,7 @@ def init(app, _real_db, verify):
         rows += [{"email": e, "name": "", "role": role_for(e), "first_seen": None, "last_seen": None}
                  for e in sorted(approved - known)]
         rows.sort(key=lambda r: -(r.get("last_seen") or 0))
-        return jsonify(users=rows, signup_open=os.environ.get("SIGNUP_OPEN") == "1",
+        return jsonify(users=rows, signup_open=signup_open(), signup_env=os.environ.get("SIGNUP_OPEN") in ("0", "1"),
                        counts={k: sum(1 for r in rows if r["role"] == k) for k in ("owner", "admin", "member", "pending")})
 
     @app.post("/api/admin/access")
@@ -164,6 +175,17 @@ def init(app, _real_db, verify):
             return jsonify(error="the owner and developer accounts are set on the server"), 400
         emails = approved_emails(fresh=True)
         emails = (emails | {email}) if b.get("approve", True) else (emails - {email})
-        _access_doc().set({"emails": sorted(emails), "updated": time.time()})
+        _access_doc().set({"emails": sorted(emails), "updated": time.time()}, merge=True)
         _approved.update(at=time.time(), emails=set(emails))
+        return admin_users()
+
+    @app.post("/api/admin/signup")
+    def admin_signup():
+        """{open: true|false}: let any verified Google account in, or require approval."""
+        _, err = admin_claims()
+        if err:
+            return err
+        is_open = bool((request.get_json(force=True) or {}).get("open"))
+        _access_doc().set({"open": is_open, "updated": time.time()}, merge=True)
+        _approved.update(at=time.time(), open=is_open)
         return admin_users()

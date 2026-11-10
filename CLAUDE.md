@@ -92,8 +92,9 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
 - `access.py`: who may sign in. Roles owner / admin / member / pending (see Auth). Finance routes (`OWNER_ONLY`: Plaid, sync,
   `/api/fin`, uploads, earnings, taxes, the finance chat, demo schedule) answer 403 "owner only" for everyone else. Every
   sign-in is logged in top-level `signups/{uid}` (email, name, first/last seen). `/api/me` (works while pending),
-  `/api/admin/users` + `/api/admin/access` for the Developer page (`frontend/admin.js`, `#/admin`). `SIGNUP_OPEN=1` lets
-  any verified Google account in as a member.
+  `/api/admin/users` + `/api/admin/access` + `/api/admin/signup` for the Developer page (`frontend/admin.js`, `#/admin`).
+  Sign-up is **open** by default (owner's call, 2026-11-10): any verified Google account is a member. The Developer page
+  switch (`app/access.open`) or env `SIGNUP_OPEN=0|1` changes that.
 - `schools.py`: school packs for Education (`education/profile.school_id`; none = Georgetown Law, the original setup).
   Each pack: grade points, non-GPA marks, P/F rules, tags, calendar, finals, audit text. Ohio State (`osu`): 4.0 scale
   with E, PA/NP budget (20 h), GE (Bookends, 7 Foundations, Citizenship + one theme), 120 h / 30 h at Ohio State, majors
@@ -169,7 +170,7 @@ visit; widgets, detail, editor, library, coach drawer).
 Design tokens on `:root` in `styles.css` (`--accent`, `--pos`, `--neg`, `--warn`, `--exam`, `--done`, …).
 
 ### Environment & secrets (Cloud Run)
-Env `ADMIN_EMAILS` (developer account, comma-separated), optional `SIGNUP_OPEN=1`. Secrets: `plaid-client-id`, `plaid-secret`, `allowed-email`, `anthropic-api-key`, `whoop-client-id`,
+Env `ADMIN_EMAILS` (developer account, comma-separated), optional `SIGNUP_OPEN=0|1` (overrides the Developer page switch). Secrets: `plaid-client-id`, `plaid-secret`, `allowed-email`, `anthropic-api-key`, `whoop-client-id`,
 `whoop-client-secret`, `strava-client-id`, `strava-client-secret`. Env: `PLAID_ENV` (sandbox until Plaid production is approved), `CLAUDE_MODEL`,
 `WHOOP_REDIRECT_URI`, `STRAVA_REDIRECT_URI`, `FDC_API_KEY` (optional), `FRONTEND_URL`, `FRONTEND_ORIGIN`. Local dev: `DEV_SKIP_AUTH=1`.
 

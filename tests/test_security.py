@@ -51,7 +51,7 @@ claims.update(uid="u2", email="someone@example.com", email_verified=True)
 assert c.get("/api/fin/overview", headers={"Authorization": "Bearer t"}).status_code == 403
 # A second approved account (a member, or the developer account) gets its own data but never the owner's Finances.
 import access, time as _time
-access._approved.update(at=_time.time() + 3600, emails={"someone@example.com"})
+access._approved.update(at=_time.time() + 3600, emails={"someone@example.com"}, open=False)
 os.environ["ADMIN_EMAILS"] = "dev@example.com"
 for who in ("someone@example.com", "dev@example.com"):
     claims.update(uid="u2", email=who, email_verified=True)
@@ -66,7 +66,15 @@ assert access.role_for("stranger@example.com") == "pending"
 claims.update(uid="u3", email="stranger@example.com", email_verified=True)
 assert c.get("/api/edu", headers={"Authorization": "Bearer t"}).get_json()["error"] == "pending"
 assert c.get("/api/admin/users", headers={"Authorization": "Bearer t"}).status_code == 403   # not the developer
-access._approved.update(at=0, emails=set())
+# Open sign-up (the default): a stranger gets in as a member, still without Finances.
+access._approved.update(at=_time.time() + 3600, emails=set(), open=True)
+assert access.role_for("stranger@example.com") == "member"
+r = c.get("/api/fin/overview", headers={"Authorization": "Bearer t"})
+assert r.status_code == 403 and r.get_json()["error"] == "owner only"
+os.environ["SIGNUP_OPEN"] = "0"
+assert access.role_for("stranger@example.com") == "pending"
+os.environ.pop("SIGNUP_OPEN")
+access._approved.update(at=0, emails=set(), open=True)
 claims.update(uid="u1", email="owner@example.com", email_verified=False)
 assert c.get("/api/fin/overview", headers={"Authorization": "Bearer t"}).status_code == 403
 def bad(*a, **k): raise ValueError("bad token")
