@@ -666,6 +666,10 @@ earnings.init(app, db, firestore, require_owner, user_ref)
 import services
 services.init(app, db, firestore, require_owner, user_ref)
 
+# ---------------------------------------------------------------- Developer dashboard (usage counts, task list)
+import devtools
+devtools.init(app, real_db, require_owner)
+
 # ---------------------------------------------------------------- Demo profile (made-up data, no sign-in)
 demo.init(app, real_db, firestore, require_owner, user_ref)
 

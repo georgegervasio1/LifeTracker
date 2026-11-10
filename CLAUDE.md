@@ -24,7 +24,7 @@ handoff doc in the Claude project, not here: **this repo is public**.
 | Backend | `backend/` → Cloud Run `lifetracker-api`, region `us-east4`, project `lifetracker2001` | Flask. URL in `frontend/config.js` (`API_BASE`). |
 | Deploy | `cloudbuild.yaml` + root `Dockerfile` | Cloud Build trigger on push to `main` builds, pushes to Artifact Registry and deploys. Check Cloud Build → History (us-east4). |
 | Data | Firestore, `users/{uid}/...` | See collections below. |
-| Auth | Firebase Google sign-in (modular SDK 10.12.0) | Backend `require_owner` checks the ID token, then `access.gate`: owner (`ALLOWED_EMAIL`, the only account with Finances), developer (`ADMIN_EMAILS`), approved members (Firestore `app/access`), else "pending". |
+| Auth | Firebase Google sign-in (modular SDK 10.12.0) | Backend `require_owner` checks the ID token, then `access.gate`: owner (`ALLOWED_EMAIL`, the only account with Finances), developer (`ADMIN_EMAILS`, developer dashboard only: every other route answers 403 "developer account"), approved members (Firestore `app/access`), else "pending". |
 | Security | `firestore.rules` (deny all: only the backend's Admin SDK touches Firestore), `tests/test_security.py` | Every `/api` route must need sign-in unless listed public in that test. API answers are `no-store`; CORS allows only `FRONTEND_ORIGIN`. |
 
 Libraries (cdnjs, pinned): Chart.js 4.4.1, marked, DOMPurify, Sortable 1.15.2, Leaflet 1.9.4 (CARTO basemap tiles); Plaid Link script.
@@ -95,6 +95,12 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
   `/api/admin/users` + `/api/admin/access` + `/api/admin/signup` for the Developer page (`frontend/admin.js`, `#/admin`).
   Sign-up is **open** by default (owner's call, 2026-11-10): any verified Google account is a member. The Developer page
   switch (`app/access.open`) or env `SIGNUP_OPEN=0|1` changes that.
+- `devtools.py`: Developer dashboard data (`frontend/admin.js`, `#/admin/overview|users|tasks|access`, owner + developer).
+  Usage counts only: the site posts `/api/usage/ping` once a minute while a tab is visible and used (section on screen);
+  per-day `usage_days/{date}` (minutes, sessions, users {uid: minutes}, sections, claude {feature: calls/tokens}, models) and
+  per-account totals in `signups/{uid}`. Claude calls are counted in `assistant.client()` (a wrapper on `messages.create`,
+  labelled by route). The demo and the developer account aren't counted. Task / idea list in top-level `dev_tasks`
+  (`/api/admin/tasks`). The developer account sees only this dashboard (no intro, no sections, no Settings).
 - `services.py`: which sections each person uses. First sign-in shows an intro page (`#intro` in index.html, `frontend/services.js`)
   with a checkbox per service; the nav, home cards and routes then show only those, changeable in Settings (`#/settings`).
   Stored in `users/{uid}/settings/services` `{picked, onboarded}`. No saved choice: the owner (and the demo) get every core
@@ -161,7 +167,7 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
 `training` (state/template/sessions), `education/profile`, `edu_courses`, `edu_syllabi`, `edu_syllabus_files`,
 `earnings/settings`, `paychecks`, `integrations/strava`, `strava_activities`, `race_plans`, `food_log/{date}`, `food_custom`, `food/goals`, `sports/favorites`,
 `travel/settings`, `bike_rides`, `metro_trips`, `apartments`, `apartment_digests`, `apartment_photos`, `trips`, `travel/trip_settings`, `integrations/partiful`, `social_events`, `settings/services`.
-Top level (not per user): `app/access` (approved emails), `signups/{uid}` (sign-in log), `demo/education`.
+Top level (not per user): `app/access` (approved emails), `signups/{uid}` (sign-in log + usage totals), `usage_days/{date}`, `dev_tasks`, `demo/education`.
 
 ### Frontend map (`frontend/app.js`)
 Hash routes `#/section/tab`, `SECTIONS` config at the top. Finances: Net Worth, Cash & Cards, Investments,

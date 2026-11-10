@@ -49,23 +49,33 @@ claims = {}
 fb_auth.verify_id_token = lambda tok, *a, **k: dict(claims)
 claims.update(uid="u2", email="someone@example.com", email_verified=True)
 assert c.get("/api/fin/overview", headers={"Authorization": "Bearer t"}).status_code == 403
-# A second approved account (a member, or the developer account) gets its own data but never the owner's Finances.
+# A second approved account (a member) gets its own data but never the owner's Finances. The developer account
+# gets developer tools only: every other route, Finances included, is refused.
 import access, time as _time
 access._approved.update(at=_time.time() + 3600, emails={"someone@example.com"}, open=False)
 os.environ["ADMIN_EMAILS"] = "dev@example.com"
-for who in ("someone@example.com", "dev@example.com"):
+for who, why in (("someone@example.com", "owner only"), ("dev@example.com", "developer account")):
     claims.update(uid="u2", email=who, email_verified=True)
     for m, path in (("GET", "/api/fin/overview"), ("POST", "/api/plaid/link-token"), ("POST", "/api/sync"),
                     ("POST", "/api/chat"), ("GET", "/api/taxes"), ("GET", "/api/earnings"), ("POST", "/api/fin/upload")):
         r = c.open(path, method=m, json={}, headers={"Authorization": "Bearer t"})
-        assert r.status_code == 403 and r.get_json()["error"] == "owner only", (who, path, r.status_code)
-    with main.app.test_request_context("/api/edu"):
-        assert access.gate(dict(claims)) is None and main.g.uid == "u2"      # their own Education, under their own uid
+        assert r.status_code == 403 and r.get_json()["error"] == why, (who, path, r.status_code)
+claims.update(uid="u2", email="someone@example.com", email_verified=True)
+with main.app.test_request_context("/api/edu"):
+    assert access.gate(dict(claims)) is None and main.g.uid == "u2"          # their own Education, under their own uid
+claims.update(uid="u2", email="dev@example.com", email_verified=True)
+for path in ("/api/edu", "/api/services", "/api/goals", "/api/usage/ping"):
+    r = c.open(path, method="POST" if path.endswith("ping") else "GET", json={}, headers={"Authorization": "Bearer t"})
+    assert r.status_code == 403 and r.get_json()["error"] == "developer account", (path, r.status_code)
+assert c.get("/api/me", headers={"Authorization": "Bearer t"}).get_json()["developer_only"] is True
 assert access.role_for("owner@example.com") == "owner" and access.role_for("dev@example.com") == "admin"
 assert access.role_for("stranger@example.com") == "pending"
 claims.update(uid="u3", email="stranger@example.com", email_verified=True)
 assert c.get("/api/edu", headers={"Authorization": "Bearer t"}).get_json()["error"] == "pending"
 assert c.get("/api/admin/users", headers={"Authorization": "Bearer t"}).status_code == 403   # not the developer
+for path in ("/api/admin/usage", "/api/admin/tasks"):
+    assert c.get(path, headers={"Authorization": "Bearer t"}).status_code == 403
+assert c.post("/api/admin/tasks", json={"title": "x"}, headers={"Authorization": "Bearer t"}).status_code == 403
 # Open sign-up (the default): a stranger gets in as a member, still without Finances.
 access._approved.update(at=_time.time() + 3600, emails=set(), open=True)
 assert access.role_for("stranger@example.com") == "member"

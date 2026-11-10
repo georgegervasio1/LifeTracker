@@ -2029,6 +2029,7 @@ details.legacy > summary { cursor: pointer; font-size: 15px; font-weight: 600; c
 body.is-admin .admin-only { display: inline-flex !important; }
 body.no-fin [data-section="finances"], body.no-fin .home-card[href="#/finances"] { display: none !important; }
 body.not-owner .owner-only { display: none !important; }
+body.dev-only #settingsLink { display: none !important; }
 .admin-head { margin: 0 0 24px; padding-top: 48px; }
 .admin-add { display: flex; align-items: flex-end; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
 .admin-add label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-2); flex: 1; min-width: 220px; }
@@ -2037,6 +2038,68 @@ body.not-owner .owner-only { display: none !important; }
   .admin-table th:nth-child(3), .admin-table td:nth-child(3), .admin-table th:nth-child(4), .admin-table td:nth-child(4) { display: none; }
   .admin-table td small { word-break: break-all; }
   .admin-table th, .admin-table td { padding: 12px 14px; }
+}
+
+/* ---------- Developer dashboard (admin.js, devtools.py) ---------- */
+.kpis + .kpis { margin-top: -40px; border-top: 0; }
+.dev-chart { position: relative; height: 260px; }
+.dev-legend { display: inline-flex; align-items: center; gap: 6px; }
+.dev-key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--accent); }
+.dev-key-line { height: 2px; width: 14px; background: var(--text); margin-left: 10px; }
+.dev-chart-card + .grid-2 { margin-top: 20px; }
+.grid-2 + .dev-claude { margin-top: 20px; }
+.padded-x { padding: 0 24px; }
+.dev-claude .table { margin-top: 4px; }
+.dev-claude .hint:last-child { padding-bottom: 22px; }
+.dev-svcs { display: flex; flex-wrap: wrap; gap: 4px; max-width: 300px; }
+.dev-users td { vertical-align: top; }
+.dev-users td:nth-child(n+4) { white-space: nowrap; }
+.dev-add { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+.dev-add .input { width: 100%; }
+.dev-add-fields, .dev-task-fields { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.dev-add-fields .btn { margin-left: auto; }
+.dev-filter { margin-bottom: 8px; }
+.dev-group { margin-top: 24px; }
+.dev-group-h { font-size: 13px; font-weight: 600; color: var(--text-2); margin: 0 0 10px; letter-spacing: .01em; }
+.dev-task-ctl { display: flex; align-items: center; gap: 14px; }
+.dev-task { display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: start; padding: 16px 20px; }
+.dev-list > * + * { border-top: 1px solid var(--line); }
+.dev-check { width: 20px; height: 20px; margin-top: 1px; border-radius: 50%; border: 1.5px solid var(--text-3); background: none; cursor: pointer; padding: 0; transition: background .2s, border-color .2s; }
+.dev-check:hover { border-color: var(--accent); }
+.dev-check[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); box-shadow: inset 0 0 0 3px var(--surface); }
+.dev-task-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.dev-task-title { font-size: 15px; font-weight: 500; color: var(--text); overflow-wrap: anywhere; }
+.dev-task.is-done .dev-task-title { color: var(--text-3); text-decoration: line-through; }
+.dev-task-notes { font-size: 13px; color: var(--text-2); white-space: pre-line; overflow-wrap: anywhere; }
+.dev-task-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.dev-task-edit { display: flex; flex-direction: column; gap: 10px; }
+.dev-task-edit .input { width: 100%; resize: vertical; }
+.dev-task-actions { display: flex; align-items: center; gap: 8px; }
+.dev-task-actions span { flex: 1; }
+.dev-access-row { display: grid; grid-template-columns: 1fr auto auto; gap: 14px; align-items: center; padding: 14px 24px; border-top: 1px solid var(--line); }
+.dev-access-row small { display: block; color: var(--text-3); font-size: 12px; overflow-wrap: anywhere; }
+.card-flush + .card-flush { margin-top: 20px; }
+.card-flush > .hint.padded-x:last-child { padding-bottom: 22px; }
+@media (max-width: 640px) {
+  .kpis + .kpis { margin-top: -40px; }
+  .dev-chart { height: 220px; }
+  .dev-task { grid-template-columns: auto 1fr; padding: 14px 16px; }
+  .dev-task .dev-task-ctl { grid-column: 2; }
+  .dev-add-fields .btn { margin-left: 0; }
+  .dev-access-row { grid-template-columns: 1fr auto; padding: 14px 16px; }
+  .dev-access-row > .muted { display: none; }
+  /* the users table becomes one card-like row per account */
+  .admin-table.dev-users thead { display: none; }
+  .admin-table.dev-users, .admin-table.dev-users tbody { display: block; }
+  .admin-table.dev-users tr { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; padding: 16px; }
+  .admin-table.dev-users tr + tr { border-top: 1px solid var(--line); }
+  .admin-table.dev-users td { display: block !important; padding: 0; border: 0; text-align: left; white-space: normal; }
+  .admin-table.dev-users td:nth-child(2) { justify-self: end; }
+  .admin-table.dev-users td:nth-child(3) { grid-column: 1 / -1; }
+  .admin-table.dev-users td[data-label] { font-size: 14px; }
+  .admin-table.dev-users td[data-label]::before { content: attr(data-label); display: block; font-size: 12px; color: var(--text-3); margin-bottom: 2px; }
+  .admin-table.dev-users td small { word-break: normal; overflow-wrap: anywhere; }
+  .dev-svcs { max-width: none; }
 }
 
 /* ---------- Education: school and major, class search, Ohio State audit ---------- */

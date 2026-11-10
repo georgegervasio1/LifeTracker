@@ -36,7 +36,8 @@ const SECTIONS = {
   recipes: { title: "Recipes", tabs: [] },
   chess: { title: "Chess", tabs: [] },
   settings: { title: "Settings", tabs: [] }, // Your services (services.js)
-  admin: { title: "Developer", tabs: [] }, // sign-ups and access (admin.js), developer and owner accounts only
+  admin: { title: "Developer", tabs: [   // developer dashboard (admin.js), developer and owner accounts only
+    ["overview", "Overview"], ["users", "Users"], ["tasks", "Tasks"], ["access", "Access"]] },
 };
 // Sections everyone can open whatever services they picked
 const ALWAYS = ["home", "settings", "admin"];
@@ -90,6 +91,7 @@ function render() {
   if (!auth.currentUser && !isDemo()) return;
   const route = parseRoute();
   const { section, tab } = route;
+  if (me?.developer_only && section !== "admin") { location.hash = "#/admin"; return; }   // developer tools only
   if ((section === "finances" && me && !me.finances) || (section === "admin" && !me?.admin)
       || (svc && !ALWAYS.includes(section) && !svc.picked.includes(section))) { location.hash = "#/"; return; }
   lastRoute = route;
@@ -218,7 +220,7 @@ async function load(section, tab) {
   if (section === "education") return loadEducation(tab);
   if (section === "goals") return (await goalsModule()).loadGoals();
   if (section === "settings") return loadSettings(svc);
-  if (section === "admin") { const m = await import("./admin.js"); m.initAdmin({ api, $, esc, toast }); return m.loadAdmin(); }
+  if (section === "admin") { const m = await import("./admin.js"); m.initAdmin({ api, $, esc, toast, cssVar }); return m.loadAdmin(tab); }
   if (section !== "finances") return;
   setChatPlace(tab);
   if (tab === "networth") return loadNetWorth();
@@ -304,11 +306,14 @@ async function showApp() {
   $("signout").textContent = isDemo() ? "Exit demo" : "Sign out";
   if (signedIn) await checkAccount(); else me = null;
   const waiting = signedIn && me?.role === "pending";
-  if (signedIn && !waiting) await loadServices(); else svc = null;
+  const devOnly = signedIn && !!me?.developer_only;       // the developer account: the dashboard and nothing else
+  if (devOnly) svc = { catalog: [], picked: [], onboarded: true };
+  else if (signedIn && !waiting) await loadServices(); else svc = null;
   const intro = signedIn && !waiting && !svc.onboarded;
   document.body.classList.toggle("no-fin", !!me && !me.finances);
   document.body.classList.toggle("is-admin", !!me?.admin);
   document.body.classList.toggle("not-owner", !!me && me.role !== "owner" && me.role !== "demo");
+  document.body.classList.toggle("dev-only", devOnly);
   if (waiting) $("pendingText").textContent = `${me.email} is waiting for access. You'll be able to use LifeTracker as soon as it's approved.`;
   $("pending").classList.toggle("hidden", !waiting);
   $("intro").classList.toggle("hidden", !intro);
@@ -316,6 +321,21 @@ async function showApp() {
   $("app").classList.toggle("hidden", !signedIn || waiting || intro);
   if (intro) return showIntro(svc, (next) => { svc = next; location.hash = "#/"; showApp(); });
   if (signedIn && !waiting) { applyServices(); render(); }
+  usagePings(signedIn && !waiting && !intro && !devOnly && !isDemo());
+}
+
+// ---------- Usage counts for the Developer dashboard (backend/devtools.py) ----------
+// Once a minute while this tab is visible and was used in the last 5 minutes: which section is on screen, nothing else.
+let pingTimer = null, lastInput = Date.now();
+["pointerdown", "keydown", "scroll", "touchstart"].forEach((e) => window.addEventListener(e, () => (lastInput = Date.now()), { passive: true }));
+function usagePings(on) {
+  clearInterval(pingTimer); pingTimer = null;
+  if (!on) return;
+  const send = (start) => api("/api/usage/ping", { method: "POST", body: JSON.stringify({ section: lastRoute?.section || "home", start }) }).catch(() => {});
+  send(true);
+  pingTimer = setInterval(() => {
+    if (document.visibilityState === "visible" && Date.now() - lastInput < 5 * 60 * 1000) send(false);
+  }, 60 * 1000);
 }
 $("pendingSignout").onclick = () => signOut(auth);
 $("introSignout").onclick = () => (isDemo() ? exitDemo() : signOut(auth));

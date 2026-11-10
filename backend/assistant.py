@@ -20,8 +20,33 @@ def client():
     demo.guard()       # the demo profile never calls Claude
     global _client
     if _client is None:
-        _client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from the environment
+        _client = _Counted(anthropic.Anthropic())  # reads ANTHROPIC_API_KEY from the environment
     return _client
+
+
+class _Counted:
+    """The Anthropic client, with each messages.create counted for the Developer dashboard (calls and token totals
+    only, see devtools.record_claude). Everything else passes straight through."""
+    def __init__(self, inner):
+        self._inner = inner
+        self.messages = _CountedMessages(inner.messages)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+class _CountedMessages:
+    def __init__(self, inner):
+        self._inner = inner
+
+    def create(self, **kw):
+        resp = self._inner.create(**kw)
+        import devtools
+        devtools.record_claude(resp, kw.get("model"))
+        return resp
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
 
 
 ACCOUNT_PROP = {"type": "string", "description": "Canonical account id from get_accounts_and_net_worth (e.g. chase_card, venmo), "

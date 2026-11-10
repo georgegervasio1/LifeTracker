@@ -2,8 +2,9 @@
 
 Roles (from the verified Google email on the Firebase ID token):
   owner    ALLOWED_EMAIL. Everything, including Finances (Plaid, bank data, taxes, the finance chat).
-  admin    ADMIN_EMAILS (comma-separated env). The developer account: sees and approves sign-ups at /api/admin/*,
-           and has its own ordinary (empty) data like any member. No Finances.
+  admin    ADMIN_EMAILS (comma-separated env). The developer account: developer tools only (the dashboard at
+           /api/admin/*: users, usage, the task list, access). Every other /api route answers 403 "developer
+           account", so it has no personal sections or data of its own. The owner can open the dashboard too.
   member   Any verified Google account while sign-up is open (the default since 2026-11-10, the owner's call;
            Firestore app/access {open: false} or env SIGNUP_OPEN=0 closes it), else an email the owner or an admin
            approved (app/access {emails}).
@@ -93,6 +94,22 @@ def record(claims, role):
         pass                                   # the log must never block a sign-in
 
 
+def _services_of(uid, role):
+    """The sections this account picked ({picked, onboarded}), None for the developer account (it has none)."""
+    if role == "admin":
+        return None
+    try:
+        snap = real_db.collection("users").document(uid).collection("settings").document("services").get()
+        doc = (snap.to_dict() or {}) if snap.exists else {}
+    except Exception:
+        doc = {}
+    if doc.get("onboarded"):
+        return {"picked": list(doc.get("picked") or []), "onboarded": True}
+    if role == "owner":
+        return {"picked": None, "onboarded": True, "everything": True}
+    return {"picked": [], "onboarded": False}
+
+
 def gate(claims):
     """None if the request may go on (g.uid/g.email/g.role set), else the error response."""
     if not claims.get("email_verified"):
@@ -102,26 +119,44 @@ def gate(claims):
     g.uid, g.email, g.role = claims["uid"], (claims.get("email") or "").lower(), role
     if role == "pending":
         return jsonify(error="pending"), 403
+    if role == "admin":                        # the developer account only uses the developer tools
+        return jsonify(error="developer account"), 403
     if role != "owner" and owner_only(request.path):
         return jsonify(error="owner only"), 403
     return None
 
 
+_verify = None
+
+
+def signed_in():
+    """(claims, None) for a verified Google account, else (None, error response). No allowlist."""
+    header = request.headers.get("Authorization", "")
+    if header.startswith("Demo "):
+        return None, (jsonify(error="the demo has no account"), 403)
+    claims = _verify(header)
+    if not isinstance(claims, dict):
+        return None, claims
+    if not claims.get("email_verified"):
+        return None, (jsonify(error="forbidden"), 403)
+    return claims, None
+
+
+def admin_claims():
+    """(claims, None) for the owner or the developer account, else (None, error response)."""
+    claims, err = signed_in()
+    if err:
+        return None, err
+    if role_for(claims.get("email")) not in ("owner", "admin"):
+        return None, (jsonify(error="forbidden"), 403)
+    record(claims, role_for(claims.get("email")))
+    return claims, None
+
+
 def init(app, _real_db, verify):
     """verify(header) -> claims dict or an error response (signature check only, no allowlist)."""
-    global real_db
-    real_db = _real_db
-
-    def signed_in():
-        header = request.headers.get("Authorization", "")
-        if header.startswith("Demo "):
-            return None, (jsonify(error="the demo has no account"), 403)
-        claims = verify(header)
-        if not isinstance(claims, dict):
-            return None, claims
-        if not claims.get("email_verified"):
-            return None, (jsonify(error="forbidden"), 403)
-        return claims, None
+    global real_db, _verify
+    real_db, _verify = _real_db, verify
 
     @app.get("/api/me")
     def me():
@@ -132,15 +167,7 @@ def init(app, _real_db, verify):
         role = role_for(claims.get("email"))
         record(claims, role)
         return jsonify(email=(claims.get("email") or "").lower(), role=role, finances=role == "owner",
-                       admin=role in ("owner", "admin"))
-
-    def admin_claims():
-        claims, err = signed_in()
-        if err:
-            return None, err
-        if role_for(claims.get("email")) not in ("owner", "admin"):
-            return None, (jsonify(error="forbidden"), 403)
-        return claims, None
+                       admin=role in ("owner", "admin"), developer_only=role == "admin")
 
     @app.get("/api/admin/users")
     def admin_users():
@@ -152,11 +179,15 @@ def init(app, _real_db, verify):
         for d in real_db.collection("signups").stream():
             r = d.to_dict() or {}
             r["role"] = role_for(r.get("email"))
-            rows.append({k: r.get(k) for k in ("email", "name", "role", "first_seen", "last_seen")})
+            row = {k: r.get(k) for k in ("email", "name", "role", "first_seen", "last_seen")}
+            # account-level counts only (see devtools.py); never anything the person saved in a section
+            row.update(minutes=r.get("minutes") or 0, sessions=r.get("sessions") or 0, days=r.get("days") or 0,
+                       claude_calls=r.get("claude_calls") or 0, services=_services_of(d.id, r["role"]))
+            rows.append(row)
         approved = approved_emails(fresh=True)
         known = {r["email"] for r in rows}
-        rows += [{"email": e, "name": "", "role": role_for(e), "first_seen": None, "last_seen": None}
-                 for e in sorted(approved - known)]
+        rows += [{"email": e, "name": "", "role": role_for(e), "first_seen": None, "last_seen": None, "minutes": 0,
+                  "sessions": 0, "days": 0, "claude_calls": 0, "services": None} for e in sorted(approved - known)]
         rows.sort(key=lambda r: -(r.get("last_seen") or 0))
         return jsonify(users=rows, signup_open=signup_open(), signup_env=os.environ.get("SIGNUP_OPEN") in ("0", "1"),
                        counts={k: sum(1 for r in rows if r["role"] == k) for k in ("owner", "admin", "member", "pending")})
