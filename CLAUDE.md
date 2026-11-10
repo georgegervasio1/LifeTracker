@@ -95,6 +95,13 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
   `/api/admin/users` + `/api/admin/access` + `/api/admin/signup` for the Developer page (`frontend/admin.js`, `#/admin`).
   Sign-up is **open** by default (owner's call, 2026-11-10): any verified Google account is a member. The Developer page
   switch (`app/access.open`) or env `SIGNUP_OPEN=0|1` changes that.
+- `services.py`: which sections each person uses. First sign-in shows an intro page (`#intro` in index.html, `frontend/services.js`)
+  with a checkbox per service; the nav, home cards and routes then show only those, changeable in Settings (`#/settings`).
+  Stored in `users/{uid}/settings/services` `{picked, onboarded}`. No saved choice: the owner (and the demo) get every core
+  section with no intro; everyone else gets the intro. Finances is offered only to the owner. Display preference only, never
+  access. Add-ons in development (`#/golf`, `#/movies`, `#/recipes`, `#/chess`) are plan pages in `services.js` (`PLANS`), with
+  the data path for each (Chess.com public API, Letterboxd RSS + export, schema.org Recipe pages, WHS handicap math; GHIN and
+  18Birdies have no public API).
 - `schools.py`: school packs for Education (`education/profile.school_id`; none = Georgetown Law, the original setup).
   Each pack: grade points, non-GPA marks, P/F rules, tags, calendar, finals, audit text. Ohio State (`osu`): 4.0 scale
   with E, PA/NP budget (20 h), GE (Bookends, 7 Foundations, Citizenship + one theme), 120 h / 30 h at Ohio State, majors
@@ -151,7 +158,7 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
 `transactions` (ledger), `items` (Plaid), `inv_snapshots`, `inv_activity`, `holdings` (legacy), `health_days`, `workouts`, `integrations/whoop`, `oauth_states`,
 `training` (state/template/sessions), `education/profile`, `edu_courses`, `edu_syllabi`, `edu_syllabus_files`,
 `earnings/settings`, `paychecks`, `integrations/strava`, `strava_activities`, `race_plans`, `food_log/{date}`, `food_custom`, `food/goals`, `sports/favorites`,
-`travel/settings`, `bike_rides`, `metro_trips`, `apartments`, `apartment_digests`, `apartment_photos`, `trips`, `travel/trip_settings`, `integrations/partiful`, `social_events`.
+`travel/settings`, `bike_rides`, `metro_trips`, `apartments`, `apartment_digests`, `apartment_photos`, `trips`, `travel/trip_settings`, `integrations/partiful`, `social_events`, `settings/services`.
 Top level (not per user): `app/access` (approved emails), `signups/{uid}` (sign-in log), `demo/education`.
 
 ### Frontend map (`frontend/app.js`)

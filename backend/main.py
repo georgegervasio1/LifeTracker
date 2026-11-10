@@ -662,6 +662,10 @@ social.init(app, db, firestore, require_owner, user_ref)
 import earnings
 earnings.init(app, db, firestore, require_owner, user_ref)
 
+# ---------------------------------------------------------------- Services each person picked (intro page, Settings)
+import services
+services.init(app, db, firestore, require_owner, user_ref)
+
 # ---------------------------------------------------------------- Demo profile (made-up data, no sign-in)
 demo.init(app, real_db, firestore, require_owner, user_ref)
 

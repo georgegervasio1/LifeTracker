@@ -5,6 +5,7 @@ import { API_BASE, FIREBASE_CONFIG } from "./config.js";
 import { viewSwap, enter, panelIn } from "./motion.js";
 import { mountEduToday, loadToday, loadTasks, gmailToken } from "./edu-today.js";
 import { initSchool, renderSchoolSetup, openClassSearch, wireClassSearch } from "./school.js";
+import { initServices, showIntro, loadSettings, renderAddon, ADDONS } from "./services.js";
 
 const auth = getAuth(initializeApp(FIREBASE_CONFIG));
 const $ = (id) => document.getElementById(id);
@@ -30,8 +31,15 @@ const SECTIONS = {
   sports: { title: "Sports", tabs: [] },   // dashboard + areas, drawn by sports.js
   travel: { title: "Travel", tabs: [] },
   social: { title: "Social", tabs: [] },   // Partiful events, drawn by social.js
+  golf: { title: "Golf", tabs: [] },       // add-ons, in development: plan pages drawn by services.js
+  movies: { title: "Movies", tabs: [] },
+  recipes: { title: "Recipes", tabs: [] },
+  chess: { title: "Chess", tabs: [] },
+  settings: { title: "Settings", tabs: [] }, // Your services (services.js)
   admin: { title: "Developer", tabs: [] }, // sign-ups and access (admin.js), developer and owner accounts only
 };
+// Sections everyone can open whatever services they picked
+const ALWAYS = ["home", "settings", "admin"];
 
 // Health opens on a dashboard of five areas; each area has its own tabs. A tab maps to a panel in index.html.
 const UNSPLASH = (id) => `https://images.unsplash.com/${id}?auto=format&fit=crop&w=1600&q=70`;
@@ -82,9 +90,11 @@ function render() {
   if (!auth.currentUser && !isDemo()) return;
   const route = parseRoute();
   const { section, tab } = route;
-  if ((section === "finances" && me && !me.finances) || (section === "admin" && !me?.admin)) { location.hash = "#/"; return; }
+  if ((section === "finances" && me && !me.finances) || (section === "admin" && !me?.admin)
+      || (svc && !ALWAYS.includes(section) && !svc.picked.includes(section))) { location.hash = "#/"; return; }
   lastRoute = route;
-  $$(".route").forEach((r) => r.classList.toggle("active", r.dataset.route === section));
+  const routeName = ADDONS.includes(section) ? "addon" : section;
+  $$(".route").forEach((r) => r.classList.toggle("active", r.dataset.route === routeName));
   $$(".section-links a").forEach((a) => a.classList.toggle("active", a.dataset.section === section));
   if (section === "health") return renderHealth(route);
   if (section === "travel") {             // Travel draws its own dashboard, heroes and tabs (travel.js)
@@ -96,6 +106,11 @@ function render() {
     $("askBtn").classList.add("hidden"); $("chatDrawer").classList.add("hidden");
     window.scrollTo({ top: 0 });
     return socialModule().then((m) => m.renderSocial(route.parts)).catch(showError);
+  }
+  if (ADDONS.includes(section)) {         // add-ons in development: a plan page each (services.js)
+    $("askBtn").classList.add("hidden"); $("chatDrawer").classList.add("hidden");
+    window.scrollTo({ top: 0 });
+    return renderAddon(section);
   }
   if (section === "sports") {             // Sports draws its own dashboard, heroes and tabs (sports.js)
     $("askBtn").classList.add("hidden"); $("chatDrawer").classList.add("hidden");
@@ -202,6 +217,7 @@ async function load(section, tab) {
 
   if (section === "education") return loadEducation(tab);
   if (section === "goals") return (await goalsModule()).loadGoals();
+  if (section === "settings") return loadSettings(svc);
   if (section === "admin") { const m = await import("./admin.js"); m.initAdmin({ api, $, esc, toast }); return m.loadAdmin(); }
   if (section !== "finances") return;
   setChatPlace(tab);
@@ -288,16 +304,48 @@ async function showApp() {
   $("signout").textContent = isDemo() ? "Exit demo" : "Sign out";
   if (signedIn) await checkAccount(); else me = null;
   const waiting = signedIn && me?.role === "pending";
+  if (signedIn && !waiting) await loadServices(); else svc = null;
+  const intro = signedIn && !waiting && !svc.onboarded;
   document.body.classList.toggle("no-fin", !!me && !me.finances);
   document.body.classList.toggle("is-admin", !!me?.admin);
   document.body.classList.toggle("not-owner", !!me && me.role !== "owner" && me.role !== "demo");
   if (waiting) $("pendingText").textContent = `${me.email} is waiting for access. You'll be able to use LifeTracker as soon as it's approved.`;
   $("pending").classList.toggle("hidden", !waiting);
+  $("intro").classList.toggle("hidden", !intro);
   $("login").classList.toggle("hidden", signedIn);
-  $("app").classList.toggle("hidden", !signedIn || waiting);
-  if (signedIn && !waiting) render();
+  $("app").classList.toggle("hidden", !signedIn || waiting || intro);
+  if (intro) return showIntro(svc, (next) => { svc = next; location.hash = "#/"; showApp(); });
+  if (signedIn && !waiting) { applyServices(); render(); }
 }
 $("pendingSignout").onclick = () => signOut(auth);
+$("introSignout").onclick = () => (isDemo() ? exitDemo() : signOut(auth));
+
+// ---------- Services each person picked (intro page after sign-up, Settings; see backend/services.py) ----------
+let svc = null;
+initServices({ api, $, esc, toast, onSaved: (next) => { svc = next; applyServices(); } });
+async function loadServices() {
+  try { svc = await api("/api/services"); }
+  catch {                                   // backend unreachable: show the built sections, ask nothing
+    svc = { catalog: [], onboarded: true, picked: ["finances", "health", "education", "goals", "sports", "travel", "social"].filter((k) => k !== "finances" || me?.finances) };
+  }
+  return svc;
+}
+// Show only the picked sections: top nav, home cards, plus a home card for each picked section without a fixed one.
+const HOME_FIXED = ["finances", "health", "education", "goals"];
+function applyServices() {
+  const on = new Set(svc?.picked || []);
+  $$(".section-links a[data-section]").forEach((a) => { if (a.dataset.section !== "admin") a.classList.toggle("hidden", !on.has(a.dataset.section)); });
+  document.querySelector(".section-links").classList.toggle("many", on.size > 7);
+  HOME_FIXED.forEach((k) => document.querySelector(`.home-card[href="#/${k}"]`)?.classList.toggle("hidden", !on.has(k)));
+  $$("#homeGrid .home-extra").forEach((el) => el.remove());
+  const info = Object.fromEntries((svc?.catalog || []).map((c) => [c.id, c]));
+  $("homeGrid").insertAdjacentHTML("beforeend", [...on].filter((k) => !HOME_FIXED.includes(k) && SECTIONS[k]).map((k) => {
+    const c = info[k] || { title: SECTIONS[k].title, blurb: "" }, dev = ADDONS.includes(k);
+    return `<a class="home-card home-extra" href="#/${k}"><span class="home-card-label">${esc(c.title)}</span>
+      <span class="home-card-stat muted-stat">${dev ? "In development" : "Open"}</span>
+      <span class="home-card-desc">${esc(c.blurb)}</span><span class="home-card-cta">Open <span aria-hidden="true">→</span></span></a>`;
+  }).join(""));
+}
 async function authHeader() {
   return isDemo() ? `Demo ${demoSid}` : `Bearer ${await auth.currentUser.getIdToken()}`;
 }
@@ -426,13 +474,14 @@ async function loadHome() {
   $("homeDate").textContent = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
   if (!backendReady) return;
   const now = new Date();
-  if (me && !me.finances) {} else try {
+  const on = (k) => !svc || svc.picked.includes(k);
+  if ((me && !me.finances) || !on("finances")) {} else try {
     const o = await api("/api/fin/overview");
     $("homeFinance").innerHTML = o.net_worth != null
       ? `${usd0.format(o.net_worth)}<small>net worth · ${usd0.format(o.month_spent || 0)} spent this month</small>`
       : `${usd0.format(o.month_spent || 0)}<small>spent this month</small>`;
   } catch { $("homeFinance").textContent = "Open to connect accounts"; }
-  try {
+  if (on("health")) try {
     const h = await api(`/api/health/summary?start=${iso(new Date(Date.now() - 7 * 864e5))}&end=${iso(now)}`);
     const rec = h.latest?.recovery;
     $("homeHealth").classList.toggle("muted-stat", false);
@@ -440,7 +489,7 @@ async function loadHome() {
       ? `${Math.round(rec)}%<small>recovery · ${h.workouts_this_week} workout${h.workouts_this_week === 1 ? "" : "s"} this week</small>`
       : `${h.workouts_this_week}<small>workout${h.workouts_this_week === 1 ? "" : "s"} this week</small>`;
   } catch { $("homeHealth").textContent = "Log your first workout"; }
-  try {
+  if (on("education")) try {
     const e = await api("/api/edu");
     const C = e.computed;
     $("homeEdu").classList.toggle("muted-stat", !e.courses.length);
@@ -448,7 +497,7 @@ async function loadHome() {
       ? `${C.gpa_actual?.toFixed(2) ?? "—"}<small>GPA · projected ${C.gpa_projected?.toFixed(2) ?? "—"}${C.profile.target_gpa != null ? ` vs ${C.profile.target_gpa.toFixed(2)} target` : ""}</small>`
       : "Import your courses";
   } catch { $("homeEdu").textContent = "Import your courses"; }
-  try {
+  if (on("goals")) try {
     const stat = await (await goalsModule()).goalsHomeStat();
     $("homeGoals").classList.toggle("muted-stat", !stat);
     $("homeGoals").innerHTML = stat || "Set your first goal";

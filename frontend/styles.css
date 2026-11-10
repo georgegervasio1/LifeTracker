@@ -2081,3 +2081,59 @@ body.not-owner .owner-only { display: none !important; }
 .admin-open .hint { margin: 4px 0 0; }
 .admin-open .switch { display: flex; align-items: center; gap: 8px; font-size: 14px; white-space: nowrap; }
 .admin-open .switch input { accent-color: var(--accent); width: 18px; height: 18px; }
+
+/* ── Services: intro page after sign-up, Settings → Your services, add-on plan pages ── */
+.intro-inner { max-width: 880px; }
+.login#intro { align-items: flex-start; }
+.intro-picker { margin-top: 40px; }
+.svc-group + .svc-group { margin-top: 32px; }
+.svc-h { font-size: 13px; font-weight: 600; color: var(--text-2); letter-spacing: .02em; margin-bottom: 12px; }
+.svc-group .hint { margin: -4px 0 12px; }
+.svc-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.svc-card { position: relative; display: flex; align-items: flex-start; gap: 14px; padding: 18px 20px; border-radius: var(--radius-sm); background: var(--bg-alt); border: 1px solid transparent; cursor: pointer; transition: border-color .2s, background .2s; }
+.svc-card:hover { background: var(--surface-hover); border-color: var(--line); }
+.svc-card input { position: absolute; opacity: 0; pointer-events: none; }
+.svc-card:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.svc-card:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.svc-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.svc-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 600; font-size: 16px; }
+.svc-blurb { font-size: 14px; color: var(--text-2); line-height: 1.4; }
+.svc-check { flex: none; width: 22px; height: 22px; margin-top: 1px; border-radius: 50%; border: 1.5px solid var(--line-strong); transition: background .2s, border-color .2s; }
+.svc-card:has(input:checked) .svc-check { background: var(--accent); border-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 12.5l4 4 8-9'/%3E%3C/svg%3E"); background-size: 14px; background-position: center; background-repeat: no-repeat; }
+.intro-actions { position: sticky; bottom: 0; padding: 16px 0 calc(16px + env(safe-area-inset-bottom)); margin-top: 24px; background: linear-gradient(to bottom, transparent, var(--bg) 24px); }
+.btn:disabled { opacity: .45; cursor: default; }
+.settings-page, .addon { padding-top: 48px; padding-bottom: 64px; }
+.settings-head { margin-bottom: 24px; }
+.svc-settings .svc-title { font-size: 21px; font-weight: 600; letter-spacing: -0.02em; }
+.svc-settings > .hint { margin: 6px 0 24px; }
+.svc-settings .settings-actions { margin-top: 24px; }
+.svc-settings .svc-card { background: var(--bg); border-color: var(--line); }
+.svc-settings .svc-card:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.addon-head { margin-bottom: 24px; }
+.addon .bt-dev p { margin-top: 12px; color: var(--text-2); max-width: 720px; }
+.addon-plan { margin-top: 20px; grid-template-columns: repeat(3, 1fr); }
+.addon-plan h3 { margin: 4px 0 8px; }
+.addon-plan p:not(.eyebrow) { color: var(--text-2); font-size: 14px; }
+.addon-data { margin-top: 20px; }
+.addon-row { display: grid; grid-template-columns: 200px 100px 1fr; gap: 12px; align-items: center; padding: 14px 28px; border-top: 1px solid var(--line); font-size: 14px; }
+.addon-row .pill { justify-self: start; }
+.addon > .hint { margin-top: 20px; }
+.section-links.many { gap: 18px; }
+@media (max-width: 860px) {
+  .addon-plan { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .svc-grid { grid-template-columns: 1fr; }
+  .svc-card { padding: 16px; }
+  .addon-row { grid-template-columns: 1fr auto; padding: 14px 22px; }
+  .addon-row .muted { grid-column: 1 / -1; }
+  .settings-page, .addon { padding-top: 28px; }
+}
+@media (max-width: 760px) {             /* the bottom tab bar scrolls sideways when someone picks many services */
+  .section-links { overflow-x: auto; scrollbar-width: none; }
+  .section-links::-webkit-scrollbar { display: none; }
+  .section-links.many { justify-content: flex-start; gap: 22px; padding-left: 16px; padding-right: 16px; }
+  .section-links a { white-space: nowrap; }
+}
+.addon > .hint a { color: var(--accent); }
