@@ -211,6 +211,157 @@ def _time_key(t):
     return _minutes(_to_24h(t)) if t and _to_24h(t) else 0
 
 
+# ---------------------------------------------------------------- terms and weekly class meetings
+import datetime as _dt
+
+
+def _cal_rows(pack, term):
+    cal = pack.get("calendar") or ACADEMIC_CALENDAR
+    return cal.get(term) or []
+
+
+def term_span(pack, term):
+    """(first day of classes, last day of classes) from the school calendar, or None."""
+    rows = _cal_rows(pack, term)
+    if not rows:
+        return None
+    begin = next((d for d, e, l, k in rows if k == "classes" and re.search(r"classes begin", l, re.I)
+                  and not re.search(r"second-session|minicourse", l, re.I)), rows[0][0])
+    last = next((d for d, e, l, k in rows if k == "classes" and re.match(r"last day of (summer )?classes", l, re.I)),
+                max((e or d) for d, e, l, k in rows))
+    return begin, last
+
+
+def no_class_days(pack, term):
+    """Holidays and breaks (each day of a range)."""
+    out = set()
+    for d, e, l, k in _cal_rows(pack, term):
+        if k in ("holiday", "break"):
+            a, b = _dt.date.fromisoformat(d), _dt.date.fromisoformat(e or d)
+            while a <= b:
+                out.add(a.isoformat()); a += _dt.timedelta(days=1)
+    return out
+
+
+def current_term(pack, today=None):
+    """The term in session today, else the next one to start, else the last one on the calendar."""
+    today = (today or _dt.date.today()).isoformat()
+    spans = [(t, *term_span(pack, t)) for t in (pack.get("calendar") or ACADEMIC_CALENDAR) if term_span(pack, t)]
+    spans.sort(key=lambda x: x[1])
+    for t, a, b in spans:
+        if a <= today <= b:
+            return t
+    later = [t for t, a, b in spans if a > today]
+    return later[0] if later else (spans[-1][0] if spans else None)
+
+
+_WD = "MTWRFSU"
+
+
+def _fmt_t(hhmm):
+    h, m = int(hhmm[:2]), int(hhmm[3:])
+    return f"{(h % 12) or 12}:{m:02d} {'AM' if h < 12 else 'PM'}"
+
+
+def class_meetings(course, pack, start, end):
+    """Every class meeting of a course between two ISO dates (inclusive), skipping holidays and breaks and
+    staying inside the section's dates or the term's days of classes."""
+    span = term_span(pack, course.get("term"))
+    lo = max(x for x in (start, course.get("start_date") or (span and span[0]) or start) if x)
+    hi = min(x for x in (end, course.get("end_date") or (span and span[1]) or end) if x)
+    if lo > hi:
+        return []
+    off = no_class_days(pack, course.get("term"))
+    out, d, last = [], _dt.date.fromisoformat(lo), _dt.date.fromisoformat(hi)
+    while d <= last:
+        iso = d.isoformat()
+        if iso not in off:
+            for m in course.get("meetings") or []:
+                if _WD[d.weekday()] in m["days"]:
+                    out.append({"date": iso, "start": m["start"], "end": m["end"],
+                                "time": f"{_fmt_t(m['start'])} – {_fmt_t(m['end'])}"})
+        d += _dt.timedelta(days=1)
+    return out
+
+
+def classes_on(state_courses, profile, day):
+    """Enrolled classes meeting on a date, earliest first (for Today)."""
+    pack = schools.get((profile or {}).get("school_id"))
+    iso = day.isoformat()
+    out = []
+    for c in state_courses:
+        if c.get("status") != "enrolled":
+            continue
+        for m in class_meetings(c, pack, iso, iso):
+            out.append({"course": c.get("title"), "course_id": c.get("id"), "code": c.get("code"), "time": m["time"],
+                        "start": m["start"], "location": c.get("location") or ""})
+    return sorted(out, key=lambda x: x["start"])
+
+
+def ics(profile, courses, now=None):
+    """The student's enrolled classes (each meeting), finals and school key dates as an iCalendar file."""
+    pack = schools.get((profile or {}).get("school_id"))
+    stamp = (now or _dt.datetime.now(_dt.timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
+
+    def esc(t):
+        return (t or "").replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+    lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//LifeTracker//Education//EN", "CALSCALE:GREGORIAN",
+             f"X-WR-CALNAME:{esc(pack['short'])} classes", "X-WR-TIMEZONE:America/New_York",
+             "BEGIN:VTIMEZONE", "TZID:America/New_York",
+             "BEGIN:DAYLIGHT", "TZOFFSETFROM:-0500", "TZOFFSETTO:-0400", "TZNAME:EDT", "DTSTART:19700308T020000",
+             "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU", "END:DAYLIGHT",
+             "BEGIN:STANDARD", "TZOFFSETFROM:-0400", "TZOFFSETTO:-0500", "TZNAME:EST", "DTSTART:19701101T020000",
+             "RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU", "END:STANDARD", "END:VTIMEZONE"]
+
+    def ev(uid, summary, date, start=None, end=None, where="", desc=""):
+        d = date.replace("-", "")
+        lines.extend(["BEGIN:VEVENT", f"UID:{uid}@lifetracker", f"DTSTAMP:{stamp}"])
+        if start:
+            lines.extend([f"DTSTART;TZID=America/New_York:{d}T{start.replace(':', '')}00",
+                      f"DTEND;TZID=America/New_York:{d}T{end.replace(':', '')}00"])
+        else:
+            nxt = (_dt.date.fromisoformat(end or date) + _dt.timedelta(days=1)).isoformat().replace("-", "")
+            lines.extend([f"DTSTART;VALUE=DATE:{d}", f"DTEND;VALUE=DATE:{nxt}"])
+        lines.append(f"SUMMARY:{esc(summary)}")
+        if where:
+            lines.append(f"LOCATION:{esc(where)}")
+        if desc:
+            lines.append(f"DESCRIPTION:{esc(desc)}")
+        lines.append("END:VEVENT")
+
+    enrolled = [c for c in courses if c.get("status") == "enrolled"]
+    terms = {c.get("term") for c in enrolled}
+    for c in enrolled:
+        name = f"{c.get('code')} {c.get('title')}".strip() if c.get("code") else c.get("title")
+        for m in class_meetings(c, pack, "0000-01-01", "9999-12-31"):
+            ev(f"{c.get('id')}-{m['date']}-{m['start']}", name, m["date"], m["start"], m["end"], c.get("location"),
+               ", ".join(x for x in (c.get("professor"), c.get("component")) if x))
+    cal = calendar_for(courses, pack)
+    for t in terms:
+        for e in cal.get(t, []):
+            if e["kind"] == "final":
+                tm = _to_24h(e.get("time") or "") if e.get("time") else None
+                if tm and pack["id"] == "osu":
+                    h, mi = int(tm[:2]), int(tm[3:])
+                    endm = h * 60 + mi + 105              # Ohio State exam slots run 1 h 45 min
+                    ev(f"final-{e.get('course_id')}", e["label"], e["date"], tm, f"{endm // 60:02d}:{endm % 60:02d}")
+                else:                                     # exam length not published: an all-day item with the time
+                    ev(f"final-{e.get('course_id')}", e["label"] + (f" ({e['time']})" if e.get("time") else ""), e["date"])
+            elif e["kind"] in ("holiday", "break", "exams", "classes", "deadline"):
+                ev(f"{pack['id']}-{e['date']}-{re.sub(r'[^a-z0-9]+', '-', e['label'].lower())}", e["label"], e["date"],
+                   end=e.get("end"))
+    lines.append("END:VCALENDAR")
+    out = []
+    for ln in lines:                                  # fold long lines at 75 octets
+        while len(ln.encode()) > 75:
+            cut = 75
+            while len(ln[:cut].encode()) > 75:
+                cut -= 1
+            out.append(ln[:cut]); ln = " " + ln[cut:]
+        out.append(ln)
+    return "\r\n".join(out) + "\r\n"
+
+
 # ---------------------------------------------------------------- parsing helpers
 DAY_CODES = {"M": "M", "T": "T", "W": "W", "R": "R", "TH": "R", "F": "F", "S": "S", "U": "U"}
 
@@ -457,6 +608,7 @@ def compute(profile, courses):
         "needed": needed, "audit": audit, "planner": planner, "pass_fail": pass_fail,
         "calendar": calendar_for(courses, pack),
         "school": schools.public(pack, p.get("major_id")), "schools": schools.school_list(),
+        "current_term": current_term(pack),
         "credits": {"earned": earned + transfer, "in_progress": in_prog, "planned": planned,
                     "required": total_req, "remaining_after_plan": max(0.0, total_req - credits_after_plan)},
     }
@@ -626,7 +778,7 @@ def _grade_plan(remaining, avg, pack=None):
 COURSE_FIELDS = {"term", "title", "code", "crn", "credits", "grade", "grade_status", "graded", "status", "tags",
                  "experiential_credits", "priority", "professor", "meetings_text", "exam_type", "category",
                  "seats", "waitlist", "notes", "pf_eligible", "pf_elected", "pf_mandatory", "exam_date", "exam_time",
-                 "location", "component"}
+                 "location", "component", "start_date", "end_date"}
 
 
 def clean_course(b, partial=False):
@@ -655,10 +807,10 @@ def clean_course(b, partial=False):
             v = [t for t in (v or []) if t in ALL_TAGS]
         elif k in ("graded", "pf_eligible", "pf_elected", "pf_mandatory"):
             v = bool(v)
-        elif k == "exam_date":
-            v = (str(v).strip() or None) if v else None
+        elif k in ("exam_date", "start_date", "end_date"):
+            v = (str(v).strip()[:10] or None) if v else None
             if v and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
-                raise ValueError("exam_date must be YYYY-MM-DD")
+                raise ValueError(f"{k} must be YYYY-MM-DD")
         else:
             v = None if v is None else str(v).strip()[:500]
         out[k] = v
@@ -756,6 +908,18 @@ def _register_routes():
             upd["requirements"] = {k: b["requirements"][k] for k in REQ_KEYS if k in b["requirements"]}
         _profile_ref().set(upd, merge=True)
         return jsonify(education_state())
+
+    @bp.get("/api/edu/calendar.ics")
+    @require_owner
+    def calendar_ics():
+        """Download: enrolled classes, finals and key dates, for Google / Apple / Outlook calendars."""
+        from flask import Response
+        profile, courses = load_all()
+        for c in courses:
+            if c.get("meetings_text") and not c.get("meetings"):
+                c["meetings"] = parse_meetings(c["meetings_text"])
+        return Response(ics(profile, courses), mimetype="text/calendar",
+                        headers={"Content-Disposition": 'attachment; filename="classes.ics"'})
 
     @bp.get("/api/edu/catalog/search")
     @require_owner

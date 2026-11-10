@@ -103,4 +103,27 @@ assert [x["code"] for x in got] == ["ECON 2001.01"]
 # 8. Code matching: suffixes optional unless the requirement names one.
 assert schools.code_matches("ECON 2001.03H", "ECON 2001") and not schools.code_matches("ECON 2001", "ECON 2367.01")
 assert schools.code_matches("econ 2367.01", "ECON 2367.01") and not schools.code_matches("ECONX 2001", "ECON 2001")
-print("schools: Ohio State grading, GE + major audit, finals, class search ok; Georgetown unchanged")
+
+# 9. Current term, weekly meetings (holidays skipped, inside the term), Today's classes, the calendar file.
+import datetime as dt
+assert E.current_term(schools.OSU, dt.date(2026, 11, 10)) == "Autumn 2026"
+assert E.current_term(schools.OSU, dt.date(2026, 12, 25)) == "Spring 2027"
+micro = course("ECON 2001.01", status="enrolled", meet="MWF 9:10am-10:05am", location="Hagerty Hall 180")
+wk = E.class_meetings(micro, schools.OSU, "2026-11-09", "2026-11-15")
+assert [m["date"] for m in wk] == ["2026-11-09", "2026-11-13"], wk          # Nov 11 is Veterans Day
+assert wk[0]["time"] == "9:10 AM – 10:05 AM"
+allm = E.class_meetings(micro, schools.OSU, "0000-01-01", "9999-12-31")
+assert allm[0]["date"] == "2026-08-26" and allm[-1]["date"] == "2026-12-09"   # first and last day of classes
+assert not any(m["date"] in ("2026-09-07", "2026-11-27") for m in allm)
+short = dict(micro, start_date="2026-10-19")                                  # second-session section
+assert E.class_meetings(short, schools.OSU, "0000-01-01", "9999-12-31")[0]["date"] == "2026-10-19"
+today = E.classes_on([dict(micro, id="m1"), course("STAT 1430", status="planned", meet="M 8:00am-8:55am")], {"school_id": "osu"}, dt.date(2026, 11, 9))
+assert [(x["code"], x["location"]) for x in today] == [("ECON 2001.01", "Hagerty Hall 180")]
+cal_file = E.ics({"school_id": "osu"}, [dict(micro, id="m1")], now=dt.datetime(2026, 11, 10))
+assert cal_file.count("SUMMARY:ECON 2001.01 ECON 2001.01") == len(allm)
+assert "DTSTART;TZID=America/New_York:20261109T091000" in cal_file and "LOCATION:Hagerty Hall 180" in cal_file
+assert "SUMMARY:Final: ECON 2001.01" in cal_file and "DTSTART;TZID=America/New_York:20261214T100000" in cal_file
+assert "DTEND;TZID=America/New_York:20261214T114500" in cal_file              # 1 h 45 min exam slot
+assert all(len(l.encode()) <= 75 for l in cal_file.split("\r\n"))
+assert E.clean_course({"title": "x", "term": "Autumn 2026", "start_date": "2026-08-25T00:00:00"})["start_date"] == "2026-08-25"
+print("schools: Ohio State grading, GE + major audit, finals, class search, weekly classes, calendar file ok; Georgetown unchanged")

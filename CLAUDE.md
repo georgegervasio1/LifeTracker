@@ -109,7 +109,9 @@ Each feature module exposes `init(app, db, firestore, require_owner, user_ref)` 
   (`all` / `choose` / `level` / `list`), 2026–27 calendar, Autumn 2026 finals by first meeting day + start time. Sources
   in comments. Add a school by adding a pack. `osu_classes.py`: live Ohio State class search
   (`content.osu.edu/v2/classes/search`, public, cached by query) behind `/api/edu/catalog/search`; the Planner's "Find a
-  class" (`frontend/school.js`) adds a course with its sections' times, rooms, instructors and GE tags.
+  class" (`frontend/school.js`) adds a course with its sections' times, rooms, instructors and GE tags. For catalog schools there is no file import: Overview's empty state is a class search; classes added for the
+  current term default to Enrolled. `education.current_term`, `class_meetings` (weekly meetings inside the term, holidays
+  skipped, course `start_date`/`end_date` honored) feed Today's classes and `/api/edu/calendar.ics` (classes + finals + key dates).
 - `education.py`: GULC grade points, GPA engine (half-up `r2`), needed-average solver + grade plan, degree audit,
   planner conflicts, **P/F option budget** (7 credits, one course per semester, counted even if the letter grade
   is kept; a completed P course counts unless marked `pf_mandatory`; `pf_prior_credits` for untracked terms), **academic calendar** (GULC 2026–27 key dates) + **finals** (Registrar's Fall 2026 schedule matched to

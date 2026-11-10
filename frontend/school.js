@@ -59,14 +59,20 @@ const OSU_MAJORS_FALLBACK = [
 
 // ---------- Ohio State class search ----------
 let found = [];
-export function openClassSearch(term) {
+export function openClassSearch(term, q = "") {
   const { $, esc } = ctx, edu = ctx.getEdu();
-  const d = $("classDialog");
-  $("classTerm").innerHTML = edu.computed.profile.terms.map((t) => `<option ${t === term ? "selected" : ""}>${esc(t)}</option>`).join("");
-  $("classResults").innerHTML = `<p class="hint">Search by course number (ECON 2001, BUSFIN 3220) or by title. Times, rooms and instructors come from Ohio State's class search.</p>`;
+  const d = $("classDialog"), cur = edu.computed.current_term;
+  term = term || cur;
+  const terms = [...new Set([cur, ...edu.computed.profile.terms].filter(Boolean))];
+  $("classTerm").innerHTML = terms.map((t) => `<option ${t === term ? "selected" : ""}>${esc(t)}${t === cur ? " (this term)" : ""}</option>`).join("");
+  [...$("classTerm").options].forEach((o, i) => (o.value = terms[i]));
+  $("classResults").innerHTML = `<p class="hint">Search by course number (ECON 2001, BUSFIN 3220) or by title. Pick your section and it's added with its times, room, instructor and final exam.</p>`;
+  added = []; $("classAdded").textContent = "";
   d.showModal();
-  $("classQ").focus();
+  $("classQ").value = q;
+  if (q) $("classForm").requestSubmit(); else $("classQ").focus();
 }
+let added = [];
 
 function sectionRow(courseIdx, s) {
   const { esc } = ctx;
@@ -87,7 +93,7 @@ function drawResults() {
       ${c.ge_tags.length ? `<p class="hint">Counts for ${c.ge_tags.map((t) => esc(ctx.getEdu().computed.school.tag_short[t] || t)).join(", ")}</p>` : ""}
       ${comps.map((k) => `<div class="sec-group"><div class="sec-head">${esc(k || "Section")}${comps.length > 1 ? " · pick one" : ""}</div>
         ${c.sections.filter((s) => s.component === k).map((s) => sectionRow(i, s)).join("")}</div>`).join("")}
-      <div class="class-add"><select class="select" data-status="${i}"><option value="enrolled">Enrolled</option><option value="planned">Planned</option><option value="waitlisted">Waitlisted</option><option value="considering">Considering</option></select>
+      <div class="class-add"><select class="select" data-status="${i}"><option value="enrolled" ${$("classTerm").value === ctx.getEdu().computed.current_term ? "selected" : ""}>Enrolled</option><option value="planned" ${$("classTerm").value !== ctx.getEdu().computed.current_term ? "selected" : ""}>Planned</option><option value="waitlisted">Waitlisted</option><option value="considering">Considering</option></select>
         <button class="btn btn-primary btn-sm" data-addclass="${i}">Add to planner</button></div></details>`;
   }).join("");
   document.querySelectorAll("[data-addclass]").forEach((b) => (b.onclick = () => addClass(+b.dataset.addclass)));
@@ -110,11 +116,12 @@ async function addClass(i) {
     meetings_text: ordered.map((s) => s.meetings_text).filter(Boolean).join(", "),
     professor: lead.instructors.join(", "), component: ordered.map((s) => s.component).join(" + "),
     location: [...new Set(ordered.flatMap((s) => s.meetings.map((m) => m.location)).filter(Boolean))].join(", "),
-    tags: c.ge_tags, graded: true,
+    tags: c.ge_tags, graded: true, start_date: lead.start_date || null, end_date: lead.end_date || null,
   };
   try {
     ctx.setEdu(await ctx.api("/api/edu/courses", { method: "POST", body: JSON.stringify(body) }));
-    ctx.toast(`${c.code} added`); ctx.rerender();
+    added.push(c.code); ctx.toast(`${c.code} added`); ctx.rerender();
+    $("classAdded").textContent = `Added: ${added.join(", ")}. Search for your next class, or press Done.`;
   } catch (e) { ctx.toast(e.message); }
 }
 

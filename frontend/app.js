@@ -2212,6 +2212,11 @@ async function loadEducation(tab) {
   $("eduSchool").textContent = edu.needs_school ? "" : [p.school, p.program, p.grad_term ? `Expected ${p.grad_term}` : ""].filter(Boolean).join(" · ");
   $("auditIntro").textContent = SCH().audit_intro;
   $("findClass").classList.toggle("hidden", !SCH().catalog);
+  $("eduImportLbl").classList.toggle("hidden", !!SCH().catalog);          // schools with a class search add classes from it, not a file
+  $("eduEmptyImport").classList.toggle("hidden", !!SCH().catalog);
+  $("eduEmptySearch").classList.toggle("hidden", !SCH().catalog);
+  if (SCH().catalog) $("eduEmptySearchText").textContent = `Search ${SCH().short}'s class listings by course number or title and add the ones you're enrolled in for ${edu.computed.current_term || "this term"}. Times, rooms, instructors and finals come with them, and your calendar fills in.`;
+  $("acalIcs").classList.toggle("hidden", !edu.courses.some((c) => c.status === "enrolled" && c.meetings_text));
   $("pfElectLabel").textContent = `Used my ${SCH().pf.label.split(" (")[0].toLowerCase()} (counts toward ${SCH().pf.cap})`;
   $("targetGpa").max = gmax();
   const empty = !edu.courses.length;
@@ -2492,6 +2497,16 @@ const fmtExam = (c) => `${new Date(c.exam_date + "T00:00").toLocaleDateString("e
 $("plannerTerm").onchange = () => { plannerTerm = $("plannerTerm").value; renderPlanner(); };
 $("addCourse").onclick = () => openCourse(null);
 $("findClass").onclick = () => openClassSearch(plannerTerm);
+$("eduEmptySearch").onsubmit = (e) => { e.preventDefault(); openClassSearch(edu.computed.current_term, $("eduEmptyQ").value.trim()); };
+$("acalIcs").onclick = async () => {
+  try {
+    const r = await authFetch("/api/edu/calendar.ics");
+    if (!r.ok) throw new Error("Couldn't build the calendar file");
+    const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(await r.blob()), download: "classes.ics" });
+    a.click(); URL.revokeObjectURL(a.href);
+    toast("Open classes.ics to add your classes, finals and key dates to Google, Apple or Outlook Calendar");
+  } catch (e) { toast(e.message); }
+};
 wireClassSearch();
 $("eduSchoolEdit").onclick = () => { const el = $("eduSchoolSetup"); el.classList.remove("hidden"); el.dataset.open = "1"; renderSchoolSetup(el); el.scrollIntoView({ behavior: "smooth", block: "nearest" }); };
 

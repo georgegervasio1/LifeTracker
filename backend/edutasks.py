@@ -233,6 +233,9 @@ def _sort_key(t):
 
 
 def _current_term(state, today):
+    cur = state["computed"].get("current_term")
+    if cur and any(c.get("term") == cur and c.get("status") == "enrolled" for c in state["courses"]):
+        return cur
     terms = state["computed"]["profile"].get("terms") or []
     enrolled = [t for t in terms if any(c.get("term") == t and c.get("status") == "enrolled" for c in state["courses"])]
     return enrolled[0] if enrolled else (terms[-1] if terms else None)
@@ -294,6 +297,13 @@ def today_view(state, tasks, today, dismissed=(), inbox=(), gmail=None):
                          "course_id": t.get("course_id"), "due_date": t.get("due_date"), "due_time": t.get("due_time")})
     sugg.sort(key=lambda x: ({"email": 0, "syllabus": 1, "upcoming": 2}[x["group"]], x.get("due_date") or "9999"))
 
+    # weekly class meetings of enrolled courses (from their meeting times), for courses without a syllabus session today
+    from education import classes_on
+    have_ids = {c["course_id"] for c in classes}
+    for m in classes_on(state["courses"], state["computed"]["profile"], today):
+        if m["course_id"] not in have_ids:
+            classes.append({"course": names.get(m["course_id"]) or m["course"], "course_id": m["course_id"], "title": m["code"],
+                            "time": m["time"], "location": m["location"], "no_class": False, "from_schedule": True})
     cal = state["computed"]["calendar"].get(term, []) if term else []
     two_weeks = (today + timedelta(days=14)).isoformat()
     upcoming = [e for e in cal if (e.get("end") or e["date"]) >= td and e["date"] <= two_weeks]

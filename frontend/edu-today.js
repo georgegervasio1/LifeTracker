@@ -141,9 +141,9 @@ function drawSuggestions() {
 }
 
 function drawBelow() {
-  $("mdClasses").innerHTML = V.classes.length ? V.classes.map((c) => `<div class="mini-row stack"><span><strong>${esc(c.course)}</strong>${c.time ? ` · ${esc(c.time)}` : ""}${c.no_class ? " · no class" : ""}</span>
+  $("mdClasses").innerHTML = V.classes.length ? V.classes.map((c) => `<div class="mini-row stack"><span><strong>${esc(c.course)}</strong>${c.time ? ` · ${esc(c.time)}` : ""}${c.no_class ? " · no class" : ""}${c.location ? ` · ${esc(c.location)}` : ""}</span>
       <span class="sub">${esc([c.title, c.reading && `Reading: ${c.reading}`].filter(Boolean).join(" · "))}</span></div>`).join("")
-    : `<p class="empty small">${(V.course_names && Object.keys(V.course_names).length) ? "No classes from your syllabi today. Upload syllabi to see each day’s classes and readings." : "Import your courses to get started."}</p>`;
+    : `<p class="empty small">${(V.course_names && Object.keys(V.course_names).length) ? "No classes today." : "Add your courses in Academic plan → Planner to see each day’s classes here."}</p>`;
   $("mdUpcoming").innerHTML = V.upcoming.length ? V.upcoming.slice(0, 8).map((e) => `<div class="mini-row"><span><i class="k-dot k-${e.kind}"></i>${esc(e.label)}</span>
       <span class="tag">${fd(e.date, { weekday: "short", month: "short", day: "numeric" })}${e.end ? ` – ${fd(e.end, { month: "short", day: "numeric" })}` : ""}${e.time ? ` · ${esc(e.time)}` : ""}</span></div>`).join("")
     : `<p class="empty small">Nothing on the academic calendar in the next two weeks.</p>`;

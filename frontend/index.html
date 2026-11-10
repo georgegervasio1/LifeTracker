@@ -819,9 +819,16 @@
           <div class="edu-school-row"><p class="eyebrow edu-school" id="eduSchool"></p><button class="text-btn" id="eduSchoolEdit">School and major</button></div>
           <div id="eduSchoolSetup" class="hidden"></div>
           <div class="card empty-state hidden" id="eduEmpty">
-            <h3>Bring in your courses and grades</h3>
-            <p>Import a LifeTracker education file, or add courses one at a time from the Planner.</p>
-            <label class="btn btn-primary">Import file<input type="file" id="eduImportFile" accept=".json" hidden /></label>
+            <div id="eduEmptyImport">
+              <h3>Bring in your courses and grades</h3>
+              <p>Import a LifeTracker education file, or add courses one at a time from the Planner.</p>
+              <label class="btn btn-primary">Import file<input type="file" id="eduImportFile" accept=".json" hidden /></label>
+            </div>
+            <form id="eduEmptySearch" class="hidden" autocomplete="off">
+              <h3>Add the classes you're taking</h3>
+              <p id="eduEmptySearchText">Search by course number or title. Times, rooms, instructors and finals come from your school's class search, and your calendar fills in.</p>
+              <div class="class-form"><input class="input" id="eduEmptyQ" placeholder="ECON 2001 or Principles of Microeconomics" /><button class="btn btn-primary btn-sm">Search</button></div>
+            </form>
           </div>
           <div id="eduOverview">
             <div class="kpis">
@@ -883,7 +890,7 @@
           <div class="planner-head">
             <select id="plannerTerm" class="select" aria-label="Term"></select>
             <div class="planner-stats" id="plannerStats"></div>
-            <label class="text-btn" style="cursor:pointer">Import file…<input type="file" id="eduImportFile2" accept=".json" hidden /></label>
+            <label class="text-btn" style="cursor:pointer" id="eduImportLbl">Import file…<input type="file" id="eduImportFile2" accept=".json" hidden /></label>
             <button class="text-btn owner-only" id="demoShareBtn">Demo profile…</button>
             <button class="btn btn-secondary btn-sm hidden" id="findClass">Find a class</button>
             <button class="btn btn-primary btn-sm" id="addCourse">Add course</button>
@@ -911,6 +918,7 @@
         <div class="panel wrap" data-panel="calendar">
           <div class="acal-head">
             <div class="plan-weeks" id="acalTerms"></div>
+            <button class="btn btn-secondary btn-sm hidden" id="acalIcs">Add classes to my calendar</button>
             <div class="acal-legend" id="acalLegend"></div>
           </div>
           <div class="history-grid">
@@ -1149,6 +1157,7 @@
             <select class="select" id="classTerm" aria-label="Term"></select>
             <button class="btn btn-primary btn-sm">Search</button>
           </form>
+          <p class="hint span-2" id="classAdded"></p>
           <div id="classResults" class="class-results span-2"></div>
           <div class="dialog-actions span-2"><span style="flex:1"></span><button type="button" class="btn btn-secondary" id="classClose">Done</button></div>
         </div>
