@@ -25,6 +25,7 @@ handoff doc in the Claude project, not here: **this repo is public**.
 | Deploy | `cloudbuild.yaml` + root `Dockerfile` | Cloud Build trigger on push to `main` builds, pushes to Artifact Registry and deploys. Check Cloud Build → History (us-east4). |
 | Data | Firestore, `users/{uid}/...` | See collections below. |
 | Auth | Firebase Google sign-in (modular SDK 10.12.0) | Backend `require_owner` checks the ID token + `ALLOWED_EMAIL`. |
+| Security | `firestore.rules` (deny all: only the backend's Admin SDK touches Firestore), `tests/test_security.py` | Every `/api` route must need sign-in unless listed public in that test. API answers are `no-store`; CORS allows only `FRONTEND_ORIGIN`. |
 
 Libraries (cdnjs, pinned): Chart.js 4.4.1, marked, DOMPurify, Sortable 1.15.2, Leaflet 1.9.4 (CARTO basemap tiles); Plaid Link script.
 

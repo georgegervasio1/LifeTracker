@@ -43,11 +43,13 @@ load_dotenv()
 
 app = Flask(__name__)
 app.json.sort_keys = False  # keep categories ordered largest-first
-CORS(app, origins=[os.environ.get("FRONTEND_ORIGIN", "http://localhost:5500"),
-                   "http://localhost:5500", "http://127.0.0.1:5500"])
-
 ALLOWED_EMAIL = os.environ.get("ALLOWED_EMAIL", "").lower()
 DEV_SKIP_AUTH = os.environ.get("DEV_SKIP_AUTH") == "1"
+
+# Only the deployed site may call the API from a browser; local dev origins only when no site is configured or in dev.
+_LOCAL_ORIGINS = ["http://localhost:5500", "http://127.0.0.1:5500"]
+_FRONT = os.environ.get("FRONTEND_ORIGIN", "").strip()
+CORS(app, origins=([_FRONT] if _FRONT else []) + (_LOCAL_ORIGINS if DEV_SKIP_AUTH or not _FRONT else []))
 
 # ---------------------------------------------------------------- Firebase / Firestore
 import firebase_admin
@@ -87,6 +89,15 @@ def require_owner(fn):
 
 def user_ref():
     return db.collection("users").document(g.uid)
+
+
+@app.after_request
+def _security_headers(resp):
+    """API answers hold personal and bank data: never let a browser or proxy cache them, and never sniff types."""
+    resp.headers.setdefault("Cache-Control", "no-store")
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("Referrer-Policy", "no-referrer")
+    return resp
 
 
 # ---------------------------------------------------------------- Plaid

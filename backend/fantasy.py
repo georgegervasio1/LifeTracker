@@ -21,6 +21,7 @@ Routes:
   POST   /api/fantasy/trades     -> {partner, give, get} evaluate a trade you build
 League-mate names and rosters are read at request time and never stored or committed.
 """
+import hashlib
 import re
 import threading
 import time
@@ -80,7 +81,8 @@ def clean_s2(s):
 
 # ---------------------------------------------------------------- ESPN fetch
 def fetch_league(league_id, season, s2="", swid="", fresh=False):
-    key = (str(league_id), int(season), bool(s2))
+    # Keyed by the cookies themselves (hashed), so one account's private-league data is never served to another.
+    key = (str(league_id), int(season), hashlib.sha256(f"{s2}|{swid}".encode()).hexdigest() if s2 and swid else "")
     now = time.time()
     with _lock:
         hit = _cache.get(key)
