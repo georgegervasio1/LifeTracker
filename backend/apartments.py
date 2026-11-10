@@ -274,6 +274,13 @@ def owner_uid():
 
 # ---------------------------------------------------------------- routes
 def _register_routes():
+    @bp.get("/api/maps/config")
+    @require_owner
+    def maps_config():
+        """The Google Maps browser key (env GOOGLE_MAPS_KEY, from Secret Manager), kept out of the public repo and the demo."""
+        key = "" if getattr(g, "uid", "") == "demo" else os.environ.get("GOOGLE_MAPS_KEY", "").strip()
+        return jsonify(google_maps_key=key)
+
     @bp.get("/api/apartments")
     @require_owner
     def apartments():

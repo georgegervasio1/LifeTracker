@@ -94,4 +94,10 @@ assert [x["name"] for x in r["trips"]] == ["Spring break", "Someday: Japan", "Pa
 assert c.put(f"/api/trips/{t['id']}", json={"end": d(1)}).status_code == 400
 r = c.delete(f"/api/trips/{t['id']}").get_json()
 assert len(r["trips"]) == 2
+# ---- Google Maps key: from the server env, never in the repo; blank when unset
+os.environ.pop("GOOGLE_MAPS_KEY", None)
+assert c.get("/api/maps/config").get_json() == {"google_maps_key": ""}
+os.environ["GOOGLE_MAPS_KEY"] = "test-key "
+assert c.get("/api/maps/config").get_json()["google_maps_key"] == "test-key"
+os.environ.pop("GOOGLE_MAPS_KEY")
 print("ALL TRIPS + APARTMENTS + METRO TESTS PASSED")

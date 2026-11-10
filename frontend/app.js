@@ -1507,10 +1507,10 @@ function routeSvg(poly, w = 64, h = 48) {
 
 const maps = {};
 function tileLayer() {
-  const dark = isDark();
-  return L.tileLayer(`https://{s}.basemaps.cartocdn.com/${dark ? "dark_all" : "light_all"}/{z}/{x}/{y}{r}.png`, {
-    maxZoom: 19, subdomains: "abcd",
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>' });
+  // OpenStreetMap's standard tiles (CARTO's basemaps started answering "API key required"); dark mode dims them in CSS.
+  return L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19, className: isDark() ? "tiles-dark" : "",
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' });
 }
 function drawMap(id, lines, { weight = 3, opacity = 0.9 } = {}) {
   if (typeof L === "undefined") { $(id).innerHTML = `<div class="empty">Map unavailable</div>`; return; }

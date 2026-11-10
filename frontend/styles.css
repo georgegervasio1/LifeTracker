@@ -917,6 +917,10 @@ a.acct-name:hover strong { color: var(--accent); }
 .leaflet-control-attribution { background: color-mix(in srgb, var(--surface) 80%, transparent) !important; color: var(--text-3); }
 .leaflet-control-attribution a { color: var(--text-2); }
 .leaflet-bar a { background: var(--surface); color: var(--text); border-color: var(--line); }
+.tiles-dark { filter: invert(1) hue-rotate(180deg) brightness(.9) contrast(.9) saturate(.6); }
+.gm-pin { position: absolute; cursor: pointer; }
+.apt-map .gm-style-iw { color: #1d1d1f; font: inherit; font-size: 13px; }
+.map-source { font-size: 12px; }
 .run-list { display: flex; flex-direction: column; }
 .run-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) repeat(4, 84px); align-items: center; gap: 16px; padding: 12px 24px; border-top: 1px solid var(--line); text-align: left; transition: background .2s; }
 .run-row:hover { background: var(--surface-hover); }

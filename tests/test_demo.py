@@ -61,6 +61,9 @@ met = c.get("/api/travel/metro", headers=A).get_json()
 assert met["totals"]["rides"] > 20 and met["benefit"]["monthly"] == 50
 cm = c.get("/api/travel/commute", headers=A).get_json()
 assert cm["months"] and cm["months"][-1]["benefit"] == 50
+import os as _o2; _o2.environ["GOOGLE_MAPS_KEY"] = "k"
+assert c.get("/api/maps/config", headers=A).get_json()["google_maps_key"] == ""      # never handed to the demo
+_o2.environ.pop("GOOGLE_MAPS_KEY")
 tp = c.get("/api/trips", headers=A).get_json()
 assert [t["when"] for t in tp["trips"]] == ["upcoming", "someday", "past"] and tp["trips"][0]["cost"] == 1552
 assert any(l["label"] == "Google Flights" for l in tp["trips"][0]["links"])

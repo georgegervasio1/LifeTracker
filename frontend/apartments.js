@@ -166,7 +166,7 @@ function savedView() {
 function mapView() {
   const pts = A.listings.filter((a) => a.lat != null && a.status !== "passed" && (!filter.zone || a.in_zone !== false));
   const saved = pts.filter((a) => ON_LIST.includes(a.status)), missing = A.listings.filter((a) => a.lat == null && a.status !== "passed").length;
-  return `<div class="apt-bar"><p class="muted">${saved.length} saved and ${pts.length - saved.length} other spot${pts.length - saved.length === 1 ? "" : "s"}${missing ? ` · ${missing} without a map location` : ""}</p>
+  return `<div class="apt-bar"><p class="muted">${saved.length} saved and ${pts.length - saved.length} other spot${pts.length - saved.length === 1 ? "" : "s"}${missing ? ` · ${missing} without a map location` : ""} · <span id="mapSource" class="map-source">Map</span></p>
       <div class="goals-actions"><button class="btn btn-secondary btn-sm" data-kml="all">Export all</button><button class="btn btn-primary btn-sm" data-kml="saved">Export saved to Google My Maps</button></div></div>
     <div class="card card-flush apt-map-card"><div id="aptMap" class="apt-map apt-map-lg"></div></div>
     <p class="hint">Saved spots are filled in, with their stars. In Google My Maps (mymaps.google.com) choose Create a new map, then Import, and pick the file; the map then shows in the Google Maps app under Saved, Maps. Private spots are never exported.</p>
@@ -231,25 +231,89 @@ function bindStars(el) {
   });
 }
 
-function drawMap(root) {
-  map?.remove(); map = null;
+// ---------------------------------------------------------------- map: Google Maps with a key, OpenStreetMap without
+let gKey, gLoading = null, gFailed = false, gmap = null;
+async function mapsKey() {
+  if (gKey === undefined) { try { gKey = (await H.api("/api/maps/config")).google_maps_key || ""; } catch { gKey = ""; } }
+  return gFailed ? "" : gKey;
+}
+function loadGoogle(key) {
+  if (window.google?.maps?.Map) return Promise.resolve();
+  window.gm_authFailure = () => {                      // bad key, API not enabled, or this site isn't an allowed referrer
+    gFailed = true; H.toast("Google Maps refused the key, showing OpenStreetMap"); if (cur.tab === "map") rerender();
+  };
+  return gLoading ||= new Promise((ok, fail) => {
+    window.__ltMapsReady = ok;
+    const tag = Object.assign(document.createElement("script"), { async: true,
+      src: `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&v=weekly&loading=async&callback=__ltMapsReady` });
+    tag.onerror = () => { gLoading = null; fail(new Error("Google Maps didn't load")); };
+    document.head.append(tag);
+  });
+}
+const GDARK = [{ elementType: "geometry", stylers: [{ color: "#1d1d1f" }] }, { elementType: "labels.text.fill", stylers: [{ color: "#a1a1a6" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#1d1d1f" }] }, { featureType: "road", elementType: "geometry", stylers: [{ color: "#2c2c2e" }] },
+  { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#1d1d1f" }] }, { featureType: "water", elementType: "geometry", stylers: [{ color: "#0b1a2a" }] },
+  { featureType: "poi", elementType: "geometry", stylers: [{ color: "#232326" }] }, { featureType: "poi.park", elementType: "geometry", stylers: [{ color: "#16261b" }] },
+  { featureType: "transit", elementType: "geometry", stylers: [{ color: "#2c2c2e" }] }];
+
+const pinHtml = (a) => { const on = ON_LIST.includes(a.status);
+  return `<div class="zpin ${on ? "on" : ""}">${a.rent != null ? `$${(a.rent / 1000).toFixed(1)}k` : "•"}${on && a.rating ? ` ${"★".repeat(a.rating)}` : ""}</div>`; };
+const popHtml = (a) => `<strong>${H.esc(a.address || a.title)}</strong><br>${a.rent != null ? `${money(a.rent)}/mo · ` : ""}${H.esc(facts(a))}<br>
+  <a href="${gmaps(a)}" target="_blank" rel="noopener">Open in Google Maps</a>${a.url ? ` · <a href="${H.esc(a.url)}" target="_blank" rel="noopener">Listing</a>` : ""}`;
+
+async function drawMap(root) {
+  map?.remove(); map = null; gmap = null;
   const el = root.querySelector("#aptMap");
-  if (!el || !window.L) return;
+  if (!el) return;
   const pts = A.listings.filter((a) => a.lat != null && a.status !== "passed" && (!filter.zone || a.in_zone !== false));
-  if (!pts.length) return;
+  const src = root.querySelector("#mapSource");
+  const key = await mapsKey();
+  if (!el.isConnected) return;
+  if (key) {
+    try {
+      await loadGoogle(key);
+      if (!el.isConnected || gFailed) return;
+      drawGoogle(el, root, pts);
+      if (src) src.textContent = "Google Maps";
+      return;
+    } catch (e) { H.toast(e.message); }
+  }
+  if (src) src.textContent = "OpenStreetMap";
+  if (!window.L || !pts.length) return;
   map = L.map(el, { scrollWheelZoom: false });
   H.tileLayer().addTo(map);
-  const accent = getComputedStyle(document.body).getPropertyValue("--accent").trim(), grey = getComputedStyle(document.body).getPropertyValue("--text-3").trim();
   const marks = {};
   for (const a of pts) {
-    const on = ON_LIST.includes(a.status);
-    const icon = L.divIcon({ className: "", iconSize: null, html: `<div class="zpin ${on ? "on" : ""}">${a.rent != null ? `$${(a.rent / 1000).toFixed(1)}k` : "•"}${on && a.rating ? ` ${"★".repeat(a.rating)}` : ""}</div>` });
-    marks[a.id] = L.marker([a.lat, a.lon], { icon, zIndexOffset: on ? 1000 : 0 }).addTo(map)
-      .bindPopup(`<strong>${H.esc(a.address || a.title)}</strong><br>${a.rent != null ? `${money(a.rent)}/mo · ` : ""}${H.esc(facts(a))}<br><a href="${gmaps(a)}" target="_blank" rel="noopener">Open in Google Maps</a>`);
+    const icon = L.divIcon({ className: "", iconSize: null, html: pinHtml(a) });
+    marks[a.id] = L.marker([a.lat, a.lon], { icon, zIndexOffset: ON_LIST.includes(a.status) ? 1000 : 0 }).addTo(map).bindPopup(popHtml(a));
   }
   map.fitBounds(pts.map((a) => [a.lat, a.lon]), { padding: [30, 30], maxZoom: 15 });
   root.querySelectorAll("[data-focus]").forEach((b) => (b.onclick = () => { const m = marks[b.dataset.focus]; if (m) { map.setView(m.getLatLng(), 16); m.openPopup(); } }));
-  void accent; void grey;
+}
+
+function drawGoogle(el, root, pts) {
+  const G = google.maps, t = document.documentElement.dataset.theme;
+  const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+  gmap = new G.Map(el, { center: { lat: 41.92, lng: -87.645 }, zoom: 14, styles: dark ? GDARK : [], mapTypeControl: false,
+    streetViewControl: true, fullscreenControl: true, clickableIcons: false, gestureHandling: "cooperative" });
+  const info = new G.InfoWindow();
+  class Pin extends G.OverlayView {
+    constructor(a) { super(); this.a = a; this.pos = new G.LatLng(a.lat, a.lon); }
+    onAdd() {
+      this.div = Object.assign(document.createElement("div"), { className: "gm-pin", innerHTML: pinHtml(this.a) });
+      if (ON_LIST.includes(this.a.status)) this.div.style.zIndex = 2;
+      this.div.onclick = (e) => { e.stopPropagation(); this.open(); };
+      this.getPanes().overlayMouseTarget.append(this.div);
+    }
+    draw() { const p = this.getProjection().fromLatLngToDivPixel(this.pos); this.div.style.left = p.x + "px"; this.div.style.top = p.y + "px"; }
+    onRemove() { if (this.div) this.div.parentNode?.removeChild(this.div); }
+    open() { info.setContent(popHtml(this.a)); info.setPosition(this.pos); info.setOptions({ pixelOffset: new G.Size(0, -30) }); info.open({ map: gmap }); }
+  }
+  const pins = {};
+  for (const a of pts) { pins[a.id] = new Pin(a); pins[a.id].setMap(gmap); }
+  if (pts.length > 1) { const b = new G.LatLngBounds(); pts.forEach((a) => b.extend({ lat: a.lat, lng: a.lon })); gmap.fitBounds(b, 40); }
+  else if (pts.length) gmap.setCenter({ lat: pts[0].lat, lng: pts[0].lon });
+  root.querySelectorAll("[data-focus]").forEach((btn) => (btn.onclick = () => { const p = pins[btn.dataset.focus]; if (p) { gmap.panTo(p.pos); gmap.setZoom(16); p.open(); } }));
 }
 
 async function exportKml(scope) {
