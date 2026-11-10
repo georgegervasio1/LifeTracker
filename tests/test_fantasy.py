@@ -201,4 +201,29 @@ assert ok["trade"]["value_give"] == 6000 and ok["trade"]["value_get"] == 0 and o
 ft._cache.clear(); ft.requests = types.SimpleNamespace(get=lambda *a, **k: (_ for _ in ()).throw(ConnectionError("x")))
 r = c.get("/api/fantasy/trades"); assert r.status_code == 502 and "FantasyCalc" in r.get_json()["error"]
 
+# 10. matchup screen: opponent's roster for this week, the league's lineup slots; Players tab (free agents)
+LEAGUE["settings"]["rosterSettings"] = {"lineupSlotCounts": {"0": 1, "2": 2, "4": 2, "6": 1, "23": 1, "16": 1, "17": 1, "20": 7, "21": 1}}
+LEAGUE["teams"][0]["roster"] = {"entries": [entry(0, player(41, "Opp Qb", 1, 7, WEEK, 12.0, 18.0))]}
+fantasy._cache.clear()
+r = c.get("/api/fantasy/league").get_json()
+assert r["opp_team_id"] == 2 and [p["name"] for p in r["opp_roster"]] == ["Opp Qb"], r["opp_team_id"]
+assert r["lineup_slots"] == ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "D/ST", "K"], r["lineup_slots"]
+FA = {"players": [{"id": 51, "onTeamId": 0, "status": "WAIVERS", "player": player(51, "Waiver Wr", 3, 12, WEEK, 8.0, 10.5)},
+                  {"id": 52, "onTeamId": 0, "status": "FREEAGENT", "player": player(52, "Free Rb", 2, 4, WEEK, None, 6.2, "QUESTIONABLE")}]}
+seen = []
+def fake_get4(url, params=None, cookies=None, headers=None, **k):
+    if params and params.get("view") == "kona_player_info":
+        seen.append((params, json.loads(headers["x-fantasy-filter"])))
+        return R(200, FA)
+    return fake_get3(url, params=params, cookies=cookies, **k)
+fantasy.requests = types.SimpleNamespace(get=fake_get4)
+r = c.get("/api/fantasy/players?pos=WR").get_json()
+assert seen[-1][0]["scoringPeriodId"] == WEEK and seen[-1][1]["players"]["filterSlotIds"]["value"] == [4]
+assert seen[-1][1]["players"]["filterStatus"]["value"] == ["FREEAGENT", "WAIVERS"]
+w, f = r["players"]
+assert w["name"] == "Waiver Wr" and w["status"] == "Waivers" and w["projected"] == 10.5 and w["season_points"] == 150.0 and w["pro"] == "KC"
+assert f["status"] == "Free agent" and f["injury"] == "QUESTIONABLE" and f["points"] is None
+assert c.get("/api/fantasy/players?pos=XX").status_code == 400
+n = len(seen); c.get("/api/fantasy/players?pos=WR"); assert len(seen) == n, "cached"
+
 print("fantasy: connect (public/private), summary, roster, matchups, team pick, disconnect: OK")

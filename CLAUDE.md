@@ -176,7 +176,9 @@ Food; Unsplash photos hotlinked with credit); `#/health/<area>/<tab>` maps to a 
 The card photo morphs into the area banner with a View Transition (`viewSwap` from the shared `motion.js`).
 Calendar and Connections hang off the dashboard.
 Sports: a dashboard of three photo cards like Travel (`sports.js`): Teams (`teams.js`: My Teams, Schedule calendar,
-Standings, Find Teams), Fantasy Football (`fantasy.js`: Matchup, Roster, Trades, Standings, League; league switcher), Betting (in development, plan only).
+Standings, Find Teams), Fantasy Football (`fantasy.js`, tabs in the ESPN app's order: Roster, Matchup (opening screen: league scores row, score
+header, both lineups side by side by slot), Players (free agents/waivers, `/api/fantasy/players`), Trades, League (standings +
+connection); league switcher), Betting (in development, plan only).
 Travel opens on a dashboard of three photo cards like Health (Apartments, Commute, Trips); `#/travel/<area>/<tab>`;
 `travel.js` (loaded on first visit) draws its own heroes and tabs, with `apartments.js` and `trips.js`.
 Social: `social.js` (Partiful events; tabs Upcoming, Past, Connect).

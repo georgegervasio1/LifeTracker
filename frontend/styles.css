@@ -2204,3 +2204,62 @@ body.dev-only #settingsLink { display: none !important; }
   .section-links a { white-space: nowrap; }
 }
 .addon > .hint a { color: var(--accent); }
+
+/* Fantasy matchup screen (fantasy.js renderMatchup): laid out like a fantasy app's matchup view, in LifeTracker's style */
+.mu-ticker { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; margin-bottom: 16px; padding-bottom: 2px; }
+.mu-ticker::-webkit-scrollbar { display: none; }
+.mu-tick { flex: none; min-width: 118px; display: grid; gap: 2px; padding: 7px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); font-size: 12px; }
+.mu-tick > div { display: flex; justify-content: space-between; gap: 12px; color: var(--text-2); }
+.mu-tick b { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; }
+.mu-tick.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.mu-card { padding: 0; overflow: hidden; }
+.mu-week { display: flex; justify-content: space-between; align-items: center; padding: 16px 22px 0; font-size: 13px; color: var(--text-2); }
+.mu-head { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; padding: 14px 22px 20px; border-bottom: 1px solid var(--line); }
+.mu-dash { color: var(--text-3); font-size: 22px; }
+.mu-team { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-width: 0; }
+.mu-team.r { flex-direction: row-reverse; }
+.mu-id { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mu-team.r .mu-id { align-items: flex-end; text-align: right; }
+.mu-id .ff-logo-lg { margin-bottom: 6px; }
+.mu-tname { font-size: 15px; font-weight: 600; letter-spacing: -0.02em; overflow-wrap: anywhere; }
+.mu-rec { font-size: 12px; color: var(--text-3); }
+.mu-score { display: flex; flex-direction: column; align-items: flex-end; }
+.mu-team.r .mu-score { align-items: flex-start; }
+.mu-score b { font-family: var(--font-display); font-size: 44px; font-weight: 600; letter-spacing: -0.04em; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.mu-team:not(.r) .mu-score b { color: var(--accent); }
+.mu-score span { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.mu-cols, .mu-row { display: grid; grid-template-columns: minmax(0, 1fr) 58px 54px 58px minmax(0, 1fr); align-items: center; padding: 0 22px; }
+.mu-cols { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); background: var(--bg-alt); padding-top: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.mu-cols > span:nth-child(2), .mu-cols > span:nth-child(4) { text-align: center; }
+.mu-cols.bench { grid-template-columns: 1fr; border-top: 1px solid var(--line); }
+.mu-row { padding-top: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.mu-row:last-child { border-bottom: none; }
+.mu-p { display: flex; flex-direction: column; min-width: 0; }
+.mu-p.r { align-items: flex-end; text-align: right; }
+.mu-name { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.mu-meta { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.mu-p.mu-none .mu-meta { font-style: italic; }
+.mu-pts { text-align: center; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.mu-pts.none { color: var(--text-3); font-weight: 400; }
+.mu-slot { justify-self: center; font-size: 10px; font-weight: 700; letter-spacing: .03em; color: var(--text-2); background: var(--bg-alt); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; min-width: 36px; text-align: center; }
+.mu-slot:empty { visibility: hidden; }
+.mu-row.bench .mu-name { color: var(--text-2); }
+.mu-row.total { background: var(--bg-alt); font-weight: 600; font-size: 13px; }
+.mu-row.total .mu-p { color: var(--text-2); }
+@media (max-width: 760px) {
+  .mu-week { padding: 14px 14px 0; }
+  .mu-head { padding: 12px 14px 16px; gap: 6px; }
+  .mu-team { flex-direction: column-reverse; align-items: flex-start; gap: 6px; }
+  .mu-team.r { flex-direction: column-reverse; align-items: flex-end; }
+  .mu-score, .mu-team.r .mu-score { align-items: inherit; }
+  .mu-score b { font-size: 34px; }
+  .mu-id .ff-logo-lg { display: none; }
+  .mu-tname { font-size: 13px; }
+  .mu-cols, .mu-row { grid-template-columns: minmax(0, 1fr) 40px 38px 40px minmax(0, 1fr); padding-left: 12px; padding-right: 12px; }
+  .mu-name { font-size: 13px; }
+  .mu-meta { font-size: 11px; }
+  .mu-pts { font-size: 14px; }
+  .mu-slot { min-width: 30px; padding: 2px 4px; }
+}
+.ff-nowrap { white-space: nowrap; }
+.ff-stand td.num, .ff-stand th.num { white-space: nowrap; }

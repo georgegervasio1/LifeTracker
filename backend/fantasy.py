@@ -17,6 +17,7 @@ Routes:
   PUT    /api/fantasy/team       -> {team_id, league_id?} which team is mine
   DELETE /api/fantasy/connect    -> ?league_id= forget one league (none: all leagues and the cookies)
   GET    /api/fantasy/league     -> ?league_id= league, standings, this week's matchups, my roster
+  GET    /api/fantasy/players    -> ?pos= free agents and waivers, most owned first (Players tab)
   GET    /api/fantasy/trades     -> suggested trades priced with FantasyCalc values (fantasy_trades.py)
   POST   /api/fantasy/trades     -> {partner, give, get} evaluate a trade you build
 League-mate names and rosters are read at request time and never stored or committed.
@@ -209,6 +210,12 @@ def summarize(data, my_team_id=None, swid=""):
                 ((m["home"] or {}).get("team_id"), (m["away"] or {}).get("team_id"))], key=lambda m: m["week"] or 0)
     my = by_id.get(my_team_id)
     roster = norm_roster(my["_raw"], period, season) if my else []
+    cur = next((m for m in this_week if my_team_id in ((m["home"] or {}).get("team_id"), (m["away"] or {}).get("team_id"))), None)
+    opp_id = None
+    if cur:
+        opp_id = (cur["away"] or {}).get("team_id") if (cur["home"] or {}).get("team_id") == my_team_id else (cur["home"] or {}).get("team_id")
+    opp = by_id.get(opp_id)
+    opp_roster = norm_roster(opp["_raw"], period, season) if opp else []
     for t in teams:
         t.pop("_raw"); t.pop("_owners")
     reg_weeks = sched.get("matchupPeriodCount")
@@ -221,9 +228,72 @@ def summarize(data, my_team_id=None, swid=""):
                    "scoring": (settings.get("scoringSettings") or {}).get("scoringType") or "",
                    "faab": ((settings.get("acquisitionSettings") or {}).get("isUsingAcquisitionBudget")),
                    "trade_deadline": (settings.get("tradeSettings") or {}).get("deadlineDate")},
-        "teams": teams, "my_team_id": my_team_id, "roster": roster,
+        "teams": teams, "my_team_id": my_team_id, "roster": roster, "opp_team_id": opp_id, "opp_roster": opp_roster,
+        "lineup_slots": lineup_slots(settings),
         "this_week": this_week, "my_schedule": my_games,
     }
+
+
+def lineup_slots(settings):
+    """The league's starting slots in display order, e.g. ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "D/ST", "K"]."""
+    counts = ((settings.get("rosterSettings") or {}).get("lineupSlotCounts") or {})
+    out = []
+    for sid in STARTER_ORDER:
+        n = counts.get(str(sid), counts.get(sid, 0)) or 0
+        out += [SLOT[sid]] * int(n)
+    return out
+
+
+# ---------------------------------------------------------------- free agents (Players tab)
+PLAYER_SLOT = {"QB": 0, "RB": 2, "WR": 4, "TE": 6, "FLEX": 23, "D/ST": 16, "K": 17}
+
+
+def fetch_players(league_id, season, period, s2="", swid="", pos="", limit=50):
+    """Free agents and players on waivers, most owned first (ESPN's kona_player_info view)."""
+    import json as _json
+    key = ("players", str(league_id), int(season), period, pos,
+           hashlib.sha256(f"{s2}|{swid}".encode()).hexdigest() if s2 and swid else "")
+    now = time.time()
+    with _lock:
+        hit = _cache.get(key)
+    if hit and hit[0] > now:
+        return hit[1]
+    filt = {"players": {"filterStatus": {"value": ["FREEAGENT", "WAIVERS"]},
+                        "filterSlotIds": {"value": [PLAYER_SLOT[pos]] if pos in PLAYER_SLOT else []},
+                        "limit": limit, "sortPercOwned": {"sortPriority": 1, "sortAsc": False}}}
+    cookies = {"espn_s2": s2, "SWID": swid} if s2 and swid else None
+    try:
+        r = requests.get(BASE.format(season=int(season), league=league_id), cookies=cookies, timeout=15,
+                         params={"view": "kona_player_info", "scoringPeriodId": period},
+                         headers={"User-Agent": "LifeTracker/1.0", "Accept": "application/json", "x-fantasy-filter": _json.dumps(filt)})
+        if r.status_code in (401, 403):
+            raise FantasyError("ESPN wouldn't share this league's players. The cookies may have expired.", 401)
+        if r.status_code >= 400:
+            raise FantasyError(f"ESPN returned an error ({r.status_code}). Try again in a minute.")
+        rows = r.json().get("players") or []
+    except FantasyError:
+        raise
+    except Exception as e:
+        if hit:
+            return hit[1]
+        raise FantasyError(f"ESPN didn't answer ({type(e).__name__}). Try again in a minute.")
+    out = []
+    for e in rows:
+        p = e.get("player") or {}
+        act, proj = _player_points(p, period, season)
+        season_pts = None
+        for st in p.get("stats") or []:
+            if st.get("scoringPeriodId") == 0 and st.get("statSourceId") == 0 and st.get("seasonId") in (None, season):
+                season_pts = _r2(st.get("appliedTotal"))
+        out.append({"id": e.get("id") or p.get("id"), "name": p.get("fullName") or "",
+                    "pos": POS.get(p.get("defaultPositionId"), ""), "pro": PRO.get(p.get("proTeamId"), ""),
+                    "status": "Waivers" if e.get("status") == "WAIVERS" else "Free agent",
+                    "injury": (p.get("injuryStatus") or "") if p.get("injuryStatus") not in (None, "ACTIVE", "NORMAL") else "",
+                    "owned": _r2((p.get("ownership") or {}).get("percentOwned")),
+                    "projected": proj, "points": act, "season_points": season_pts})
+    with _lock:
+        _cache[key] = (now + 600, out)
+    return out
 
 
 # ---------------------------------------------------------------- storage (one doc, a list of leagues)
@@ -383,6 +453,23 @@ def _register_routes():
             return jsonify(error="Connect your ESPN league first.", connect=True), 400
         out = summarize(data, c.get("team_id"), c.get("swid", ""))
         return jsonify(conn=public_conn(d, c["league_id"]), **out)
+
+    @bp.get("/api/fantasy/players")
+    @require_owner
+    def fantasy_players():
+        pos = request.args.get("pos", "")
+        if pos and pos not in PLAYER_SLOT:
+            return jsonify(error="unknown position"), 400
+        try:
+            d, c, data = load(request.args.get("league_id") or None)
+            if not c:
+                return jsonify(error="Connect your ESPN league first.", connect=True), 400
+            period = data.get("scoringPeriodId") or (data.get("status") or {}).get("currentMatchupPeriod") or 1
+            players = fetch_players(c["league_id"], c.get("season") or default_season(), period,
+                                    c.get("espn_s2", ""), c.get("swid", ""), pos)
+        except FantasyError as e:
+            return fail(e)
+        return jsonify(players=players, week=period, pos=pos)
 
     @bp.route("/api/fantasy/trades", methods=["GET", "POST"])
     @require_owner

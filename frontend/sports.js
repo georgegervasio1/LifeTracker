@@ -11,7 +11,8 @@ const AREAS = {
   teams:   { title: "Teams", tabs: [["my", "My Teams"], ["schedule", "Schedule"], ["standings", "Standings"], ["find", "Find Teams"]],
              img: "photo-1676746424139-77f8bd8922a8", credit: ["Chris Kursikowski", "a-soccer-field-at-night-with-the-lights-on-5IS7UghgoMA"],
              sub: "Your teams' schedules on one calendar, records and standings" },
-  fantasy: { title: "Fantasy Football", tabs: [["matchup", "Matchup"], ["roster", "Roster"], ["trades", "Trades"], ["standings", "Standings"], ["league", "League"]],
+  fantasy: { title: "Fantasy Football", tabs: [["roster", "Roster"], ["matchup", "Matchup"], ["players", "Players"], ["trades", "Trades"], ["league", "League"]], def: "matchup",
+             alias: { standings: "league" },
              img: "photo-1761258772385-66e51635cf84", credit: ["Tim Mossholder", "football-players-in-uniform-on-the-field-aZT2gACJuX0"],
              sub: "Your ESPN leagues: matchups, rosters, trade ideas and standings" },
   betting: { title: "Betting", tabs: [["overview", "Overview"]],
@@ -31,7 +32,9 @@ function parse(parts) {
   let [area, tab] = parts;
   if (LEGACY[area]) [area, tab] = LEGACY[area];
   if (!AREAS[area]) return { area: "home" };
-  const t = AREAS[area].tabs.find(([k]) => k === tab) || AREAS[area].tabs[0];
+  const A = AREAS[area];
+  if (A.alias?.[tab]) tab = A.alias[tab];
+  const t = A.tabs.find(([k]) => k === tab) || A.tabs.find(([k]) => k === A.def) || A.tabs[0];
   return { area, tab: t[0] };
 }
 

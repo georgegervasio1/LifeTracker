@@ -1,6 +1,7 @@
 // Sports → Fantasy Football: the user's ESPN league (backend/fantasy.py).
-// Tabs: Matchup (this week, live scores and projections, my season), Roster, Trades (suggestions + a trade builder,
-// priced with FantasyCalc values), Standings, League (connection). Several leagues: a switcher at the top.
+// Tabs follow the ESPN app: Roster, Matchup (the opening screen: league scores row, score header, both starting
+// lineups side by side), Players (free agents), Trades (suggestions + builder, FantasyCalc values), League
+// (standings + connection). Several leagues: a switcher at the top. LifeTracker's own look, no ESPN branding.
 // A private league needs the espn_s2 and SWID cookies from espn.com; they stay on the server.
 
 let H;
@@ -51,7 +52,7 @@ export async function loadFantasy(tab, el) {
   if (tab === "league") renderLeague(el);
   else if (data.my_team_id == null) renderLeague(el, "Pick which team is yours.");
   else if (tab === "roster") renderRoster(el);
-  else if (tab === "standings") renderStandings(el);
+  else if (tab === "players") { addSwitcher(el, true); return renderPlayers(el); }
   else if (tab === "trades") { addSwitcher(el, true); return renderTrades(el); }
   else renderMatchup(el);
   addSwitcher(el);
@@ -122,42 +123,69 @@ function side(m) {
   const mine = m.home?.team_id === data.my_team_id;
   return mine ? [m.home, m.away] : [m.away, m.home];
 }
+function pairUp(mine, theirs) {
+  // Line both lineups up slot by slot (QB with QB, RB with RB…), then the benches side by side.
+  const slots = data.lineup_slots?.length ? data.lineup_slots : mine.filter((p) => p.starter).map((p) => p.slot);
+  const take = (list, slot) => { const i = list.findIndex((p) => p.slot === slot); return i < 0 ? null : list.splice(i, 1)[0]; };
+  const A = mine.filter((p) => p.starter), B = theirs.filter((p) => p.starter);
+  const rows = slots.map((slot) => [take(A, slot), slot, take(B, slot)]);
+  A.forEach((p) => rows.push([p, p.slot, null])); B.forEach((p) => rows.push([null, p.slot, p]));
+  const bA = mine.filter((p) => !p.starter), bB = theirs.filter((p) => !p.starter), bench = [];
+  for (let i = 0; i < Math.max(bA.length, bB.length); i++) bench.push([bA[i] || null, bA[i]?.slot === "IR" || bB[i]?.slot === "IR" ? "IR" : "BE", bB[i] || null]);
+  return { rows, bench };
+}
+const cell = (p, right) => p ? `<div class="mu-p ${right ? "r" : ""}"><span class="mu-name">${H.esc(p.name)}${p.injury ? ` <span class="ff-inj">${H.esc(INJ[p.injury] || p.injury)}</span>` : ""}</span>
+    <span class="mu-meta">${H.esc(p.pro)} · ${H.esc(p.pos)}${p.projected != null ? ` · Proj ${pts1(p.projected)}` : ""}</span></div>`
+  : `<div class="mu-p mu-none ${right ? "r" : ""}"><span class="mu-meta">Empty</span></div>`;
+const ptsCell = (p) => `<span class="mu-pts${p?.points == null ? " none" : ""}">${p ? (p.points == null ? "—" : pts1(p.points)) : ""}</span>`;
+function lineupRow([a, slot, b], bench) {
+  return `<div class="mu-row${bench ? " bench" : ""}">${cell(a)}${ptsCell(a)}<span class="mu-slot">${H.esc(slot)}</span>${ptsCell(b)}${cell(b, true)}</div>`;
+}
 function renderMatchup(el) {
   const L = data.league, m = myMatchup();
-  let top;
-  if (!m) top = `<div class="card empty-state"><h3>No matchup this week</h3><p>${L.in_playoffs ? "Your season may be over, or this is a bye in the playoffs." : "ESPN shows no game for your team this week."}</p></div>`;
-  else {
-    const [me, op] = side(m), A = team(me.team_id), B = op ? team(op.team_id) : null;
-    const lead = me.points != null && op?.points != null ? me.points - op.points : null;
-    const done = !!m.winner;
-    const status = done ? (m.winner === "tie" ? "Tied" : (m.winner === (m.home?.team_id === data.my_team_id ? "home" : "away") ? "Won" : "Lost"))
-      : lead == null ? "" : lead > 0 ? `Up ${pts1(lead)}` : lead < 0 ? `Down ${pts1(-lead)}` : "Tied";
-    const col = (s, t, me_) => `<div class="ff-side ${me_ ? "me" : ""}">${badge(t, "ff-logo-lg")}
-        <span class="ff-team">${H.esc(t.name)}</span><span class="muted ff-rec">${t.wins != null ? rec(t) : ""}${t.owners?.length ? ` · ${H.esc(t.owners[0])}` : ""}</span>
-        <span class="ff-score">${pts(s?.points)}</span><span class="muted">Projected ${pts1(s?.projected)}</span></div>`;
-    top = `<div class="card ff-board">
-      <div class="ff-board-head"><span class="eyebrow">Week ${L.week}${m.playoff ? " · Playoffs" : ""}</span>
-        <span class="pill ${/Up|Won/.test(status) ? "pill-met" : /Down|Lost/.test(status) ? "pill-missing" : "pill-plain"}">${status || "Not started"}</span></div>
-      <div class="ff-vs">${col(me, A, true)}<span class="ff-at">vs</span>${B ? col(op, B) : `<div class="ff-side"><span class="ff-team">Bye</span></div>`}</div>
-    </div>`;
+  const ticker = (data.this_week || []).length > 1 ? `<div class="mu-ticker" role="list">${data.this_week.map((x) => {
+    const h = team(x.home?.team_id), a = x.away ? team(x.away.team_id) : null, mine = x === m;
+    const line = (t, s) => `<div><span>${H.esc(t.abbrev || t.name)}</span><b>${pts1(s?.points)}</b></div>`;
+    return `<div class="mu-tick${mine ? " on" : ""}" role="listitem">${line(h, x.home)}${a ? line(a, x.away) : "<div><span>Bye</span></div>"}</div>`; }).join("")}</div>` : "";
+  if (!m) {
+    el.innerHTML = `${ticker}<div class="card empty-state"><h3>No matchup this week</h3><p>${L.in_playoffs ? "Your season may be over, or this is a bye in the playoffs." : "ESPN shows no game for your team this week."}</p></div>${seasonHtml()}${foot()}`;
+    return;
   }
-  const others = (data.this_week || []).filter((x) => x !== m);
-  const season = (data.my_schedule || []).map((g) => {
+  const [me, op] = side(m), A = team(me.team_id), B = op ? team(op.team_id) : { name: "Bye", owners: [] };
+  const lead = me.points != null && op?.points != null ? me.points - op.points : null;
+  const status = m.winner ? (m.winner === "tie" ? "Tied" : (m.winner === (m.home?.team_id === data.my_team_id ? "home" : "away") ? "Won" : "Lost"))
+    : lead == null ? "Not started" : lead > 0 ? `Up ${pts1(lead)}` : lead < 0 ? `Down ${pts1(-lead)}` : "Tied";
+  const head = (t, s, right) => `<div class="mu-team ${right ? "r" : ""}">
+      <div class="mu-id">${badge(t, "ff-logo-lg")}<span class="mu-tname">${H.esc(t.name)}</span>
+        <span class="mu-rec">${t.wins != null ? rec(t) : ""}${t.owners?.length ? ` · ${H.esc(t.owners[0])}` : ""}</span></div>
+      <div class="mu-score"><b>${pts(s?.points)}</b><span>Proj ${pts1(s?.projected)}</span></div></div>`;
+  const { rows, bench } = pairUp([...(data.roster || [])], [...(data.opp_roster || [])]);
+  const tot = (list) => list.filter((p) => p.starter).reduce((x, p) => x + (p.points || 0), 0);
+  el.innerHTML = `${ticker}
+    <div class="card mu-card">
+      <div class="mu-week"><span>Week ${L.week}${m.playoff ? " · Playoffs" : ""}</span>
+        <span class="pill ${/Up|Won/.test(status) ? "pill-met" : /Down|Lost/.test(status) ? "pill-missing" : "pill-plain"}">${status}</span></div>
+      <div class="mu-head">${head(A, me)}<span class="mu-dash">–</span>${head(B, op, true)}</div>
+      <div class="mu-cols"><span>Starters</span><span>Pts</span><span></span><span>Pts</span><span></span></div>
+      ${rows.map((r) => lineupRow(r)).join("")}
+      <div class="mu-row total"><span class="mu-p">Total</span><span class="mu-pts">${pts1(tot(data.roster || []))}</span><span class="mu-slot"></span>
+        <span class="mu-pts">${pts1(tot(data.opp_roster || []))}</span><span class="mu-p r"></span></div>
+      ${bench.length ? `<div class="mu-cols bench"><span>Bench</span></div>${bench.map((r) => lineupRow(r, true)).join("")}` : ""}
+    </div>
+    ${seasonHtml()}${foot()}`;
+}
+function seasonHtml() {
+  const L = data.league;
+  const rows = (data.my_schedule || []).map((g) => {
     const [me, op] = side(g), o = op ? team(op.team_id) : { name: "Bye" };
     const won = g.winner && g.winner !== "tie" ? (g.winner === (g.home?.team_id === data.my_team_id ? "home" : "away")) : null;
     const res = !g.winner ? "" : g.winner === "tie" ? "T" : won ? "W" : "L";
     return `<tr class="${g.week === L.week ? "ff-cur" : ""}"><td>Week ${g.week}${g.playoff ? ` <span class="muted">Playoffs</span>` : ""}</td>
       <td><span class="sp-opp">${badge(o, "sp-logo-sm")}${H.esc(o.name)}</span></td>
-      <td class="num">${res ? `<span class="sp-res sp-res-${res}">${res}</span> ` : ""}${g.winner || g.week === L.week ? `${pts1(me.points)}–${pts1(op?.points)}` : ""}</td></tr>`;
+      <td class="num ff-nowrap">${res ? `<span class="sp-res sp-res-${res}">${res}</span> ` : ""}${g.winner || g.week === L.week ? `${pts1(me.points)}–${pts1(op?.points)}` : ""}</td></tr>`;
   }).join("");
-  el.innerHTML = `${top}
-    ${others.length ? `<h3 class="ff-h3">Around the league</h3><div class="ff-others">${others.map((x) => {
-      const h = team(x.home?.team_id), a = x.away ? team(x.away.team_id) : null;
-      return `<div class="ff-mini"><div><span class="sp-opp">${badge(h, "sp-logo-sm")}${H.esc(h.name)}</span><b>${pts1(x.home?.points)}</b></div>
-        ${a ? `<div><span class="sp-opp">${badge(a, "sp-logo-sm")}${H.esc(a.name)}</span><b>${pts1(x.away?.points)}</b></div>` : ""}</div>`; }).join("")}</div>` : ""}
-    <h3 class="ff-h3">Your season</h3>
-    <div class="card card-flush"><table class="table"><thead><tr><th>Week</th><th>Opponent</th><th class="num">Score</th></tr></thead><tbody>${season}</tbody></table></div>
-    ${foot()}`;
+  return rows ? `<h3 class="ff-h3">Your season</h3>
+    <div class="card card-flush"><table class="table"><thead><tr><th>Week</th><th>Opponent</th><th class="num">Score</th></tr></thead><tbody>${rows}</tbody></table></div>` : "";
 }
 const foot = () => `<p class="sp-note">${H.esc(data.league.name)} · ${data.league.season} season · from ESPN, refreshed every couple of minutes.
   <button class="text-btn" id="ffRefresh">Refresh now</button></p>`;
@@ -187,24 +215,24 @@ function renderRoster(el) {
 }
 
 // ---------------------------------------------------------------- standings
-function renderStandings(el) {
+function standingsHtml() {
   const L = data.league, cut = L.playoff_teams || 0;
   const anyPct = data.teams.some((t) => t.playoff_pct != null);
-  el.innerHTML = `<div class="sp-head"><div><p class="eyebrow">Standings</p><h2 class="sp-h2">${H.esc(L.name)}</h2>
+  return `<div class="sp-head"><div><p class="eyebrow">Standings</p><h2 class="sp-h2">${H.esc(L.name)}</h2>
       <p class="muted">${[L.regular_season_weeks ? `${L.regular_season_weeks}-week regular season` : "", cut ? `top ${cut} make the playoffs` : ""].filter(Boolean).join(", ")}</p></div></div>
-    <div class="card card-flush"><div class="table-scroll"><table class="table ff-stand"><thead><tr><th>Team</th><th class="num">W-L</th><th class="num">PF</th><th class="num">PA</th><th class="num">Strk</th>${anyPct ? `<th class="num" title="ESPN's simulation">Playoff %</th>` : ""}</tr></thead>
+    <div class="card card-flush"><div class="table-scroll"><table class="table ff-stand"><thead><tr><th>Team</th><th class="num">W-L</th><th class="num">PF</th><th class="num ff-hide-sm">PA</th><th class="num ff-hide-sm">Strk</th>${anyPct ? `<th class="num" title="ESPN's simulation">Playoff %</th>` : ""}</tr></thead>
     <tbody>${data.teams.map((t, i) => `<tr class="${t.id === data.my_team_id ? "sp-fav" : ""}${cut && i === cut - 1 ? " ff-cut" : ""}">
       <td><span class="sp-opp"><span class="sp-rank">${t.seed || i + 1}</span>${badge(t, "sp-logo-sm")}<span><span class="ff-pname">${H.esc(t.name)}</span>
         <span class="muted ff-pmeta">${H.esc(t.owners.join(", "))}</span></span></span></td>
-      <td class="num">${rec(t)}</td><td class="num">${pts1(t.pf)}</td><td class="num">${pts1(t.pa)}</td><td class="num">${H.esc(t.streak)}</td>
+      <td class="num">${rec(t)}</td><td class="num">${pts1(t.pf)}</td><td class="num ff-hide-sm">${pts1(t.pa)}</td><td class="num ff-hide-sm">${H.esc(t.streak)}</td>
       ${anyPct ? `<td class="num">${t.playoff_pct == null ? "—" : `${Math.round(t.playoff_pct)}%`}</td>` : ""}</tr>`).join("")}</tbody></table></div></div>
-    <p class="sp-note">${cut ? "The line marks the playoff cut. " : ""}Playoff % is ESPN's own simulation.</p>${foot()}`;
+    <p class="sp-note">${cut ? "The line marks the playoff cut. " : ""}Playoff % is ESPN's own simulation.</p>`;
 }
 
 // ---------------------------------------------------------------- league settings
 function renderLeague(el, msg = "") {
   const opts = data.teams.map((t) => `<option value="${t.id}"${t.id === data.my_team_id ? " selected" : ""}>${H.esc(t.name)}${t.owners.length ? ` (${H.esc(t.owners[0])})` : ""}</option>`).join("");
-  el.innerHTML = `<div class="grid-2">
+  el.innerHTML = `${data.my_team_id != null && !msg ? standingsHtml() + `<h3 class="ff-h3">League settings</h3>` : ""}<div class="grid-2">
     <div class="card"><h3>${H.esc(data.league.name || "Your league")}</h3>
       <p>${data.league.season} season · ${data.league.size} teams · week ${data.league.week}${conn.has_cookies ? " · private league" : ""}</p>
       ${msg ? `<p class="ff-err">${H.esc(msg)}</p>` : ""}
@@ -212,7 +240,8 @@ function renderLeague(el, msg = "") {
       <div class="ff-actions"><button class="btn btn-secondary btn-sm" id="ffEdit">Change league or cookies</button>
         <button class="text-btn danger" id="ffDrop">${(conn.leagues || []).length > 1 ? "Remove this league" : "Disconnect"}</button></div></div>
     <div class="card"><h3>What LifeTracker reads</h3>
-      <p>Standings, every team's record and points, this week's scores and projections, and your roster. Other managers' names and rosters are read live from ESPN and aren't saved.</p></div></div>`;
+      <p>Standings, every team's record and points, this week's scores and projections, rosters and free agents. Other managers' names and rosters are read live from ESPN and aren't saved.</p></div></div>
+    ${data.my_team_id != null && !msg ? foot() : ""}`;
   H.$("ffTeam").onchange = async (e) => {
     if (!e.target.value) return;
     conn = await H.api("/api/fantasy/team", { method: "PUT", body: JSON.stringify({ team_id: +e.target.value }) });
@@ -321,4 +350,33 @@ async function gradeBuilder() {
       <div class="tr-foot"><span>Your lineup <b class="${t.my_gain > 0 ? "pos" : t.my_gain < 0 ? "neg" : ""}">${signed(t.my_gain)}</b></span>
         <span>Theirs <b>${signed(t.their_gain)}</b></span><span class="muted">Values ${t.fair_pct}% apart</span></div>`;
   } catch (e) { out.innerHTML = `<p class="ff-err">${H.esc(e.message)}</p>`; }
+}
+
+// ---------------------------------------------------------------- players (free agents and waivers)
+let playersPos = "", playersCache = {};
+async function renderPlayers(el) {
+  const box = document.createElement("div");
+  el.appendChild(box);
+  const POS = ["", "QB", "RB", "WR", "TE", "FLEX", "D/ST", "K"];
+  const draw = (list, err) => {
+    box.innerHTML = `<div class="sp-head"><div><p class="eyebrow">Week ${data.league.week} · free agents and waivers</p><h2 class="sp-h2">Players</h2></div></div>
+      <div class="sp-filters">${POS.map((p) => `<button class="sp-filter${p === playersPos ? " on" : ""}" data-pos="${p}">${p || "All"}</button>`).join("")}</div>
+      ${err ? `<p class="ff-err">${H.esc(err)}</p>` : !list ? `<p class="empty">Loading players…</p>` : list.length ? `<div class="card card-flush"><div class="table-scroll"><table class="table ff-roster">
+        <thead><tr><th>Player</th><th class="num">Proj</th><th class="num">Pts</th><th class="num ff-hide-sm">Season</th><th class="num">Owned</th></tr></thead>
+        <tbody>${list.map((p) => `<tr><td><span class="ff-pname">${H.esc(p.name)}</span>${p.injury ? ` <span class="ff-inj">${H.esc(INJ[p.injury] || p.injury)}</span>` : ""}
+          <span class="muted ff-pmeta">${H.esc(p.pro)} · ${H.esc(p.pos)}${p.status === "Waivers" ? " · Waivers" : ""}</span></td>
+          <td class="num">${pts1(p.projected)}</td><td class="num"><b>${p.points == null ? "—" : pts1(p.points)}</b></td>
+          <td class="num ff-hide-sm">${pts1(p.season_points)}</td><td class="num">${p.owned == null ? "—" : `${Math.round(p.owned)}%`}</td></tr>`).join("")}</tbody></table></div></div>`
+        : `<p class="empty">No free agents at this position.</p>`}
+      <p class="sp-note">The 50 most-owned players nobody in your league has, from ESPN. Owned % is across all ESPN leagues.</p>`;
+    box.querySelectorAll("[data-pos]").forEach((b) => b.onclick = () => { playersPos = b.dataset.pos; load(); });
+  };
+  const load = async () => {
+    const k = `${conn.active}|${playersPos}`;
+    if (playersCache[k]) return draw(playersCache[k]);
+    draw(null);
+    try { playersCache[k] = (await H.api(`/api/fantasy/players${playersPos ? `?pos=${encodeURIComponent(playersPos)}` : ""}`)).players; draw(playersCache[k]); }
+    catch (e) { draw([], e.message); }
+  };
+  load();
 }
